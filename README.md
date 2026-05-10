@@ -29,16 +29,19 @@ pnpm dev   # client (3000) + server (3020) parallel
 Der Server liest API-Tokens aus `process.env`. Lokal über `.env`, in Prod über
 `fly secrets set …`. Variablen:
 
-| Variable                  | Beschreibung                | Pflicht |
-| ------------------------- | --------------------------- | ------- |
-| `PORT`                    | Server-Port (default: 3020) | nein    |
-| `CLOCKIN_API_TOKEN`       | ClockIn API Token           | ja\*    |
-| `CLOCKIN_BASE_URL`        | ClockIn override            | nein    |
-| `DIMACON_BASE_URL`        | Dimacon Base URL            | ja\*    |
-| `DIMACON_TENANT`          | Dimacon Tenant              | ja\*    |
-| `DIMACON_API_TOKEN`       | Dimacon API Token           | ja\*    |
-| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key           | ja\*    |
-| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override          | nein    |
+| Variable                  | Beschreibung                                          | Pflicht |
+| ------------------------- | ----------------------------------------------------- | ------- |
+| `PORT`                    | Server-Port (default: 3020)                           | nein    |
+| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                     | ja\*    |
+| `CLOCKIN_BASE_URL`        | ClockIn override                                      | nein    |
+| `DIMACON_BASE_URL`        | Dimacon Base URL                                      | ja\*    |
+| `DIMACON_TENANT`          | Dimacon Tenant                                        | ja\*    |
+| `DIMACON_API_TOKEN`       | Dimacon API Token                                     | ja\*    |
+| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                     | ja\*    |
+| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                    | nein    |
+| `SYNC_CRON`               | Cron für Auto-Sync, z.B. `0 6 * * *` (leer = aus)     | nein    |
+| `SYNC_TZ`                 | Zeitzone für Cron (default: `Europe/Berlin`)          | nein    |
+| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für `POST /api/sync/run` (leer = offen) | nein    |
 
 \* nur erforderlich wenn die jeweiligen `/api/<service>/...` Routes genutzt werden
 (lazy validation beim ersten Request).
@@ -212,6 +215,48 @@ function PeopleComponent() {
 ```
 
 Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
+
+# Sync (Dimacon → Clockin)
+
+Überträgt die Tagesplanung aus Dimacon nach Clockin. Logik in `src/server/sync/`,
+HTTP-Route in `src/server/routes/sync.ts`. Siehe `.context/attachments/SKILL.md`
+für die fachliche Spezifikation.
+
+**Drei Trigger, ein Endpoint** (`POST /api/sync/run`):
+
+```bash
+# On-Demand (kein Body = heute, dryRun=false)
+curl -X POST http://localhost:3020/api/sync/run
+
+# Mit Datum + dryRun
+curl -X POST http://localhost:3020/api/sync/run \
+  -H "Content-Type: application/json" \
+  -d '{ "date": "2026-05-09", "dryRun": true }'
+
+# Webhook (wenn SYNC_WEBHOOK_SECRET gesetzt)
+curl -X POST http://localhost:3020/api/sync/run \
+  -H "Authorization: Bearer $SYNC_WEBHOOK_SECRET"
+
+# Cron — startet beim Boot, wenn SYNC_CRON gesetzt:
+SYNC_CRON="0 6 * * *" SYNC_TZ="Europe/Berlin" pnpm start
+```
+
+Response: `SyncResult` mit Listen `projects` (created / updated / unchanged /
+skipped / failed), `archived` und `errors`. Status-Endpoint:
+`GET /api/sync/healthz` zeigt ob ein Lauf gerade aktiv ist.
+
+Architektur-Bausteine:
+
+- `sync/index.ts` — Orchestrator, fail-soft pro Projekt
+- `sync/appointments.ts` + `sync/enrichment.ts` — Daten laden (parallel via `p-limit`)
+- `sync/employees.ts` — Match Nachname → Vorname → E-Mail (mit In-Run-Cache)
+- `sync/customers.ts` — 3-Wege-Sync Dimacon ↔ Lexware ↔ Clockin
+- `sync/projects.ts` — Search-before-create, Mitarbeiter-Diff (attach/detach)
+- `sync/archive.ts` — Nicht-eingeplante Projekte archivieren
+- `sync/mutex.ts` — Verhindert parallele Läufe (HTTP 409)
+- `sync/scheduler.ts` — `croner` In-Process-Scheduler
+
+Tests laufen mit `pnpm test`.
 
 # API Clients
 
