@@ -10,7 +10,6 @@ export interface PageChromeProps {
 const NAV = [
   { to: "/", label: "Home" },
   { to: "/modules", label: "Modules" },
-  { to: "/style-guide", label: "Style Guide" },
 ] as const
 
 export function PageChrome({

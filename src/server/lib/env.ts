@@ -24,4 +24,9 @@ export const env = {
     apiKey: () => required("LEXWARE_OFFICE_API_KEY"),
     baseUrl: () => optional("LEXWARE_OFFICE_BASE_URL"),
   },
+  sync: {
+    cron: () => optional("SYNC_CRON"),
+    timezone: () => process.env.SYNC_TZ ?? "Europe/Berlin",
+    webhookSecret: () => optional("SYNC_WEBHOOK_SECRET"),
+  },
 }

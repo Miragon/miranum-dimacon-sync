@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { ElementBox } from "#/components/miranum/ElementBox"
-import { SectionHead } from "#/components/miranum/SectionHead"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import {
   Table,
@@ -21,24 +20,18 @@ function Modules() {
 
   return (
     <>
-      <header className="border-rule relative mb-12 border px-10 py-8">
-        <span className="mn-mono mn-mono-accent inline-flex items-center gap-2">
-          <span className="bg-mn-accent inline-block size-2" aria-hidden /> Bereich · 02 / Pt
-        </span>
-        <h1 className="text-h-1 text-ink mt-3 inline-block">
-          Module
-          <span className="bg-mn-accent mt-3.5 block h-0.5 w-14" aria-hidden />
-        </h1>
-        <p className="text-body mt-3 max-w-[540px]">
+      <header className="mb-12">
+        <span className="mn-mono">/modules · portal</span>
+        <h1 className="text-h-1 text-ink mt-4">Module</h1>
+        <p className="text-body text-ink-2 mt-3 max-w-[540px]">
           Aktive und verfügbare Module. Ein Klick zum Konfigurieren.
         </p>
-        <div className="absolute top-6 right-6 max-md:hidden">
-          <ElementBox no="02" symbol="Pt" name="Portal" ig="UI" size="sm" />
-        </div>
       </header>
 
       <section className="mb-16">
-        <SectionHead kicker="Sektion · 01 / Übersicht" title="Module-Grid." />
+        <h2 className="text-ink mb-6 font-mono text-[0.75rem] tracking-[0.18em] uppercase">
+          Übersicht
+        </h2>
         <div className="grid gap-4 md:grid-cols-2">
           {modules.map((m) => (
             <div key={m.symbol} className="flex items-center gap-5">
@@ -60,7 +53,9 @@ function Modules() {
       </section>
 
       <section>
-        <SectionHead kicker="Sektion · 02 / Status" title="Aktivierung." />
+        <h2 className="text-ink mb-6 font-mono text-[0.75rem] tracking-[0.18em] uppercase">
+          Aktivierung
+        </h2>
         <Table>
           <TableHeader>
             <TableRow>
