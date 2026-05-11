@@ -1,7 +1,7 @@
 import ReactDOM from "react-dom/client"
 import { RouterProvider, createRouter } from "@tanstack/react-router"
 import { AuthKitProvider } from "@workos-inc/authkit-react"
-import { AUTH_ENABLED, WORKOS_CLIENT_ID } from "./lib/auth-flag"
+import { AUTH_ENABLED, WORKOS_API_HOSTNAME, WORKOS_CLIENT_ID } from "./lib/auth-flag"
 import { routeTree } from "./routeTree.gen"
 
 const router = createRouter({
@@ -23,7 +23,9 @@ if (!rootElement.innerHTML) {
   const tree = <RouterProvider router={router} />
   root.render(
     AUTH_ENABLED && WORKOS_CLIENT_ID ? (
-      <AuthKitProvider clientId={WORKOS_CLIENT_ID}>{tree}</AuthKitProvider>
+      <AuthKitProvider clientId={WORKOS_CLIENT_ID} apiHostname={WORKOS_API_HOSTNAME}>
+        {tree}
+      </AuthKitProvider>
     ) : (
       tree
     ),
