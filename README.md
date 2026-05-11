@@ -29,22 +29,29 @@ pnpm dev   # client (3000) + server (3020) parallel
 Der Server liest API-Tokens aus `process.env`. Lokal über `.env`, in Prod über
 `fly secrets set …`. Variablen:
 
-| Variable                  | Beschreibung                                          | Pflicht |
-| ------------------------- | ----------------------------------------------------- | ------- |
-| `PORT`                    | Server-Port (default: 3020)                           | nein    |
-| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                     | ja\*    |
-| `CLOCKIN_BASE_URL`        | ClockIn override                                      | nein    |
-| `DIMACON_BASE_URL`        | Dimacon Base URL                                      | ja\*    |
-| `DIMACON_TENANT`          | Dimacon Tenant                                        | ja\*    |
-| `DIMACON_API_TOKEN`       | Dimacon API Token                                     | ja\*    |
-| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                     | ja\*    |
-| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                    | nein    |
-| `SYNC_CRON`               | Cron für Auto-Sync, z.B. `0 6 * * *` (leer = aus)     | nein    |
-| `SYNC_TZ`                 | Zeitzone für Cron (default: `Europe/Berlin`)          | nein    |
-| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für `POST /api/sync/run` (leer = offen) | nein    |
+| Variable                  | Beschreibung                                               | Pflicht |
+| ------------------------- | ---------------------------------------------------------- | ------- |
+| `PORT`                    | Server-Port (default: 3020)                                | nein    |
+| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                          | ja\*    |
+| `CLOCKIN_BASE_URL`        | ClockIn override                                           | nein    |
+| `DIMACON_BASE_URL`        | Dimacon Base URL                                           | ja\*    |
+| `DIMACON_TENANT`          | Dimacon Tenant                                             | ja\*    |
+| `DIMACON_API_TOKEN`       | Dimacon API Token                                          | ja\*    |
+| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                          | ja\*    |
+| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                         | nein    |
+| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für `POST /api/sync/run` (leer = offen)      | nein    |
+| `SETTINGS_PATH`           | Pfad für Settings-JSON (default `./data/settings.json`)    | nein    |
+| `SYNC_CRON`               | Initial-Seed des Cron-Ausdrucks (danach UI-konfigurierbar) | nein    |
+| `SYNC_TZ`                 | Initial-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
 
 \* nur erforderlich wenn die jeweiligen `/api/<service>/...` Routes genutzt werden
 (lazy validation beim ersten Request).
+
+**Sync-Scheduler:** Cron-Ausdruck und Timezone werden **persistent in
+`SETTINGS_PATH`** (JSON) gehalten und über die UI unter `/settings` editiert.
+`SYNC_CRON` / `SYNC_TZ` werden nur beim ersten Start als Seed verwendet, falls
+das Settings-File noch nicht existiert. Für Fly: Volume an `/data` mounten und
+`SETTINGS_PATH=/data/settings.json` setzen, damit Settings Redeploys überleben.
 
 ## Building For Production
 
@@ -237,7 +244,8 @@ curl -X POST http://localhost:3020/api/sync/run \
 curl -X POST http://localhost:3020/api/sync/run \
   -H "Authorization: Bearer $SYNC_WEBHOOK_SECRET"
 
-# Cron — startet beim Boot, wenn SYNC_CRON gesetzt:
+# Cron — Schedule wird in `SETTINGS_PATH` persistiert und über die UI
+# (`/settings`) editiert. Erst-Seed optional via Env beim ersten Start:
 SYNC_CRON="0 6 * * *" SYNC_TZ="Europe/Berlin" pnpm start
 ```
 

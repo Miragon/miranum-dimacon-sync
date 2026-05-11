@@ -4,6 +4,7 @@ import { env } from "../lib/env.js"
 import { log } from "../lib/log.js"
 import { runSync } from "../sync/index.js"
 import { isRunning, SyncBusyError } from "../sync/mutex.js"
+import { getNextRun, isCronActive } from "../sync/scheduler.js"
 import { SyncRunInputSchema } from "../sync/types.js"
 
 const app = new Hono()
@@ -11,7 +12,8 @@ const app = new Hono()
 app.get("/healthz", (c) =>
   c.json({
     ok: true,
-    cronEnabled: Boolean(env.sync.cron()),
+    cronActive: isCronActive(),
+    nextRun: getNextRun(),
     running: isRunning(),
   }),
 )
