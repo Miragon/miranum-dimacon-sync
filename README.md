@@ -45,6 +45,9 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 | `SETTINGS_PATH`           | Pfad für Settings-JSON (default `./data/settings.json`)    | nein    |
 | `SYNC_CRON`               | Initial-Seed des Cron-Ausdrucks (danach UI-konfigurierbar) | nein    |
 | `SYNC_TZ`                 | Initial-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
+| `WORKOS_CLIENT_ID`        | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus.     | nein    |
+| `VITE_WORKOS_CLIENT_ID`   | Gleicher Wert für SPA-Bundle. Leer = Auth-UI aus.          | nein    |
+| `WORKOS_REQUIRED_ORG_ID`  | Org, deren `org_id` im Token akzeptiert wird               | nein    |
 
 \* nur erforderlich wenn die jeweiligen `/api/<service>/...` Routes genutzt werden
 (lazy validation beim ersten Request).
@@ -54,6 +57,16 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 `SYNC_CRON` / `SYNC_TZ` werden nur beim ersten Start als Seed verwendet, falls
 das Settings-File noch nicht existiert. Für Fly: Volume an `/data` mounten und
 `SETTINGS_PATH=/data/settings.json` setzen, damit Settings Redeploys überleben.
+
+**Auth (WorkOS):** Wenn `WORKOS_CLIENT_ID` gesetzt ist, schützt eine
+JWT-Middleware alle `/api/*`-Routes (außer `/api/sync/healthz` + `/api/sync/run` —
+Webhook hat eigenes Secret). Tokens werden gegen die WorkOS-JWKS verifiziert,
+zusätzlich wird `org_id === WORKOS_REQUIRED_ORG_ID` geprüft. Im Frontend bakt
+Vite `VITE_WORKOS_CLIENT_ID` ins Bundle und das `<AuthKitProvider>` macht
+Auth-Code-Flow mit PKCE. Im WorkOS-Dashboard müssen Redirect-URI **und**
+Allowed-Origin auf die App-Origin gesetzt sein (z.B. `http://localhost:3000`
+für Dev, `https://<flyapp>` für Prod). Sind die WorkOS-Vars leer, läuft die
+App ohne Login und Backend loggt eine Warnung — nur für Dev gedacht.
 
 ## Building For Production
 

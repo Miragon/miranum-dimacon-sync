@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
+import { useApiFetch } from "#/lib/api"
 
 export const Route = createFileRoute("/settings")({ component: SettingsPage })
 
@@ -33,16 +34,13 @@ function SettingsPage() {
   const [cron, setCron] = useState("")
   const [timezone, setTimezone] = useState("Europe/Berlin")
   const [server, setServer] = useState<SyncSettings | null>(null)
+  const apiFetch = useApiFetch()
 
-  useEffect(() => {
-    void load()
-  }, [])
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch("/api/settings/sync")
+      const res = await apiFetch("/api/settings/sync")
       const json = (await res.json()) as SyncSettings | { error: string }
       if (!res.ok) {
         setError("error" in json ? json.error : `HTTP ${res.status}`)
@@ -58,7 +56,11 @@ function SettingsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [apiFetch])
+
+  useEffect(() => {
+    void load()
+  }, [load])
 
   async function save() {
     setSaving(true)
@@ -70,7 +72,7 @@ function SettingsPage() {
         cron: cron.trim().length > 0 ? cron.trim() : undefined,
         timezone: timezone.trim(),
       }
-      const res = await fetch("/api/settings/sync", {
+      const res = await apiFetch("/api/settings/sync", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
