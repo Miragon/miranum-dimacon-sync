@@ -18,13 +18,13 @@ interface AuthEnv {
   }
 }
 
-const WORKOS_ISSUER = "https://api.workos.com"
+const WORKOS_JWKS_BASE = "https://api.workos.com/sso/jwks"
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined
 
 function getJWKS(clientId: string) {
   if (!jwks) {
-    jwks = createRemoteJWKSet(new URL(`${WORKOS_ISSUER}/sso/jwks/${clientId}`))
+    jwks = createRemoteJWKSet(new URL(`${WORKOS_JWKS_BASE}/${clientId}`))
   }
   return jwks
 }
@@ -44,9 +44,7 @@ export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
   }
 
   try {
-    const { payload } = await jwtVerify(match[1], getJWKS(clientId), {
-      issuer: WORKOS_ISSUER,
-    })
+    const { payload } = await jwtVerify(match[1], getJWKS(clientId))
     const claims = payload as WorkOSClaims
     const requiredOrg = env.workos.requiredOrgId()
     if (requiredOrg && claims.org_id !== requiredOrg) {
