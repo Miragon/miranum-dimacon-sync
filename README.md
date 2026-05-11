@@ -20,14 +20,16 @@ auf Port 3000 und proxied `/api` zum Backend auf Port 3020.
 
 ```bash
 pnpm install
-# .env mit den Variablen aus der Tabelle unten anlegen
-pnpm dev   # client (3000) + server (3020) parallel
+cp env.example .env   # dann Werte eintragen
+pnpm dev              # client (3000) + server (3020) parallel
 ```
 
 ## Environment
 
-Der Server liest API-Tokens aus `process.env`. Lokal über `.env`, in Prod über
-`fly secrets set …`. Variablen:
+Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
+`process.env` an — bereits gesetzte Werte werden **nicht** überschrieben.
+Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
+[`env.example`](./env.example). Variablen:
 
 | Variable                  | Beschreibung                                               | Pflicht |
 | ------------------------- | ---------------------------------------------------------- | ------- |
