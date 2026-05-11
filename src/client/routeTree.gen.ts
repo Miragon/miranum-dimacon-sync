@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SyncRouteImport } from './routes/sync'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ModulesRouteImport } from './routes/modules'
 import { Route as IndexRouteImport } from './routes/index'
 
 const SyncRoute = SyncRouteImport.update({
   id: '/sync',
   path: '/sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ModulesRoute = ModulesRouteImport.update({
@@ -32,30 +38,34 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/modules': typeof ModulesRoute
+  '/settings': typeof SettingsRoute
   '/sync': typeof SyncRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/modules': typeof ModulesRoute
+  '/settings': typeof SettingsRoute
   '/sync': typeof SyncRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/modules': typeof ModulesRoute
+  '/settings': typeof SettingsRoute
   '/sync': typeof SyncRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/modules' | '/sync'
+  fullPaths: '/' | '/modules' | '/settings' | '/sync'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/modules' | '/sync'
-  id: '__root__' | '/' | '/modules' | '/sync'
+  to: '/' | '/modules' | '/settings' | '/sync'
+  id: '__root__' | '/' | '/modules' | '/settings' | '/sync'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ModulesRoute: typeof ModulesRoute
+  SettingsRoute: typeof SettingsRoute
   SyncRoute: typeof SyncRoute
 }
 
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/sync'
       fullPath: '/sync'
       preLoaderRoute: typeof SyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/modules': {
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ModulesRoute: ModulesRoute,
+  SettingsRoute: SettingsRoute,
   SyncRoute: SyncRoute,
 }
 export const routeTree = rootRouteImport

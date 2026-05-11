@@ -35,6 +35,15 @@ Page-Header-Schmuck auf jeder Subpage.
 - `/` — Landing/Dashboard (Hero + ElementBox + Feature-Grid)
 - `/modules` — Beispiel App-Surface (schlichter Header + Module-Grid + Tabelle)
 - `/sync` — Dimacon → Clockin Sync UI (schlichter Header + Form + Result)
+- `/settings` — Sync-Scheduler konfigurieren (Cron, Timezone, Enabled)
+
+## Settings-Persistenz
+
+Sync-Scheduler (Cron, Timezone, Enabled) wird via UI editiert und in
+`SETTINGS_PATH` (JSON, default `./data/settings.json`) persistiert. PUT auf
+`/api/settings/sync` validiert + restartet den Scheduler hot. Env-Vars
+`SYNC_CRON` / `SYNC_TZ` dienen nur als Erst-Seed beim allerersten Start.
+Auf Fly: Volume an `/data` mounten, `SETTINGS_PATH=/data/settings.json`.
 
 ## Quality Gates
 
