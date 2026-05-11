@@ -31,24 +31,23 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                   | Beschreibung                                               | Pflicht |
-| -------------------------- | ---------------------------------------------------------- | ------- |
-| `PORT`                     | Server-Port (default: 3020)                                | nein    |
-| `CLOCKIN_API_TOKEN`        | ClockIn API Token                                          | ja\*    |
-| `CLOCKIN_BASE_URL`         | ClockIn override                                           | nein    |
-| `DIMACON_BASE_URL`         | Dimacon Base URL                                           | ja\*    |
-| `DIMACON_TENANT`           | Dimacon Tenant                                             | ja\*    |
-| `DIMACON_API_TOKEN`        | Dimacon API Token                                          | ja\*    |
-| `LEXWARE_OFFICE_API_KEY`   | Lexoffice API Key                                          | ja\*    |
-| `LEXWARE_OFFICE_BASE_URL`  | Lexoffice override                                         | nein    |
-| `SYNC_WEBHOOK_SECRET`      | Shared-Secret für `POST /api/sync/run` (leer = offen)      | nein    |
-| `SETTINGS_PATH`            | Pfad für Settings-JSON (default `./data/settings.json`)    | nein    |
-| `SYNC_CRON`                | Initial-Seed des Cron-Ausdrucks (danach UI-konfigurierbar) | nein    |
-| `SYNC_TZ`                  | Initial-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
-| `WORKOS_CLIENT_ID`         | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus.     | nein    |
-| `VITE_WORKOS_CLIENT_ID`    | Gleicher Wert für SPA-Bundle. Leer = Auth-UI aus.          | nein    |
-| `WORKOS_REQUIRED_ORG_ID`   | Org, deren `org_id` im Token akzeptiert wird               | nein    |
-| `VITE_WORKOS_API_HOSTNAME` | Eigene AuthKit-Domain (z.B. `…-staging.authkit.app`)       | nein    |
+| Variable                  | Beschreibung                                               | Pflicht |
+| ------------------------- | ---------------------------------------------------------- | ------- |
+| `PORT`                    | Server-Port (default: 3020)                                | nein    |
+| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                          | ja\*    |
+| `CLOCKIN_BASE_URL`        | ClockIn override                                           | nein    |
+| `DIMACON_BASE_URL`        | Dimacon Base URL                                           | ja\*    |
+| `DIMACON_TENANT`          | Dimacon Tenant                                             | ja\*    |
+| `DIMACON_API_TOKEN`       | Dimacon API Token                                          | ja\*    |
+| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                          | ja\*    |
+| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                         | nein    |
+| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für `POST /api/sync/run` (leer = offen)      | nein    |
+| `SETTINGS_PATH`           | Pfad für Settings-JSON (default `./data/settings.json`)    | nein    |
+| `SYNC_CRON`               | Initial-Seed des Cron-Ausdrucks (danach UI-konfigurierbar) | nein    |
+| `SYNC_TZ`                 | Initial-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
+| `WORKOS_CLIENT_ID`        | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus.     | nein    |
+| `VITE_WORKOS_CLIENT_ID`   | Gleicher Wert für SPA-Bundle. Leer = Auth-UI aus.          | nein    |
+| `WORKOS_REQUIRED_ORG_ID`  | Org, deren `org_id` im Token akzeptiert wird               | nein    |
 
 \* nur erforderlich wenn die jeweiligen `/api/<service>/...` Routes genutzt werden
 (lazy validation beim ersten Request).
