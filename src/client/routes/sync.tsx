@@ -5,6 +5,7 @@ import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
+import { useApiFetch } from "#/lib/api"
 import {
   Table,
   TableBody,
@@ -60,13 +61,14 @@ function SyncPage() {
   const [running, setRunning] = useState<boolean>(false)
   const [result, setResult] = useState<SyncResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const apiFetch = useApiFetch()
 
   async function run() {
     setRunning(true)
     setError(null)
     setResult(null)
     try {
-      const res = await fetch("/api/sync/run", {
+      const res = await apiFetch("/api/sync/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date, dryRun }),

@@ -7,6 +7,7 @@ import tailwindcss from "@tailwindcss/vite"
 
 const config = defineConfig({
   root: "src/client",
+  envDir: import.meta.dirname,
   build: {
     outDir: "../../dist/client",
     emptyOutDir: true,

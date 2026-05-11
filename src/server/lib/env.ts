@@ -27,4 +27,8 @@ export const env = {
   sync: {
     webhookSecret: () => optional("SYNC_WEBHOOK_SECRET"),
   },
+  workos: {
+    clientId: () => optional("WORKOS_CLIENT_ID"),
+    requiredOrgId: () => optional("WORKOS_REQUIRED_ORG_ID"),
+  },
 }
