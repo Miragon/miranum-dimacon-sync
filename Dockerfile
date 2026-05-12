@@ -17,7 +17,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 COPY . .
 RUN pnpm build
-RUN pnpm prune --prod --ignore-scripts
+RUN CI=true pnpm prune --prod --ignore-scripts
 
 FROM base AS runtime
 ENV NODE_ENV=production
