@@ -33,8 +33,9 @@ export function PageChrome({
           <Link
             key={item.to}
             to={item.to}
-            className="text-ink-3 hover:text-ink font-mono text-[11px] tracking-[0.18em] uppercase transition-colors"
+            className="hover:text-ink font-mono text-[11px] tracking-[0.18em] uppercase transition-colors"
             activeProps={{ className: "text-ink" }}
+            inactiveProps={{ className: "text-ink-3" }}
             activeOptions={{ exact: item.to === "/" }}
           >
             {item.label}

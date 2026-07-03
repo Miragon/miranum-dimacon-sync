@@ -1,29 +1,14 @@
 import { sdk as dimacon } from "@miranum/client-dimacon"
 import type { Client as DimaconClient } from "@miranum/client-dimacon"
-import { createLimit, withRetry } from "../lib/concurrency.js"
-
-export interface DimaconJobBundle {
-  jobId: string
-  projectId: string
-  customerId: string
-  teamAssignments: { employeeId: string; date: string; teamId?: string; isFixed: boolean }[]
-}
+import { createLimit, withRetry } from "../../lib/concurrency.js"
+import { loadCustomersById, loadJobBundles } from "../shared/dimacon.js"
+import type { DimaconCustomerInfo, DimaconJobBundle } from "../shared/dimacon.js"
 
 export interface DimaconProjectInfo {
   id: string
   name: string
   street: string
   zipCity: string
-}
-
-export interface DimaconCustomerInfo {
-  id: string
-  customerNumber?: string
-  name: string
-  street?: string
-  zipCity?: string
-  phoneNumber?: string
-  email?: string
 }
 
 export interface DimaconEmployeeInfo {
@@ -46,29 +31,7 @@ export async function enrich(
 ): Promise<EnrichedDimaconData> {
   const limit = createLimit()
 
-  const jobsPromise = Promise.all(
-    jobIds.map((jobId) =>
-      limit(async () => {
-        const data = (await withRetry(() =>
-          dimacon.getJobById({ client, path: { jobId } }),
-        )) as unknown as {
-          job: { id: string; projectId: string; customerId: string }
-          teamAssignments: {
-            employeeId: string
-            date: string
-            teamId?: string
-            isFixed: boolean
-          }[]
-        }
-        return {
-          jobId: data.job.id,
-          projectId: data.job.projectId,
-          customerId: data.job.customerId,
-          teamAssignments: data.teamAssignments,
-        } satisfies DimaconJobBundle
-      }),
-    ),
-  )
+  const jobsPromise = loadJobBundles(client, jobIds, limit)
 
   const employeesPromise = withRetry(() => dimacon.getAllEmployees({ client })).then((rows) =>
     (
@@ -108,15 +71,7 @@ export async function enrich(
         ),
       ),
     ),
-    Promise.all(
-      customerIds.map((customerId) =>
-        limit(() =>
-          withRetry(() => dimacon.getCustomerById({ client, path: { customerId } })).then(
-            (c) => c as unknown as DimaconCustomerInfo,
-          ),
-        ),
-      ),
-    ),
+    loadCustomersById(client, customerIds, limit),
     employeesPromise,
     usersPromise,
   ])

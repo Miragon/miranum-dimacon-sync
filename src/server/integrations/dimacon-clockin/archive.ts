@@ -1,7 +1,7 @@
 import { sdk as clockin } from "@miranum/client-clockin"
 import type { Client as ClockInClient } from "@miranum/client-clockin"
-import { withRetry } from "../lib/concurrency.js"
-import type { Logger } from "../lib/log.js"
+import { withRetry } from "../../lib/concurrency.js"
+import type { Logger } from "../../lib/log.js"
 import type { ArchiveResult } from "./types.js"
 
 interface ClockinProjectRow {

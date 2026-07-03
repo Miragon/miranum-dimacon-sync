@@ -1,29 +1,21 @@
-import { getClockInClient, getDimaconClient, getLexofficeClient } from "../lib/clients.js"
-import { createLimit } from "../lib/concurrency.js"
-import { formatError } from "../lib/errors.js"
-import { log as rootLog } from "../lib/log.js"
-import { loadAppointments } from "./appointments.js"
+import { getClockInClient, getDimaconClient } from "../../lib/clients.js"
+import { createLimit } from "../../lib/concurrency.js"
+import { formatError } from "../../lib/errors.js"
+import { log as rootLog } from "../../lib/log.js"
+import { loadAppointments } from "../shared/dimacon.js"
+import { todayInBerlin } from "../shared/time.js"
 import { archiveUnplanned } from "./archive.js"
 import { CustomerSyncer } from "./customers.js"
 import { EmployeeMatcher } from "./employees.js"
 import { enrich } from "./enrichment.js"
-import { runExclusive } from "./mutex.js"
 import { ProjectUpserter } from "./projects.js"
 import type { ProjectSyncResult, SyncError, SyncResult, SyncRunInput } from "./types.js"
 
-export async function runSync(input: SyncRunInput): Promise<SyncResult> {
-  return runExclusive(() => doRun(input))
-}
-
-function todayInBerlin(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date())
-}
-
-async function doRun(input: SyncRunInput): Promise<SyncResult> {
+export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncResult> {
   const startedAt = Date.now()
   const date = input.date ?? todayInBerlin()
   const dryRun = input.dryRun ?? false
-  const log = rootLog.child({ syncRun: { date, dryRun } })
+  const log = rootLog.child({ syncRun: { integration: "dimacon-clockin", date, dryRun } })
 
   log.info("sync started")
 
@@ -33,7 +25,6 @@ async function doRun(input: SyncRunInput): Promise<SyncResult> {
 
   const clockinClient = getClockInClient()
   const dimaconClient = getDimaconClient()
-  const lexofficeClient = getLexofficeClient()
 
   let loaded
   try {
@@ -66,13 +57,7 @@ async function doRun(input: SyncRunInput): Promise<SyncResult> {
   }
 
   const employeeMatcher = new EmployeeMatcher(clockinClient, log)
-  const customerSyncer = new CustomerSyncer(
-    clockinClient,
-    dimaconClient,
-    lexofficeClient,
-    log,
-    dryRun,
-  )
+  const customerSyncer = new CustomerSyncer(clockinClient, log, dryRun)
   const upserter = new ProjectUpserter(clockinClient, log, dryRun)
 
   const limit = createLimit()

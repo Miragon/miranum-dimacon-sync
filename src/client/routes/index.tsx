@@ -18,11 +18,11 @@ const APPS: AppTile[] = [
   {
     to: "/sync",
     no: "01",
-    symbol: "Cd",
-    name: "Clockin · Dimacon",
+    symbol: "In",
+    name: "Integrationen",
     ig: "OPS",
     group: "ops",
-    description: "Tagesplanung aus Dimacon nach Clockin synchronisieren.",
+    description: "Sync-Abläufe zwischen Dimacon, Clockin und Lexware Office.",
   },
   {
     to: "/modules",
