@@ -9,6 +9,7 @@ import dimacon from "./routes/dimacon.js"
 import lexoffice from "./routes/lexoffice.js"
 import settings from "./routes/settings.js"
 import sync from "./routes/sync.js"
+import systems from "./routes/systems.js"
 import { integrationsApiRoutes, integrationsOpenRoutes } from "./routes/integrations.js"
 import { isAuthConfigured, requireAuth } from "./lib/auth.js"
 import { env } from "./lib/env.js"
@@ -28,6 +29,7 @@ app.route("/api/integrations", integrationsOpenRoutes)
 app.use("/api/*", requireAuth)
 
 app.route("/api/integrations", integrationsApiRoutes)
+app.route("/api/systems", systems)
 app.route("/api/clockin", clockin)
 app.route("/api/dimacon", dimacon)
 app.route("/api/lexoffice", lexoffice)

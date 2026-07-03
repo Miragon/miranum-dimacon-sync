@@ -37,7 +37,9 @@ Page-Header-Schmuck auf jeder Subpage.
 ## Pages-Konvention
 
 - `/` — Landing/Dashboard (Hero + ElementBox + Feature-Grid)
-- `/modules` — Beispiel App-Surface (schlichter Header + Module-Grid + Tabelle)
+- `/modules` — Die 3 angebundenen Systeme mit echtem Konfigurations-Status
+  aus `GET /api/systems` (ElementBox-Grid + Status-Tabelle, Links zu den
+  Integrationen)
 - `/sync` — Integrations-Übersicht (Tabelle aller Integrationen mit Status)
 - `/sync/$integrationId` — Detail: Run-Form (Datum, dryRun) + Result-View;
   unbekannte Integrationen bekommen einen JSON-Fallback-Renderer
