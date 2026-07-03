@@ -12,7 +12,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "generate": "openapi-ts"
+    "generate": "openapi-ts && node scripts/loosen-zod-optional.mjs"
   },
   "dependencies": {
     "zod": "^4.3.6"

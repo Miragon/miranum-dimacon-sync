@@ -1,0 +1,5216 @@
+openapi: 3.0.3
+info:
+  title: "clockin API"
+  description: |
+    The clockin API is designed around [REST](https://en.wikipedia.org/wiki/REST) concepts.  
+    It features predictable resource-oriented URLs and  
+    uses standard HTTP verbs and response codes.  
+    Request and response bodies are JSON-encoded  
+    with datetime values in [ISO 8601](https://de.wikipedia.org/wiki/ISO_8601).  
+
+    Requests must use HTTP Bearer Authentication.  
+    Admins may generate access tokens with read or  
+    write permissions in the [clockin Admin Panel](https://office.clockin.de/port?clockinApi).  
+
+    Requests are rate limited as indicated by **X-Ratelimit-*** HTTP headers per second.
+    - **X-RateLimit-Limit** determines the amount of requests within a second until the limit takes effect
+    - **X-RateLimit-Remaining** indicates how many requests are still available within the time window
+
+
+    For filtering in the search Routes you have to pass one or multiple **scopes** in the Request body.
+
+    [API Example Requests](/customer-api/v3/examples)  
+    [How to send API Requests with Postman](https://learning.postman.com/docs/getting-started/sending-the-first-request/)  
+    - Download and import the [Clockin API Postman Collection](/customer-api/v3/downloads/postman-collection) 
+    - Replace the `{{bearerToken}}` in the Authorization Tab
+    - Start testing the API
+     
+    [clockin Website](https://www.clockin.de)
+    [Terms of Service](https://www.clockin.de/agb/)
+  version: 3.0.0
+servers:
+  - url: "https://customerapi.clockin.de"
+security:
+  - BearerAuth: []
+paths:
+  /v3/projects/custom-fields:
+    get:
+      operationId: getProjectCustomFields
+      description: "Get custom fields configuration for projects"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CustomFieldResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get all available custom fields for projects"
+      tags:
+        - Projects
+  /v3/projects:
+    post:
+      operationId: createProject
+      description: "Create project"
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - signed_url
+              - employees
+              - subProjects
+              - customer
+              - projectTags
+              - signedUrl
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Project"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create project"
+      tags:
+        - Projects
+    get:
+      operationId: getAListOfProjects
+      description: "Get a list of projects"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - signed_url
+              - employees
+              - subProjects
+              - customer
+              - projectTags
+              - signedUrl
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of projects"
+      tags:
+        - Projects
+  /v3/projects/search:
+    post:
+      operationId: searchForProjects
+      description: "Search for projects"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - signed_url
+              - employees
+              - subProjects
+              - customer
+              - projectTags
+              - signedUrl
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          - archived
+                          - unarchived
+                          - completed
+                          - uncompleted
+                          - byStates
+                          - byCreatedAt
+                          - byUpdatedAt
+                          - byStartDate
+                          - byEndDate
+                          - byName
+                          - byNumber
+                          - byCustomer
+                          - bySource
+                        description: |
+                          * archived - Returns only archived projects
+                          * unarchived - Returns only unarchived projects
+                          * completed - Returns only completed projects
+                          * uncompleted - Returns only uncompleted projects
+                          * byCreatedAt 
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byUpdatedAt 
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byStartDate
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byEndDate
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byName
+                            * value (string)
+                          * byNumber
+                            * value (string)
+                            * You can use wildcard '*'
+                          * byCustomer
+                            * value (string)
+                          * byStates
+                            * values (active, completed, archived) ([string])
+                          * bySource
+                            * value (string)
+                      parameters:
+                        type: array
+                        items:
+                          type: string
+                    required:
+                      - name
+                sort:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                        enum:
+                          - created_at
+                          - updated_at
+                          - start_date
+                          - end_date
+                      direction:
+                        type: string
+                        enum:
+                          - asc
+                          - desc
+                    required:
+                      - field
+                includes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      relation:
+                        type: string
+                        enum:
+                          - employees
+                          - subProjects
+                          - customer
+                          - projectTags
+                          - signedUrl
+                          - customFields
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for projects"
+      tags:
+        - Projects
+  "/v3/projects/{project}":
+    get:
+      operationId: getProject
+      description: "Get project"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - signed_url
+              - employees
+              - subProjects
+              - customer
+              - projectTags
+              - signedUrl
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Get project"
+      tags:
+        - Projects
+    patch:
+      operationId: updateProject
+      description: "Update project"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+        - schema:
+            type: string
+            enum:
+              - signed_url
+              - employees
+              - subProjects
+              - customer
+              - projectTags
+              - signedUrl
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Project"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Update project"
+      tags:
+        - Projects
+    delete:
+      operationId: deleteProject
+      description: "Delete project"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: force
+          in: query
+        - schema:
+            type: string
+            enum:
+              - signed_url
+              - employees
+              - subProjects
+              - customer
+              - projectTags
+              - signedUrl
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Delete project"
+      tags:
+        - Projects
+  "/v3/projects/{project}/employees":
+    get:
+      operationId: getAListOfProjectEmployees
+      description: "Get a list of employees"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EmployeeResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of employees"
+      tags:
+        - "Project Employees"
+  "/v3/projects/{project}/employees/attach":
+    post:
+      operationId: attachEmployees
+      description: "Attach employees"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A key-value pairs, where keys are relation resource IDs and values are objects representing pivot fields"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attached:
+                    type: array
+                    items:
+                      type: integer
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Attach employees"
+      tags:
+        - "Project Employees"
+  "/v3/projects/{project}/employees/detach":
+    delete:
+      operationId: detachEmployees
+      description: "Detach employees"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A key-value pairs, where keys are relation resource IDs and values are objects representing pivot fields"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detached:
+                    type: array
+                    items:
+                      type: integer
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Detach employees"
+      tags:
+        - "Project Employees"
+  "/v3/projects/{project}/files":
+    post:
+      operationId: createProjectfile
+      description: "Create projectfile"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Projectfile"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectfileResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create projectfile"
+      tags:
+        - "Project Files"
+  "/v3/projects/{project}/files/search":
+    post:
+      operationId: searchForProjectfiles
+      description: "Search for projectfiles"
+      parameters:
+        - schema:
+            type: integer
+          name: project
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          - byCreatedAt
+                          - byUpdatedAt
+                          - byTypes
+                        description: |
+                          * byCreatedAt
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byUpdatedAt
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byTypes
+                            * value (attachment, note, checklist, confirmation) ([string])
+                      parameters:
+                        type: array
+                        items:
+                          type: string
+                    required:
+                      - name
+                sort:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                        enum:
+                          - created_at
+                          - updated_at
+                      direction:
+                        type: string
+                        enum:
+                          - asc
+                          - desc
+                    required:
+                      - field
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectfileResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for projectfiles"
+      tags:
+        - "Project Files"
+  /v3/devices:
+    get:
+      operationId: getDevices
+      description: "Get a list of all devices"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Device"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of devices"
+      tags:
+        - "Devices"
+  "/v3/devices/{device}/employees/attach":
+    post:
+      operationId: attachEmployees
+      description: "Attach employees to device"
+      parameters:
+        - schema:
+            type: integer
+          name: device
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A key-value pairs, where keys are relation resource IDs and values are objects representing pivot fields"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attached:
+                    type: array
+                    items:
+                      type: integer
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Attach employees"
+      tags:
+        - "Device  Employees"
+  "/v3/devices/{device}/employees/detach":
+    delete:
+      operationId: detachEmployees
+      description: "Detach employees"
+      parameters:
+        - schema:
+            type: integer
+          name: device
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A key-value pairs, where keys are relation resource IDs and values are objects representing pivot fields"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detached:
+                    type: array
+                    items:
+                      type: integer
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Detach employees"
+      tags:
+        - "Device Employees"
+
+  "/v3/employees/{employee}/projects":
+    get:
+      operationId: getAListOfEmployeeProjects
+      description: "Get a list of projects"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - employees
+              - subProjects
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of projects"
+      tags:
+        - "Employee Projects"
+  "/v3/employees/{employee}/projects/attach":
+    post:
+      operationId: attachProjects
+      description: "Attach projects"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: string
+            enum:
+              - employees
+              - subProjects
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A key-value pairs, where keys are relation resource IDs and values are objects representing pivot fields"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attached:
+                    type: array
+                    items:
+                      type: integer
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Attach projects"
+      tags:
+        - "Employee Projects"
+  "/v3/employees/{employee}/projects/detach":
+    delete:
+      operationId: detachProjects
+      description: "Detach projects"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: string
+            enum:
+              - employees
+              - subProjects
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A key-value pairs, where keys are relation resource IDs and values are objects representing pivot fields"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detached:
+                    type: array
+                    items:
+                      type: integer
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Detach projects"
+      tags:
+        - "Employee Projects"
+  /v3/employees/custom-fields:
+    get:
+      operationId: getEmployeeCustomFields
+      description: "Get custom fields configuration for employees"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CustomFieldResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get all available custom fields for employees"
+      tags:
+        - Employees
+  /v3/employees:
+    post:
+      operationId: createEmployee
+      description: "Create employee"
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - department
+              - files
+              - superior
+              - onboardingSecret
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Employee"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EmployeeResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create employee"
+      tags:
+        - Employees
+    get:
+      operationId: getAListOfEmployees
+      description: "Get a list of employees"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - department
+              - files
+              - superior
+              - onboardingSecret
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EmployeeResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of employees"
+      tags:
+        - Employees
+  /v3/employees/search:
+    post:
+      operationId: searchForEmployees
+      description: "Search for employees"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - department
+              - files
+              - superior
+              - onboardingSecret
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          - byLastName
+                          - byPersonnelNumber
+                          - byEmail
+                          - bySource
+                        description: |
+                          * byLastName
+                            * value (string)
+                          * byPersonnelNumber
+                            * value (string)
+                            * You can use wildcard '*'
+                          * byEmail
+                            * value (string)
+                          * bySource
+                            * value (string)
+                      parameters:
+                        type: array
+                        items:
+                          type: string
+                    required:
+                      - name
+                sort:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                        enum:
+                          - created_at
+                          - updated_at
+                      direction:
+                        type: string
+                        enum:
+                          - asc
+                          - desc
+                    required:
+                      - field
+                includes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      relation:
+                        type: string
+                        enum:
+                          - files
+                          - superior
+                          - onboardingSecret
+                          - customFields
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EmployeeResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for employees"
+      tags:
+        - Employees
+  "/v3/employees/{employee}":
+    get:
+      operationId: getEmployee
+      description: "Get employee"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - department
+              - files
+              - superior
+              - onboardingSecret
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EmployeeResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Get employee"
+      tags:
+        - Employees
+    patch:
+      operationId: updateEmployee
+      description: "Update employee"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: string
+            enum:
+              - department
+              - files
+              - superior
+              - onboardingSecret
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Employee"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EmployeeResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Update employee"
+      tags:
+        - Employees
+    delete:
+      operationId: deleteEmployee
+      description: "Delete employee"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: force
+          in: query
+        - schema:
+            type: string
+            enum:
+              - department
+              - files
+              - superior
+              - onboardingSecret
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EmployeeResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Delete employee"
+      tags:
+        - Employees
+  "/v3/employees/{employee}/files":
+    post:
+      operationId: createEmployeeFile
+      description: "Create employee file"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmployeeFile"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EmployeeFileResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create employee file"
+      tags:
+        - "Employee Files"
+    get:
+      operationId: getAListOfEmployeeFiles
+      description: "Get a list of employee files"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EmployeeFileResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of employee files"
+      tags:
+        - "Employee Files"
+  "/v3/employees/{employee}/files/{file}":
+    delete:
+      operationId: deleteEmployeeFile
+      description: "Delete employee file"
+      parameters:
+        - schema:
+            type: integer
+          name: employee
+          in: path
+          required: true
+        - schema:
+            type: integer
+          name: file
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: force
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EmployeeFileResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Delete employee file"
+      tags:
+        - "Employee Files"
+  /v3/customers/custom-fields:
+    get:
+      operationId: getCustomerCustomFields
+      description: "Get custom fields configuration for customers"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CustomFieldResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get all available custom fields for customers"
+      tags:
+        - Customers
+  /v3/customers:
+    post:
+      operationId: createCustomer
+      description: "Create customer"
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Customer"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CustomerResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create customer"
+      tags:
+        - Customers
+    get:
+      operationId: getAListOfCustomers
+      description: "Get a list of customers"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CustomerResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of customers"
+      tags:
+        - Customers
+  /v3/customers/search:
+    post:
+      operationId: searchForCustomers
+      description: "Search for customers"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          - byNameOrNumber
+                          - byIdentifier
+                        description: |
+                          * byNameOrNumber
+                            * value (string)
+                          * byIdentifier
+                            * value (string)
+                            * You can use wildcard '*'
+                      parameters:
+                        type: array
+                        items:
+                          type: string
+                    required:
+                      - name
+                sort:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                        enum:
+                          - created_at
+                          - updated_at
+                      direction:
+                        type: string
+                        enum:
+                          - asc
+                          - desc
+                    required:
+                      - field
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CustomerResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for customers"
+      tags:
+        - Customers
+  "/v3/customers/{customer}":
+    get:
+      operationId: getCustomer
+      description: "Get customer"
+      parameters:
+        - schema:
+            type: integer
+          name: customer
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+        - schema:
+            type: string
+            enum:
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CustomerResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Get customer"
+      tags:
+        - Customers
+    patch:
+      operationId: updateCustomer
+      description: "Update customer"
+      parameters:
+        - schema:
+            type: integer
+          name: customer
+          in: path
+          required: true
+        - schema:
+            type: string
+            enum:
+              - customFields
+          name: include
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Customer"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CustomerResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Update customer"
+      tags:
+        - Customers
+    delete:
+      operationId: deleteCustomer
+      description: "Delete customer"
+      parameters:
+        - schema:
+            type: integer
+          name: customer
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: force
+          in: query
+        - schema:
+            type: string
+            enum:
+              - customFields
+          name: include
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CustomerResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Delete customer"
+      tags:
+        - Customers
+  /v3/absences:
+    post:
+      operationId: createAbsence
+      description: "Create absence"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Absence"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AbsenceResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create absence"
+      tags:
+        - Absences
+    get:
+      operationId: getAListOfAbsences
+      description: "Get a list of absences"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AbsenceResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of absences"
+      tags:
+        - Absences
+  /v3/absences/search:
+    post:
+      operationId: searchForAbsences
+      description: "Search for absences"
+      parameters:
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: |
+                          * byStartsAt
+                            * operator ('=', '!=', '>', '>=', '<', '<=')
+                            * value (ISO8601 string)
+                          * byEndsAt
+                            * operator ('=', '!=', '>', '>=', '<', '<=')
+                            * value (ISO8601 string)
+                          * byApprovals
+                            * value ('granted', 'pending', 'denied') ([string])
+                        enum:
+                          - byStartsAt
+                          - byEndsAt
+                          - byApprovals
+                      parameters:
+                        type: array
+                        items:
+                          type: string
+                    required:
+                      - name
+                sort:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                        enum:
+                          - created_at
+                          - updated_at
+                      direction:
+                        type: string
+                        enum:
+                          - asc
+                          - desc
+                    required:
+                      - field
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AbsenceResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for absences"
+      tags:
+        - Absences
+  "/v3/absences/{absence}":
+    get:
+      operationId: getAbsence
+      description: "Get absence"
+      parameters:
+        - schema:
+            type: integer
+          name: absence
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: with_trashed
+          in: query
+        - schema:
+            type: boolean
+          name: only_trashed
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AbsenceResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+      summary: "Get absence"
+      tags:
+        - Absences
+    patch:
+      operationId: updateAbsence
+      description: "Update absence"
+      parameters:
+        - schema:
+            type: integer
+          name: absence
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Absence"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AbsenceResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Update absence"
+      tags:
+        - Absences
+    delete:
+      operationId: deleteAbsence
+      description: "Delete absence"
+      parameters:
+        - schema:
+            type: integer
+          name: absence
+          in: path
+          required: true
+        - schema:
+            type: boolean
+          name: force
+          in: query
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AbsenceResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+        404:
+          description: "Resource not found"
+      summary: "Delete absence"
+      tags:
+        - Absences
+  /v3/workdays/search:
+    post:
+      operationId: searchForWorkdays
+      description: "Search for workdays including activities and events"
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                employee_ids:
+                  type: array
+                  items:
+                    type: integer
+                    description: "A List of Employee IDs"
+                start_date:
+                  type: string
+                  format: date
+                  example: "2023-06-17"
+                end_date:
+                  type: string
+                  format: date
+                  example: "2023-06-17"
+              required:
+                - start_date
+                - end_date
+                - employee_ids
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WorkdayResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for workdays including activities and events"
+      tags:
+        - Workdays
+  /v3/activities/search:
+    post:
+      parameters: []
+      description: "Without Parameter 'employee_id' you will get all activities of all your company employees in the given range"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          - byStartsAt
+                          - byEndsAt
+                          - byEmployeeId
+                          - byProjectId
+                          - byDeviceId
+                          - byEmployeePersonnelNumber
+                          - byCustomerIdentifier
+                          - byProjectNumber
+                          - byEmployeeSource
+                        description: |
+                          * byStartsAt
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byEndsAt
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byEmployeeId
+                            * value ([int])
+                          * byProjectId
+                            * value ([int])
+                          * byDeviceId
+                            * value ([int])
+                          * byEmployeePersonnelNumber
+                            * value (string)
+                            * You can use wildcard '*'
+                          * byCustomerIdentifier
+                            * value (string)
+                            * You can use wildcard '*'
+                          * byProjectNumber
+                            * value (string)
+                            * You can use wildcard '*'
+                          * byEmployeeSource
+                            * value (string)
+                      parameters:
+                        type: array
+                        items:
+                          anyOf:
+                            - type: string
+                            - type: integer
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ActivityResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for activities"
+      tags:
+        - Activities
+  /v3/sap_events/search:
+    post:
+      parameters: []
+      description: "You will get all events of all your company employees in the given range"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                start_date:
+                  type: string
+                  format: date
+                  example: "2023-06-17"
+                end_date:
+                  type: string
+                  format: date
+                  example: "2023-06-17"
+              required:
+                - start_date
+                - end_date
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: boolean
+                    example: false
+                  result:
+                    type: object
+                    properties:
+                      activities:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SapEventResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        400:
+          description: |
+            * code 31 - Timespan data not valid
+            * code 32 - end_date can not be earlier than start_date
+            * code 33 - Period is too big
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: boolean
+                  code:
+                    type: integer
+                  message:
+                    type: string
+      summary: "Search for events in SAP format"
+      tags:
+        - Events
+  /v3/sap_event_logs/search:
+    post:
+      parameters: []
+      description:
+        "You will get all time event changes of the selected employee that occurred within the given time period.
+        This endpoint can only be requested 180 times a minute for a max time-period (start_date to end_date) of 48 hours"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                employee_id:
+                  type: integer
+                  example: "12"
+                  description: "ID of the employee"
+                start_date:
+                  type: string
+                  format: date-time
+                  example: "2023-06-17T18:00:00Z"
+                  description: "Date in ISO 8601 format"
+                end_date:
+                  type: string
+                  format: date-time
+                  example: "2023-06-17T18:00:00Z"
+                  description: "Date in ISO 8601 format"
+              required:
+                - start_date
+                - end_date
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: boolean
+                    example: false
+                  result:
+                    type: object
+                    properties:
+                      activities:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SapEventResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        400:
+          description: |
+            * code 31 - start_date and end_date are required
+            * code 32 - Date-Format not valid
+            * code 33 - end_date can not be earlier than start_date
+            * code 34 - end_date has to be in the past
+            * code 35 - Time-Period can not be longer than 48 hours
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: boolean
+                  code:
+                    type: integer
+                  message:
+                    type: string
+      summary: "Search for event-logs in SAP format"
+      tags:
+        - Events
+  /v3/events:
+    post:
+      operationId: createEvent
+      description: "Create event"
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
+      responses:
+        201:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EventResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Create event"
+      tags:
+        - Events
+  /v3/events/search:
+    post:
+      parameters: []
+      description: ""
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          - byOccuredAt
+                          - byEmployeeId
+                          - byTaskId
+                        description: |
+                          * byOccuredAt
+                            * operator ('=', '>', '>=', '<', '<='),
+                            * value (ISO8601 string)
+                          * byEmployeeId
+                            * value ([int])
+                          * byTaskId
+                            * value ([int])
+                      parameters:
+                        type: array
+                        items:
+                          anyOf:
+                            - type: string
+                            - type: integer
+                sort:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                        enum:
+                          - occured_at
+                      direction:
+                        type: string
+                        enum:
+                          - asc
+                          - desc
+                    required:
+                      - field
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EventResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        422:
+          description: "Validation error"
+      summary: "Search for activities"
+      tags:
+        - Events
+  "/v3/events/{event}":
+    delete:
+      operationId: deleteEvent
+      description: "Delete event"
+      parameters:
+        - schema:
+            type: integer
+          name: event
+          in: path
+          required: true
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EventResource"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+        404:
+          description: "Resource not found"
+        422:
+          description: "Validation error"
+      summary: "Delete event"
+      tags:
+        - Events
+  /v3/travel_logs:
+    get:
+      operationId: getTravelLogs
+      description: "Get a list of all Travel-Logs"
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TravelLogResource"
+                  links:
+                    $ref: "#/components/schemas/ResourceLinks"
+                  meta:
+                    $ref: "#/components/schemas/ResourceMeta"
+        401:
+          description: Unauthenticated
+        403:
+          description: Unauthorized
+      summary: "Get a list of TravelLogs"
+      tags:
+        - "TravelLog"
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Project:
+      title: Project
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: false
+          description: ""
+        number:
+          type: string
+          nullable: true
+          description: ""
+          example: ""
+        customer_id:
+          type: integer
+          nullable: true
+          description: ""
+        destination_name:
+          type: string
+          nullable: true
+          description: ""
+        destination_zip:
+          type: string
+          nullable: true
+          description: ""
+        destination_city:
+          type: string
+          nullable: true
+          description: ""
+        destination_street:
+          type: string
+          nullable: true
+          description: ""
+        contact_name:
+          type: string
+          nullable: true
+          description: "returns the name of the first contact"
+        contact_phone:
+          type: string
+          nullable: true
+          description: "returns the phone number of the first contact"
+        archived:
+          type: boolean
+          nullable: false
+          description: ""
+          example: 0
+        source:
+          type: string
+          nullable: true
+          enum:
+            - sap
+          description: "Identifier of the source system"
+        department:
+          type: string
+          nullable: true
+          description: ""
+        cost_center:
+          type: string
+          nullable: true
+          description: ""
+        description:
+          type: string
+          nullable: true
+          description: ""
+        start_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        end_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        max_personnel_cost:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        project_wage:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        max_hours:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        color:
+          type: string
+          nullable: true
+          description: ""
+          example: "#A1A1AA"
+        parent_id:
+          type: integer
+          nullable: true
+          description: ""
+        projectTags:
+          type: array
+          description: "A list of tag names"
+          items:
+            type: string
+        custom_fields:
+          type: array
+          nullable: true
+          description: "Custom field values for the project"
+          items:
+            type: object
+            properties:
+              custom_field_id:
+                type: integer
+                description: "ID of the custom field"
+                example: 1
+              value:
+                type: string
+                description: "Value for the custom field"
+                example: "PROJ-2024-001"
+            required:
+              - custom_field_id
+              - value
+      required:
+        - name
+    ProjectResource:
+      title: ProjectResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        parent_id:
+          type: integer
+          nullable: true
+          description: ""
+        name:
+          type: string
+          nullable: false
+          description: ""
+          example: "Projekt Winnenden"
+        status:
+          type: string
+          nullable: false
+          description: ""
+          enum:
+            - active
+            - archived
+            - completed
+          example: "active"
+        number:
+          type: string
+          nullable: true
+          description: ""
+          example: ""
+        customer:
+          $ref: "#/components/schemas/CustomerResource"
+        max_hours:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        destination_name:
+          type: string
+          nullable: true
+          description: ""
+        destination_street:
+          type: string
+          nullable: true
+          description: ""
+        destination_zip:
+          type: string
+          nullable: true
+          description: ""
+        destination_city:
+          type: string
+          nullable: true
+          description: ""
+          example: "Flörsheim am Main"
+        source:
+          type: string
+          nullable: true
+          enum:
+            - sap
+          description: "Identifier of the source system"
+        contact_name:
+          type: string
+          nullable: true
+          description: ""
+        contact_phone:
+          type: string
+          nullable: true
+          description: ""
+        archived:
+          type: boolean
+          nullable: false
+          description: ""
+          example: false
+        start_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        next_start_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        end_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        next_end_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        description:
+          type: string
+          nullable: true
+          description: ""
+        max_personnel_cost:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        cost_center:
+          type: string
+          nullable: true
+          description: ""
+        project_wage:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        department:
+          type: string
+          nullable: true
+          description: ""
+        color:
+          type: string
+          nullable: true
+          description: ""
+          example: "#A1A1AA"
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        completed_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        projectTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/TagResource"
+        signed_url:
+          type: string
+          nullable: true
+        employees:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmployeeResource"
+        subProjects:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubprojectResource"
+        customFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomFieldValueResource"
+          description: "Custom field values when included"
+    SubprojectResource:
+      title: SubprojectResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        parent_id:
+          type: integer
+          nullable: true
+          description: ""
+        name:
+          type: string
+          nullable: false
+          description: ""
+          example: "Projekt Winnenden"
+        status:
+          type: string
+          nullable: false
+          description: ""
+          enum:
+            - active
+            - archived
+            - completed
+          example: "active"
+        number:
+          type: string
+          nullable: true
+          description: ""
+          example: ""
+        max_hours:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        start_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        end_date:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        description:
+          type: string
+          nullable: true
+          description: ""
+        max_personnel_cost:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        cost_center:
+          type: string
+          nullable: true
+          description: ""
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+    Employee:
+      title: Employee
+      type: object
+      properties:
+        first_name:
+          type: string
+          nullable: false
+          description: ""
+        last_name:
+          type: string
+          nullable: false
+          description: ""
+        personnel_number:
+          type: string
+          nullable: false
+          description: ""
+          example: ""
+        pin:
+          type: string
+          nullable: false
+          description: "defaults to 1234"
+        pin_change_required:
+          type: string
+          nullable: true
+          description: ""
+        email:
+          type: string
+          nullable: true
+          description: ""
+        app_language:
+          type: string
+          description: ""
+        color:
+          type: string
+          nullable: true
+          description: ""
+          example: 60A5FA
+        costcenter:
+          type: string
+          nullable: true
+          description: ""
+        department_name:
+          type: string
+          nullable: false
+          description: ""
+        device_ids:
+          type: array
+          items:
+            type: integer
+        hourly_wage:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        gender:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - MR
+            - MRS
+            - DIVERS
+        position:
+          type: string
+          nullable: true
+          description: ""
+        mobile_work:
+          type: string
+          nullable: true
+          description: ""
+        phone_work:
+          type: string
+          nullable: true
+          description: ""
+        source:
+          type: string
+          nullable: true
+          enum:
+            - sap
+          description: "Identifier of the source system"
+        nationality:
+          type: array
+          nullable: true
+          description: ""
+          items:
+            type: string
+            enum:
+              - AF
+              - EG
+              - AL
+              - DZ
+              - AD
+              - AO
+              - AG
+              - GQ
+              - AR
+              - AM
+              - AZ
+              - ET
+              - AU
+              - BS
+              - BH
+              - BD
+              - BB
+              - BY
+              - BE
+              - BZ
+              - BJ
+              - BT
+              - BO
+              - BA
+              - BW
+              - BR
+              - GB
+              - BN
+              - BG
+              - BF
+              - BI
+              - CL
+              - CN
+              - CR
+              - DK
+              - DE
+              - DM
+              - DO
+              - DJ
+              - EC
+              - AE
+              - ER
+              - EE
+              - FJ
+              - FI
+              - FR
+              - GA
+              - GM
+              - GE
+              - GH
+              - GD
+              - GR
+              - GT
+              - GN
+              - GW
+              - GY
+              - HT
+              - HN
+              - IN
+              - ID
+              - IQ
+              - IR
+              - IE
+              - IS
+              - IL
+              - IT
+              - CI
+              - JM
+              - JP
+              - YE
+              - JO
+              - KH
+              - CM
+              - CA
+              - CV
+              - KZ
+              - QA
+              - KE
+              - KG
+              - KI
+              - CO
+              - KM
+              - CG
+              - CD
+              - KP
+              - KR
+              - XK
+              - HR
+              - CU
+              - KW
+              - LA
+              - LS
+              - LV
+              - LB
+              - LR
+              - LY
+              - LI
+              - LT
+              - LU
+              - MG
+              - MW
+              - MY
+              - MV
+              - ML
+              - MT
+              - MA
+              - MH
+              - MR
+              - MU
+              - MX
+              - FM
+              - MD
+              - MC
+              - MN
+              - ME
+              - MZ
+              - MM
+              - NA
+              - NR
+              - NP
+              - NZ
+              - NI
+              - NL
+              - NE
+              - NG
+              - NU
+              - MK
+              - "NO"
+              - OM
+              - AT
+              - PK
+              - PW
+              - PA
+              - PG
+              - PY
+              - PE
+              - PH
+              - PL
+              - PT
+              - RW
+              - RO
+              - RU
+              - SB
+              - SV
+              - ZM
+              - WS
+              - SM
+              - ST
+              - SA
+              - SE
+              - CH
+              - SN
+              - RS
+              - SC
+              - SL
+              - ZW
+              - SG
+              - SK
+              - SI
+              - SO
+              - ES
+              - LK
+              - KN
+              - LC
+              - ZA
+              - SD
+              - SS
+              - SR
+              - SZ
+              - SY
+              - TJ
+              - TZ
+              - TH
+              - TL
+              - TG
+              - TO
+              - TT
+              - TD
+              - CZ
+              - TN
+              - TR
+              - TM
+              - TV
+              - UG
+              - UA
+              - HU
+              - UY
+              - US
+              - UZ
+              - VU
+              - VA
+              - VE
+              - VN
+              - VC
+              - CF
+              - CY
+        birthday:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        birthplace:
+          type: string
+          nullable: true
+          description: ""
+        street:
+          type: string
+          nullable: true
+          description: ""
+        house_number:
+          type: string
+          nullable: true
+          description: ""
+        zip:
+          type: string
+          nullable: true
+          description: ""
+        city:
+          type: string
+          nullable: true
+          description: ""
+        mobile_private:
+          type: string
+          nullable: true
+          description: ""
+        phone_private:
+          type: string
+          nullable: true
+          description: ""
+        email_private:
+          type: string
+          nullable: true
+          description: ""
+        emergency_contact:
+          type: string
+          nullable: true
+          description: ""
+        emergency_phone:
+          type: string
+          nullable: true
+          description: ""
+        comments:
+          type: string
+          nullable: true
+          description: ""
+        entry_date:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        contract_ending:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        trial_period_end_date:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        trial_period:
+          type: string
+          nullable: false
+          description: ""
+        notice_period:
+          type: string
+          nullable: true
+          description: ""
+        max_vacation_days:
+          type: array
+          items:
+            type: object
+            properties:
+              days:
+                type: integer
+                nullable: false
+                description: ""
+                example: 0
+              year:
+                type: integer
+                nullable: false
+                description: ""
+                example: 0
+        school_education:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - NO_EDUCATION
+            - SECONDARY_SCHOOL
+            - SECONDARY_SCHOOL_CERTIFICATE
+            - VOCATIONAL_BACCALAUREATE
+            - UNIVERSITY_ENTRANCE_QUALIFICATION
+        work_education:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - VOCATIONAL_TRAINING
+            - VOCATIONAL_TRAINING_FURTHER_EDUCATION
+            - MASTER_CRAFTSMAN
+            - DIPLOMA
+            - BACHELOR
+            - MASTER
+            - STATE_EXAMINATION
+            - DOCTOR
+            - PROFESSOR
+            - OTHER
+        employment_type:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - INTERNSHIP
+            - TEMPORARY_EMPLOYEE
+            - STUDENT_ASSISTANT
+            - EDUCATION
+            - PART_TIME
+            - FULL_TIME
+            - FREELANCER
+            - SELF_EMPLOYED
+            - OTHER
+        driving_license:
+          type: string
+          nullable: true
+          description: ""
+        other_qualifications:
+          type: string
+          nullable: true
+          description: ""
+        brutto_month:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        brutto_year:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        brutto_hour:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        other_salary:
+          type: string
+          nullable: true
+          description: ""
+        tax_identification_number:
+          type: string
+          nullable: true
+          description: ""
+        income_tax_class:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+            - 6
+        tax_office:
+          type: string
+          nullable: true
+          description: ""
+        tax_number:
+          type: string
+          nullable: true
+          description: ""
+        marital_status:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - SINGLE
+            - MARRIED
+            - DIVORCED
+            - WIDOWED
+            - REGISTERED_PARTNERSHIP
+            - PARTNER_DIED
+            - SEPARATED
+        confession:
+          type: string
+          nullable: true
+          description: ""
+        type_of_healthcare:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - PRIVATE
+            - STATUTORY
+            - AID
+            - OTHER
+        healthcare:
+          type: string
+          nullable: true
+          description: ""
+        social_number:
+          type: string
+          nullable: true
+          description: ""
+        healthcare_number:
+          type: string
+          nullable: true
+          description: ""
+        healthcare_provider_number:
+          type: string
+          nullable: true
+          description: ""
+        children:
+          type: string
+          nullable: true
+          description: ""
+        billing:
+          type: string
+          nullable: true
+          description: ""
+        second_job:
+          type: string
+          nullable: true
+          description: ""
+        comments_2:
+          type: string
+          nullable: true
+          description: ""
+        bank_name:
+          type: string
+          nullable: true
+          description: ""
+        iban:
+          type: string
+          nullable: true
+          description: ""
+        bic:
+          type: string
+          nullable: true
+          description: ""
+        comments_3:
+          type: string
+          nullable: true
+          description: ""
+        comments_4:
+          type: string
+          nullable: true
+          description: ""
+        country:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - AD
+            - AE
+            - AF
+            - AG
+            - AI
+            - AL
+            - AM
+            - AO
+            - AQ
+            - AR
+            - AS
+            - AT
+            - AU
+            - AW
+            - AX
+            - AZ
+            - BA
+            - BB
+            - BD
+            - BE
+            - BF
+            - BG
+            - BH
+            - BI
+            - BJ
+            - BL
+            - BM
+            - BN
+            - BO
+            - BQ
+            - BR
+            - BS
+            - BT
+            - BV
+            - BW
+            - BY
+            - BZ
+            - CA
+            - CC
+            - CD
+            - CF
+            - CG
+            - CH
+            - CI
+            - CK
+            - CL
+            - CM
+            - CN
+            - CO
+            - CR
+            - CU
+            - CV
+            - CW
+            - CX
+            - CY
+            - CZ
+            - DE
+            - DJ
+            - DK
+            - DM
+            - DO
+            - DZ
+            - EC
+            - EE
+            - EG
+            - EH
+            - ER
+            - ES
+            - ET
+            - FI
+            - FJ
+            - FK
+            - FM
+            - FO
+            - FR
+            - GA
+            - GB
+            - GD
+            - GE
+            - GF
+            - GG
+            - GH
+            - GI
+            - GL
+            - GM
+            - GN
+            - GP
+            - GQ
+            - GR
+            - GS
+            - GT
+            - GU
+            - GW
+            - GY
+            - HK
+            - HM
+            - HN
+            - HR
+            - HT
+            - HU
+            - ID
+            - IE
+            - IL
+            - IM
+            - IN
+            - IO
+            - IQ
+            - IR
+            - IS
+            - IT
+            - JE
+            - JM
+            - JO
+            - JP
+            - KE
+            - KG
+            - KH
+            - KI
+            - KM
+            - KN
+            - KP
+            - KR
+            - KW
+            - KY
+            - KZ
+            - LA
+            - LB
+            - LC
+            - LI
+            - LK
+            - LR
+            - LS
+            - LT
+            - LU
+            - LV
+            - LY
+            - MA
+            - MC
+            - MD
+            - ME
+            - MF
+            - MG
+            - MH
+            - MK
+            - ML
+            - MM
+            - MN
+            - MO
+            - MP
+            - MQ
+            - MR
+            - MS
+            - MT
+            - MU
+            - MV
+            - MW
+            - MX
+            - MY
+            - MZ
+            - NA
+            - NC
+            - NE
+            - NF
+            - NG
+            - NI
+            - NL
+            - "NO"
+            - NP
+            - NR
+            - NU
+            - NZ
+            - OM
+            - PA
+            - PE
+            - PF
+            - PG
+            - PH
+            - PK
+            - PL
+            - PM
+            - PN
+            - PR
+            - PS
+            - PT
+            - PW
+            - PY
+            - QA
+            - RE
+            - RO
+            - RS
+            - RU
+            - RW
+            - SA
+            - SB
+            - SC
+            - SD
+            - SE
+            - SG
+            - SH
+            - SI
+            - SJ
+            - SK
+            - SL
+            - SM
+            - SN
+            - SO
+            - SR
+            - SS
+            - ST
+            - SV
+            - SX
+            - SY
+            - SZ
+            - TC
+            - TD
+            - TF
+            - TG
+            - TH
+            - TJ
+            - TK
+            - TL
+            - TM
+            - TN
+            - TO
+            - TR
+            - TT
+            - TV
+            - TW
+            - TZ
+            - UA
+            - UG
+            - UM
+            - US
+            - UY
+            - UZ
+            - VA
+            - VC
+            - VE
+            - VG
+            - VI
+            - VN
+            - VU
+            - WF
+            - WS
+            - YE
+            - YT
+            - ZA
+            - ZM
+            - ZW
+        region:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - Nordrhein-Westfalen
+            - Berlin
+            - Niedersachsen
+            - Sachsen-Anhalt
+            - Saarland
+            - Baden-Württemberg
+            - Bayern
+            - Bremen
+            - Hamburg
+            - Hessen
+            - Mecklenburg-Vorpommern
+            - Rheinland-Pfalz
+            - Sachsen
+            - Schleswig-Holstein
+            - Thüringen
+            - Brandenburg
+            - Burgenland
+            - Kärnten
+            - Niederösterreich
+            - Oberösterreich
+            - Salzburg
+            - Steiermark
+            - Tirol
+            - Vorarlberg
+            - Wien
+            - Zürich
+            - Bern
+            - Luzern
+            - Uri
+            - Schwyz
+            - Obwalden
+            - Nidwalden
+            - Glarus
+            - Zug
+            - Freiburg
+            - Solothurn
+            - Basel-Stadt
+            - Basel-Landschaft
+            - Schaffhausen
+            - "Appenzell Ausserrhoden"
+            - "Appenzell Innerrhoden"
+            - "St. Gallen"
+            - Graubünden
+            - Aargau
+            - Thurgau
+            - Tessin
+            - Waadt
+            - Wallis
+            - Neuenburg
+            - Genf
+            - Jura
+        languages:
+          type: array
+          nullable: true
+          description: ""
+          items:
+            type: string
+            enum:
+              - DE
+              - AT
+              - CH
+              - US
+              - GB
+              - EG
+              - CN
+              - DK
+              - FR
+              - IN
+              - ID
+              - IT
+              - JP
+              - KR
+              - HR
+              - NL
+              - PL
+              - PT
+              - RU
+              - SE
+              - SK
+              - ES
+              - TH
+              - CZ
+              - TR
+              - UA
+              - PK
+              - VN
+        target_agreements:
+          type: string
+          nullable: true
+          description: ""
+        password:
+          type: string
+          nullable: false
+          description: ""
+        role_template_name:
+          type: string
+          nullable: false
+          description: ""
+        superior_id:
+          type: integer
+          nullable: true
+          description: "Reference to the superior employee"
+        work_plan:
+          type: object
+          properties:
+            name:
+              type: string
+              nullable: false
+              description: "Name of the Workplan"
+            date:
+              type: string
+              nullable: false
+              format: date
+              example: "2023-06-17"
+          required:
+            - name
+            - date
+        custom_fields:
+          type: array
+          nullable: true
+          description: "Custom field values for the employee"
+          items:
+            type: object
+            properties:
+              custom_field_id:
+                type: integer
+                description: "ID of the custom field"
+                example: 1
+              value:
+                type: string
+                description: "Value for the custom field"
+                example: "EMP-2024-001"
+            required:
+              - custom_field_id
+              - value
+      required:
+        - first_name
+        - last_name
+        - email
+    EmployeeResource:
+      title: EmployeeResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        first_name:
+          type: string
+          nullable: false
+          description: ""
+          example: ""
+        last_name:
+          type: string
+          nullable: false
+          description: ""
+          example: ""
+        personnel_number:
+          type: string
+          nullable: false
+          description: ""
+          example: ""
+        costcenter:
+          type: string
+          nullable: true
+          description: ""
+        department_name:
+          type: string
+          nullable: false
+          description: ""
+        hourly_wage:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        gender:
+          type: string
+          nullable: true
+          description: ""
+        mobile_work:
+          type: string
+          nullable: true
+          description: ""
+        phone_work:
+          type: string
+          nullable: true
+          description: ""
+        position:
+          type: string
+          nullable: true
+          description: ""
+        superior:
+          description: "A reference of another Employee"
+          $ref: "#/components/schemas/EmployeeResource"
+        nationality:
+          type: array
+          nullable: true
+          description: ""
+          items:
+            type: string
+        birthday:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        source:
+          type: string
+          nullable: true
+          enum:
+            - sap
+          description: "Identifier of the source system"
+        birthplace:
+          type: string
+          nullable: true
+          description: ""
+        street:
+          type: string
+          nullable: true
+          description: ""
+        house_number:
+          type: string
+          nullable: true
+          description: ""
+        zip:
+          type: string
+          nullable: true
+          description: ""
+        city:
+          type: string
+          nullable: true
+          description: ""
+        mobile_private:
+          type: string
+          nullable: true
+          description: ""
+        phone_private:
+          type: string
+          nullable: true
+          description: ""
+        email_private:
+          type: string
+          nullable: true
+          description: ""
+        emergency_contact:
+          type: string
+          nullable: true
+          description: ""
+        emergency_phone:
+          type: string
+          nullable: true
+          description: ""
+        comments:
+          type: string
+          nullable: true
+          description: ""
+        comments_2:
+          type: string
+          nullable: true
+          description: ""
+        comments_3:
+          type: string
+          nullable: true
+          description: ""
+        entry_date:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        contract_ending:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        notice_period:
+          type: string
+          nullable: true
+          description: ""
+        school_education:
+          type: string
+          nullable: true
+          description: ""
+        work_education:
+          type: string
+          nullable: true
+          description: ""
+        employment_type:
+          type: string
+          nullable: true
+          description: ""
+        driving_license:
+          type: string
+          nullable: true
+          description: ""
+        other_qualifications:
+          type: string
+          nullable: true
+          description: ""
+        brutto_month:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        brutto_hour:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        brutto_year:
+          type: number
+          nullable: true
+          format: float
+          example: 200.5
+        other_salary:
+          type: string
+          nullable: true
+          description: ""
+        tax_identification_number:
+          type: string
+          nullable: true
+          description: ""
+        income_tax_class:
+          type: string
+          nullable: true
+          description: ""
+        tax_office:
+          type: string
+          nullable: true
+          description: ""
+        tax_number:
+          type: string
+          nullable: true
+          description: ""
+        marital_status:
+          type: string
+          nullable: true
+          description: ""
+        confession:
+          type: string
+          nullable: true
+          description: ""
+        type_of_healthcare:
+          type: string
+          nullable: true
+          description: ""
+        healthcare:
+          type: string
+          nullable: true
+          description: ""
+        children:
+          type: string
+          nullable: true
+          description: ""
+        billing:
+          type: string
+          nullable: true
+          description: ""
+        second_job:
+          type: string
+          nullable: true
+          description: ""
+        bank_name:
+          type: string
+          nullable: true
+          description: ""
+        iban:
+          type: string
+          nullable: true
+          description: ""
+        bic:
+          type: string
+          nullable: true
+          description: ""
+        target_agreements:
+          type: string
+          nullable: true
+          description: ""
+        color:
+          type: string
+          nullable: true
+          description: ""
+          example: "#60A5FA"
+        onboarding_secret:
+          type: string
+          nullable: true
+          description: ""
+        max_vacation_days:
+          type: object
+          properties:
+            days:
+              type: integer
+              nullable: false
+              description: ""
+              example: 0
+            year:
+              type: integer
+              nullable: false
+              description: ""
+              example: 0
+        country:
+          type: string
+          nullable: true
+          description: ""
+        region:
+          type: string
+          nullable: true
+          description: ""
+        languages:
+          type: array
+          nullable: true
+          description: ""
+          items:
+            type: string
+        social_number:
+          type: string
+          nullable: true
+          description: ""
+        healthcare_number:
+          type: string
+          nullable: true
+          description: ""
+        healthcare_provider_number:
+          type: string
+          nullable: true
+          description: ""
+        trial_period_end_date:
+          type: string
+          nullable: true
+          format: date
+          example: "2023-06-17"
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmployeeFileResource"
+        customFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomFieldValueResource"
+          description: "Custom field values when included"
+        email:
+          type: string
+          nullable: true
+          description: ""
+        app_language:
+          type: string
+          nullable: true
+          description: ""
+    Projectfile:
+      title: Projectfile
+      type: object
+      properties:
+        title:
+          type: string
+          nullable: false
+          description: ""
+        base64_encoded_string:
+          type: string
+          nullable: false
+          description: ""
+        user_defined_created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+      required:
+        - title
+        - base64_encoded_string
+    ProjectfileResource:
+      title: ProjectfileResource
+      type: object
+      properties:
+        url:
+          type: string
+          nullable: false
+          description: ""
+        title:
+          type: string
+          nullable: false
+          description: ""
+        text:
+          type: string
+          nullable: true
+          description: ""
+        id:
+          type: integer
+          nullable: false
+          description: ""
+        type:
+          type: string
+          nullable: false
+          description: ""
+          example: attachment
+        user_defined_created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+    EmployeeFile:
+      title: EmployeeFile
+      type: object
+      properties:
+        category:
+          type: string
+          nullable: true
+          description: ""
+          enum:
+            - jobreferences
+            - warnings
+            - correspondence
+            - officialdocuments
+            - application
+            - socialsecurity
+            - taxes
+            - others
+            - contract
+            - certificates
+            - targets
+        name:
+          type: string
+          nullable: true
+          description: ""
+        base64_encoded_string:
+          type: string
+          nullable: false
+          description: ""
+        uuid:
+          type: string
+          nullable: false
+          description: ""
+      required:
+        - category
+        - name
+        - base64_encoded_string
+    EmployeeFileResource:
+      title: EmployeeFileResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        category:
+          type: string
+          nullable: true
+          description: ""
+        name:
+          type: string
+          nullable: true
+          description: ""
+          example: "Zeugnis Helge Unger.pdf"
+        comment:
+          type: string
+          nullable: true
+          description: ""
+        url:
+          type: string
+          nullable: false
+          description: ""
+          example: ""
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+    Customer:
+      title: Customer
+      type: object
+      properties:
+        company:
+          type: string
+          nullable: false
+          description: ""
+          example: "Kessler Kühn GmbH"
+        identifier:
+          type: string
+          nullable: true
+          description: ""
+          example: 88029
+        street:
+          type: string
+          nullable: true
+          description: ""
+          example: "Vera-Metzger-Weg 9a"
+        city:
+          type: string
+          nullable: true
+          description: ""
+          example: "Herne"
+        zip:
+          type: string
+          nullable: true
+          description: ""
+          example: "11914"
+        country:
+          type: string
+          nullable: true
+          description: ""
+          example: "DE"
+          enum:
+            - AD
+            - AE
+            - AF
+            - AG
+            - AI
+            - AL
+            - AM
+            - AO
+            - AQ
+            - AR
+            - AS
+            - AT
+            - AU
+            - AW
+            - AX
+            - AZ
+            - BA
+            - BB
+            - BD
+            - BE
+            - BF
+            - BG
+            - BH
+            - BI
+            - BJ
+            - BL
+            - BM
+            - BN
+            - BO
+            - BQ
+            - BR
+            - BS
+            - BT
+            - BV
+            - BW
+            - BY
+            - BZ
+            - CA
+            - CC
+            - CD
+            - CF
+            - CG
+            - CH
+            - CI
+            - CK
+            - CL
+            - CM
+            - CN
+            - CO
+            - CR
+            - CU
+            - CV
+            - CW
+            - CX
+            - CY
+            - CZ
+            - DE
+            - DJ
+            - DK
+            - DM
+            - DO
+            - DZ
+            - EC
+            - EE
+            - EG
+            - EH
+            - ER
+            - ES
+            - ET
+            - FI
+            - FJ
+            - FK
+            - FM
+            - FO
+            - FR
+            - GA
+            - GB
+            - GD
+            - GE
+            - GF
+            - GG
+            - GH
+            - GI
+            - GL
+            - GM
+            - GN
+            - GP
+            - GQ
+            - GR
+            - GS
+            - GT
+            - GU
+            - GW
+            - GY
+            - HK
+            - HM
+            - HN
+            - HR
+            - HT
+            - HU
+            - ID
+            - IE
+            - IL
+            - IM
+            - IN
+            - IO
+            - IQ
+            - IR
+            - IS
+            - IT
+            - JE
+            - JM
+            - JO
+            - JP
+            - KE
+            - KG
+            - KH
+            - KI
+            - KM
+            - KN
+            - KP
+            - KR
+            - KW
+            - KY
+            - KZ
+            - LA
+            - LB
+            - LC
+            - LI
+            - LK
+            - LR
+            - LS
+            - LT
+            - LU
+            - LV
+            - LY
+            - MA
+            - MC
+            - MD
+            - ME
+            - MF
+            - MG
+            - MH
+            - MK
+            - ML
+            - MM
+            - MN
+            - MO
+            - MP
+            - MQ
+            - MR
+            - MS
+            - MT
+            - MU
+            - MV
+            - MW
+            - MX
+            - MY
+            - MZ
+            - NA
+            - NC
+            - NE
+            - NF
+            - NG
+            - NI
+            - NL
+            - "NO"
+            - NP
+            - NR
+            - NU
+            - NZ
+            - OM
+            - PA
+            - PE
+            - PF
+            - PG
+            - PH
+            - PK
+            - PL
+            - PM
+            - PN
+            - PR
+            - PS
+            - PT
+            - PW
+            - PY
+            - QA
+            - RE
+            - RO
+            - RS
+            - RU
+            - RW
+            - SA
+            - SB
+            - SC
+            - SD
+            - SE
+            - SG
+            - SH
+            - SI
+            - SJ
+            - SK
+            - SL
+            - SM
+            - SN
+            - SO
+            - SR
+            - SS
+            - ST
+            - SV
+            - SX
+            - SY
+            - SZ
+            - TC
+            - TD
+            - TF
+            - TG
+            - TH
+            - TJ
+            - TK
+            - TL
+            - TM
+            - TN
+            - TO
+            - TR
+            - TT
+            - TV
+            - TW
+            - TZ
+            - UA
+            - UG
+            - UM
+            - US
+            - UY
+            - UZ
+            - VA
+            - VC
+            - VE
+            - VG
+            - VI
+            - VN
+            - VU
+            - WF
+            - WS
+            - YE
+            - YT
+            - ZA
+            - ZM
+            - ZW
+        contact_name:
+          type: string
+          nullable: true
+          example: "Gunther Christ"
+        contact_phone:
+          type: string
+          nullable: true
+          description: 'deprecated, please use "phone" instead'
+          example: "(01058) 589175"
+        email:
+          type: string
+          nullable: true
+          description: 'deprecated, please use "general_email" or "invoice_email" instead'
+          example: "jsteiner@roth.com"
+        fax:
+          type: string
+          nullable: true
+          description: ""
+          example: "(01058) 589175"
+        sector:
+          type: string
+          nullable: true
+          description: ""
+          example: "Handwerk"
+        acquired_at:
+          type: string
+          nullable: true
+          description: ""
+          example: "01.01.2024"
+        website:
+          type: string
+          nullable: true
+          description: ""
+          example: "https://clockin.de"
+        description:
+          type: string
+          nullable: true
+          example: "they love clockin"
+          description: ""
+        employee_count:
+          type: integer
+          nullable: true
+          description: ""
+          example: 19
+        phone:
+          type: string
+          nullable: true
+          description: ""
+          example: "(01058) 589175"
+        general_email:
+          type: string
+          nullable: true
+          description: ""
+          example: "general@roth.com"
+        invoice_email:
+          type: string
+          nullable: true
+          example: "invoice@roth.com"
+          description: ""
+        custom_fields:
+          type: array
+          nullable: true
+          description: "Custom field values for the customer"
+          items:
+            type: object
+            properties:
+              custom_field_id:
+                type: integer
+                description: "ID of the custom field"
+                example: 1
+              value:
+                type: string
+                description: "Value for the custom field"
+                example: "CUST-2024-001"
+            required:
+              - custom_field_id
+              - value
+      required:
+        - company
+    CustomerResource:
+      title: CustomerResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        company:
+          type: string
+          nullable: false
+          description: ""
+          example: "Kessler Kühn GmbH"
+        identifier:
+          type: string
+          nullable: true
+          description: ""
+          example: 88029
+        street:
+          type: string
+          nullable: true
+          description: ""
+          example: "Vera-Metzger-Weg 9a"
+        zip:
+          type: string
+          nullable: true
+          description: ""
+          example: "11914"
+        city:
+          type: string
+          nullable: true
+          description: ""
+          example: "Herne"
+        country:
+          type: string
+          nullable: true
+          description: ""
+          example: "DE"
+        contact_name:
+          type: string
+          nullable: true
+          example: "Gunther Christ"
+        contact_phone:
+          type: string
+          nullable: true
+          example: "(01058) 589175"
+          description: 'deprecated, please use "phone" instead'
+        email:
+          type: string
+          nullable: true
+          example: "jsteiner@roth.com"
+          description: 'deprecated, please use "general_email" or "invoice_email" instead'
+        fax:
+          type: string
+          nullable: true
+          example: "(01058) 589175"
+          description: ""
+        sector:
+          type: string
+          nullable: true
+          example: "Handwerk"
+          description: ""
+        acquired_at:
+          type: string
+          nullable: true
+          example: "01.01.2024"
+          description: ""
+        website:
+          type: string
+          nullable: true
+          example: "https://clockin.de"
+          description: ""
+        description:
+          type: string
+          nullable: true
+          example: "they love clockin"
+          description: ""
+        employee_count:
+          type: integer
+          nullable: true
+          example: 19
+          description: ""
+        phone:
+          type: string
+          nullable: true
+          example: "(01058) 589175"
+          description: ""
+        general_email:
+          type: string
+          nullable: true
+          example: "general@roth.com"
+          description: ""
+        invoice_email:
+          type: string
+          nullable: true
+          example: "invoice@roth.com"
+          description: ""
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        customFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomFieldValueResource"
+          description: "Custom field values when included"
+    CustomFieldResource:
+      title: CustomFieldResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: "Custom field ID"
+          example: 1
+        label:
+          type: string
+          nullable: false
+          description: "Display label for the field"
+          example: "Project Code"
+        data_type:
+          type: string
+          nullable: false
+          description: "Field type"
+          enum:
+            - text
+            - number
+            - date
+          example: "text"
+    CustomFieldValueResource:
+      title: CustomFieldValueResource
+      type: object
+      properties:
+        custom_field_id:
+          type: integer
+          nullable: false
+          description: "Custom field ID (/custom-fields endpoint)"
+          example: 1
+        label:
+          type: string
+          nullable: false
+          description: "Display label for the field"
+          example: "Project Code"
+        data_type:
+          type: string
+          nullable: false
+          description: "Field type"
+          enum:
+            - text
+            - number
+            - date
+          example: "text"
+        value:
+          type: string
+          nullable: true
+          description: "The value of the custom field"
+          example: "PROJ-2024-001"
+    Device:
+      title: Device
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+        name:
+          type: string
+          nullable: false
+          description: ""
+      required:
+        - id
+        - name
+    Absence:
+      title: Absence
+      type: object
+      properties:
+        employee_id:
+          type: integer
+          nullable: false
+          description: ""
+        absencecategory_name:
+          type: string
+          nullable: false
+          description: ""
+          enum:
+            - sick
+            - vacation
+            - workshop
+            - special_vacation
+            - school
+            - working_time_account
+            - holiday
+            - other
+            - parental_leave
+            - excused_absent
+            - not_excused_absent
+            - sick_industrial_accident
+            - short_time_work
+            - maternity_pay
+            - sick_child
+            - sick_child_no_payment
+            - vacation_no_payment
+            - sick_before_short_time_work
+            - weather_related_failure
+            - sick_short_time_work
+            - sick_no_payment
+        approval:
+          type: string
+          nullable: false
+          description: ""
+          enum:
+            - denied
+            - granted
+            - pending
+        duration:
+          type: string
+          nullable: false
+          description: ""
+          enum:
+            - full_day
+            - half_day
+            - start_end
+        note:
+          type: string
+          nullable: true
+          description: ""
+        starts_at:
+          type: string
+          nullable: false
+          example: "2025-12-31T23:00:00.000000Z"
+          description: "The time part are only taken into account in case of duration = start_end"
+        ends_at:
+          type: string
+          nullable: false
+          example: "2025-12-31T23:00:00.000000Z"
+          description: "The time part are only taken into account in case of duration = start_end"
+      required:
+        - employee_id
+        - absencecategory_name
+        - approval
+        - starts_at
+        - ends_at
+    AbsenceResource:
+      title: AbsenceResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        employee_id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 1
+        absencecategory_name:
+          type: string
+          nullable: false
+          description: ""
+          example: vacation
+        approval:
+          type: string
+          nullable: false
+          description: ""
+          example: granted
+        starts_at:
+          type: string
+          nullable: false
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        ends_at:
+          type: string
+          nullable: false
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        duration:
+          type: string
+          nullable: false
+          description: ""
+          example: full_day
+        note:
+          type: string
+          nullable: true
+          description: ""
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+    ActivityResource:
+      title: ActivityResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+        starts_at:
+          type: string
+          nullable: true
+          description: ""
+        ends_at:
+          type: string
+          nullable: true
+          description: ""
+        project_id:
+          type: integer
+          nullable: true
+          description: ""
+          example: 1
+        project_number:
+          type: string
+          nullable: true
+          description: "P001"
+        device_id:
+          type: integer
+          nullable: true
+          description: ""
+          example: 1
+        employee_id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 1
+        employee_personnel_number:
+          type: string
+          nullable: true
+          description: "E002"
+        customer_identifier:
+          type: string
+          nullable: true
+          description: "C-002"
+        task_id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 4
+        workday:
+          type: string
+          nullable: true
+          description: ""
+          format: date
+          example: "2023-06-17"
+    SapEvent:
+      title: SapEvent
+      type: object
+    SapEventResource:
+      title: SapEventResource
+      type: object
+      properties:
+        personnel_number:
+          type: string
+          nullable: false
+          description: ""
+          example: "0000001"
+        date:
+          type: string
+          nullable: false
+          description: ""
+          example: "01092023"
+        time:
+          type: string
+          nullable: false
+          description: ""
+          example: "080200"
+        p:
+          type: string
+          nullable: false
+          description: ""
+          example: "P10"
+        time_assignment:
+          type: string
+          nullable: false
+          description: ""
+          example: "+#"
+    Event:
+      title: Event
+      type: object
+      properties:
+        occured_at:
+          type: string
+          nullable: false
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        task_id:
+          type: integer
+          nullable: false
+          description: |
+            * 2 - LOADING_TIME
+            * 3 - DRIVING_TIME
+            * 4 - PROJECT
+            * 5 - PAUSE
+            * 6 - SPECIAL_1
+            * 7 - SPECIAL_2
+            * 8 - LOGOUT
+            * 9 - BUSINESS_TRIP
+            * 10 - WORKING_TIME
+          enum:
+            - 2
+            - 3
+            - 4
+            - 5
+            - 6
+            - 7
+            - 9
+            - 10
+            - 8
+        employee_id:
+          type: integer
+          nullable: false
+          description: "employee reference"
+        task_label:
+          type: string
+          nullable: true
+          description: ""
+        project_id:
+          type: integer
+          nullable: true
+          description: "project reference"
+      required:
+        - occured_at
+        - task_id
+        - employee_id
+    EventResource:
+      title: EventResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+        occured_at:
+          type: string
+          nullable: false
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        task_id:
+          type: integer
+          nullable: true
+          description: ""
+          example: 4
+        employee_id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 1
+        task_label:
+          type: string
+          nullable: true
+          description: ""
+        project_id:
+          type: integer
+          nullable: true
+          description: ""
+          example: 1
+    ResourceLinks:
+      title: ResourceLinks
+      type: object
+      properties:
+        first:
+          type: string
+          format: uri
+        last:
+          type: string
+          format: uri
+        prev:
+          type: string
+          format: uri
+          nullable: true
+        next:
+          type: string
+          format: uri
+          nullable: true
+    ResourceMeta:
+      title: ResourceMeta
+      type: object
+      properties:
+        current_page:
+          type: integer
+        from:
+          type: integer
+          nullable: true
+        last_page:
+          type: integer
+        path:
+          type: string
+        per_page:
+          type: integer
+        to:
+          type: integer
+          nullable: true
+        total:
+          type: integer
+    TravelLogResource:
+      title: TravelLogResource
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 12
+        employee_id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 8
+        activity_id:
+          type: integer
+          nullable: false
+          description: ""
+          example: 4
+        distance_in_km:
+          type: integer
+          nullable: true
+          description: ""
+          example: 123
+        net_expenses_in_cent:
+          type: integer
+          nullable: true
+          description: ""
+          example: 11249
+        tax_in_cent:
+          type: integer
+          nullable: true
+          description: ""
+          example: 1249
+        currency:
+          type: string
+          enum:
+            - EUR
+            - USD
+            - GBP
+            - CHF
+          nullable: true
+          description: ""
+          example: "EUR"
+        vehicle_type:
+          type: string
+          enum:
+            - company_car
+            - private_car
+            - rental_car
+            - taxi
+            - public_transportation
+            - airplane
+            - train
+            - other
+          nullable: true
+          description: ""
+          example: "rental_car"
+        km_reading_start:
+          type: integer
+          nullable: true
+          description: ""
+          example: 123456
+        km_reading_end:
+          type: integer
+          nullable: true
+          description: ""
+          example: 123890
+        license_plate:
+          type: string
+          nullable: true
+          description: ""
+          example: LO-REM-123
+        comment:
+          type: string
+          nullable: true
+          description: ""
+          example: "Lorem ipsum"
+    WorkdayResource:
+      title: WorkdayResource
+      type: object
+      properties:
+        break_seconds:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        work_seconds:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        target_seconds:
+          type: integer
+          nullable: false
+          description: ""
+          example: 0
+        starts_at:
+          type: string
+          nullable: false
+          description: ""
+        ends_at:
+          type: string
+          nullable: false
+          description: ""
+        employee_id:
+          type: integer
+          nullable: false
+          description: ""
+        date:
+          type: string
+          nullable: false
+          format: date
+          example: "2023-06-17"
+        activities:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityResource"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventResource"
+    TagResource:
+      title: TagResource
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: false
+          description: ""
+          example: "Project"
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        updated_at:
+          type: string
+          nullable: true
+          format: date-time
+          example: "2023-06-17T18:00:00Z"
+          description: "Date in ISO 8601 format"
+        activities:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityResource"
+tags:
+  - name: Projects
+    description: "API documentation for Projects"
+  - name: "Project Employees"
+    description: "API documentation for Project Employees"
+  - name: "Project Files"
+    description: "API documentation for Project Files"
+  - name: "Employee Projects"
+    description: "API documentation for Employee Projects"
+  - name: Employees
+    description: "API documentation for Employees"
+  - name: "Employee Files"
+    description: "API documentation for Employee Files"
+  - name: Customers
+    description: "API documentation for Customers"
+  - name: Absences
+    description: "API documentation for Absences"
+  - name: Workdays
+    description: "API documentation for Workdays"
+  - name: Activities
+    description: "API documentation for Activities"
+  - name: Events
+    description: "API documentation for Events"
+  - name: TravelLog
+    description: "API documentation for Travel Logs"
