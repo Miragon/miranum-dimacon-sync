@@ -1,10 +1,6 @@
 import { z } from "zod"
 
 export const CustomerSyncInputSchema = z.object({
-  date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD")
-    .optional(),
   dryRun: z.boolean().optional(),
 })
 
@@ -22,13 +18,12 @@ export interface CustomerAlignRow {
 }
 
 export interface CustomerSyncError {
-  scope: "appointments" | "jobs" | "customers" | "customer"
+  scope: "customers" | "customer"
   refId?: string
   message: string
 }
 
 export interface CustomerSyncResult {
-  date: string
   dryRun: boolean
   durationMs: number
   customers: CustomerAlignRow[]

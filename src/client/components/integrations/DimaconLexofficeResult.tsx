@@ -20,13 +20,12 @@ export interface CustomerAlignRow {
 }
 
 export interface CustomerSyncError {
-  scope: "appointments" | "jobs" | "customers" | "customer"
+  scope: "customers" | "customer"
   refId?: string
   message: string
 }
 
 export interface CustomerSyncResult {
-  date: string
   dryRun: boolean
   durationMs: number
   customers: CustomerAlignRow[]
@@ -40,8 +39,7 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
     <>
       <section className="mb-16">
         <ResultSectionHead title="Zusammenfassung" />
-        <dl className="border-rule grid grid-cols-2 border md:grid-cols-5">
-          <Stat label="Datum" value={result.date} />
+        <dl className="border-rule grid grid-cols-2 border md:grid-cols-4">
           <Stat label="Modus" value={result.dryRun ? "dry-run" : "live"} />
           <Stat label="Dauer" value={`${(result.durationMs / 1000).toFixed(1)}s`} />
           <Stat label="Kunden" value={String(result.customers.length)} />

@@ -93,6 +93,11 @@ export async function loadJobBundles(
   )
 }
 
+export async function loadAllCustomers(client: DimaconClient): Promise<DimaconCustomerInfo[]> {
+  const rows = await withRetry(() => dimacon.allCustomers({ client }))
+  return rows as unknown as DimaconCustomerInfo[]
+}
+
 export async function loadCustomersById(
   client: DimaconClient,
   customerIds: string[],

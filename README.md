@@ -253,10 +253,10 @@ angebundenen Systeme (Dimacon, Clockin, Lexware Office). Registriert in
 Mutex (max. ein Lauf gleichzeitig, sonst HTTP 409), eigenen Cron-Slot,
 eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 
-| Integration         | Ablauf                                                                                                                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `dimacon-clockin`   | Tagesplanung: Termine laden, Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit** — als Kundennummer dient die Dimacon-Nummer (Fallback: Dimacon-ID). |
-| `dimacon-lexoffice` | Kunden der Tagesplanung in Lexware Office anlegen und Dimacon-Kundennummern an die Lexware-Nummern angleichen. Läuft er vor `dimacon-clockin`, sind die Nummern dort bereits konsistent.               |
+| Integration         | Ablauf                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dimacon-clockin`   | Tagesplanung: Termine laden, Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit** — als Kundennummer dient die Dimacon-Nummer (Fallback: Dimacon-ID).                                           |
+| `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen. |
 
 **Endpoints** (run/healthz offen — run per `SYNC_WEBHOOK_SECRET` geschützt,
 Liste hinter Auth):

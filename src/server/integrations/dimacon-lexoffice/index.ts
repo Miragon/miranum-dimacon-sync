@@ -6,8 +6,8 @@ export const dimaconLexofficeIntegration = defineIntegration({
   id: "dimacon-lexoffice",
   name: "Dimacon → Lexoffice",
   description:
-    "Kunden aus der Dimacon-Tagesplanung in Lexware Office anlegen und die " +
-    "Dimacon-Kundennummern an die Lexware-Nummern angleichen.",
+    "Alle Dimacon-Kunden mit Lexware Office abgleichen — fehlende Kontakte " +
+    "anlegen und Dimacon-Kundennummern an die Lexware-Nummern angleichen.",
   systems: ["dimacon", "lexoffice"],
   requiredEnv: [
     "DIMACON_BASE_URL",

@@ -2,8 +2,7 @@ import { getDimaconClient, getLexofficeClient } from "../../lib/clients.js"
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
 import { log as rootLog } from "../../lib/log.js"
-import { loadAppointments, loadCustomersById, loadJobBundles } from "../shared/dimacon.js"
-import { todayInBerlin } from "../shared/time.js"
+import { loadAllCustomers } from "../shared/dimacon.js"
 import { CustomerAligner } from "./aligner.js"
 import type {
   CustomerAlignRow,
@@ -13,17 +12,18 @@ import type {
 } from "./types.js"
 
 /**
- * Kunden-Sync Dimacon → Lexware Office: für alle Kunden, die an dem Tag in
- * der Dimacon-Planung auftauchen, wird der Lexware-Kontakt sichergestellt
- * und die Dimacon-Kundennummer an die Lexware-Nummer angeglichen.
+ * Kunden-Sync Dimacon → Lexware Office über den GESAMTEN Kundenbestand:
+ * für jeden Dimacon-Kunden wird der Lexware-Kontakt sichergestellt und die
+ * Dimacon-Kundennummer an die Lexware-Nummer angeglichen. Ein Live-Lauf
+ * legt fehlende Lexware-Kontakte für alle Dimacon-Kunden an — vor dem
+ * ersten Live-Lauf einen dry-run prüfen.
  */
 export async function runDimaconLexofficeSync(
   input: CustomerSyncInput,
 ): Promise<CustomerSyncResult> {
   const startedAt = Date.now()
-  const date = input.date ?? todayInBerlin()
   const dryRun = input.dryRun ?? false
-  const log = rootLog.child({ syncRun: { integration: "dimacon-lexoffice", date, dryRun } })
+  const log = rootLog.child({ syncRun: { integration: "dimacon-lexoffice", dryRun } })
 
   log.info("customer sync started")
 
@@ -33,46 +33,24 @@ export async function runDimaconLexofficeSync(
   const dimaconClient = getDimaconClient()
   const lexofficeClient = getLexofficeClient()
 
-  let loaded
-  try {
-    loaded = await loadAppointments(dimaconClient, date)
-  } catch (err) {
-    const message = formatError(err)
-    log.error("failed to load appointments", { error: message })
-    errors.push({ scope: "appointments", message })
-    return result(date, dryRun, startedAt, rows, errors)
-  }
-
-  if (loaded.jobIds.length === 0) {
-    log.info("no appointments for date — nothing to sync")
-    return result(date, dryRun, startedAt, rows, errors)
-  }
-
-  const limit = createLimit()
-
-  let bundles
-  try {
-    bundles = await loadJobBundles(dimaconClient, loaded.jobIds, limit)
-  } catch (err) {
-    const message = formatError(err)
-    log.error("failed to load jobs", { error: message })
-    errors.push({ scope: "jobs", message })
-    return result(date, dryRun, startedAt, rows, errors)
-  }
-
   let customers
   try {
-    const customerIds = [...new Set(bundles.map((b) => b.customerId))]
-    customers = await loadCustomersById(dimaconClient, customerIds, limit)
+    customers = await loadAllCustomers(dimaconClient)
   } catch (err) {
     const message = formatError(err)
     log.error("failed to load customers", { error: message })
     errors.push({ scope: "customers", message })
-    return result(date, dryRun, startedAt, rows, errors)
+    return result(dryRun, startedAt, rows, errors)
   }
 
-  log.info("customers loaded", { customers: customers.length, jobs: loaded.jobIds.length })
+  log.info("customers loaded", { customers: customers.length })
 
+  if (customers.length === 0) {
+    log.info("no customers in dimacon — nothing to sync")
+    return result(dryRun, startedAt, rows, errors)
+  }
+
+  const limit = createLimit()
   const aligner = new CustomerAligner(dimaconClient, lexofficeClient, log, dryRun)
 
   await Promise.all(
@@ -95,7 +73,7 @@ export async function runDimaconLexofficeSync(
     ),
   )
 
-  const final = result(date, dryRun, startedAt, rows, errors)
+  const final = result(dryRun, startedAt, rows, errors)
   log.info("customer sync finished", {
     durationMs: final.durationMs,
     customers: final.customers.length,
@@ -105,14 +83,12 @@ export async function runDimaconLexofficeSync(
 }
 
 function result(
-  date: string,
   dryRun: boolean,
   startedAt: number,
   customers: CustomerAlignRow[],
   errors: CustomerSyncError[],
 ): CustomerSyncResult {
   return {
-    date,
     dryRun,
     durationMs: Date.now() - startedAt,
     customers,
