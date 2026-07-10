@@ -17,3 +17,4 @@ todos.json
 .playwright-mcp
 .gstack/
 /data/
+.idea

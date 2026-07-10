@@ -1,6 +1,6 @@
-import { createClockInClient, type Client as ClockInClient } from "@miranum/client-clockin"
-import { createDimaconClient, type Client as DimaconClient } from "@miranum/client-dimacon"
-import { createLexofficeClient, type Client as LexofficeClient } from "@miranum/client-lexoffice"
+import { createClockInClient, type Client as ClockInClient } from "@miragon/client-clockin"
+import { createDimaconClient, type Client as DimaconClient } from "@miragon/client-dimacon"
+import { createLexofficeClient, type Client as LexofficeClient } from "@miragon/client-lexoffice"
 import { env } from "./env.js"
 
 let _clockin: ClockInClient | undefined

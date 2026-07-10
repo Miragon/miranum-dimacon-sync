@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const searchForEmployeesMock = vi.fn()
 
-vi.mock("@miranum/client-clockin", () => ({
+vi.mock("@miragon/client-clockin", () => ({
   sdk: { searchForEmployees: searchForEmployeesMock },
 }))
 

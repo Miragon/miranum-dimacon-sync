@@ -1,5 +1,5 @@
-import { sdk as dimacon } from "@miranum/client-dimacon"
-import type { Client as DimaconClient } from "@miranum/client-dimacon"
+import { sdk as dimacon } from "@miragon/client-dimacon"
+import type { Client as DimaconClient } from "@miragon/client-dimacon"
 
 export interface AppointmentForDate {
   id: string

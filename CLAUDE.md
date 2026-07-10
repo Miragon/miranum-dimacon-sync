@@ -9,8 +9,10 @@ src/client/      React SPA (TanStack Router, Vite, Tailwind v4)
 src/server/      Hono Backend (Port 3020)
   ├─ lib/        env reader + lazy client singletons
   └─ routes/     /api/{clockin,dimacon,lexoffice}/...
-packages/clients/{clockin,dimacon,lexoffice}/   workspace API clients
 ```
+
+API-Clients kommen als externe npm-Deps (`@miragon/client-{clockin,dimacon,lexoffice}`)
+aus dem Repo Miragon/miranum-clients — hier nur konsumiert, nicht generiert.
 
 Dev: `pnpm dev` startet Client + Server parallel. Vite proxied `/api` → Hono.
 Prod: `pnpm build` (Vite-Client) + `pnpm start` (`tsx src/server/index.ts`,

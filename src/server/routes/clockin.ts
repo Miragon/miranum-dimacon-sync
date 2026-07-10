@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { sdk } from "@miranum/client-clockin"
+import { sdk } from "@miragon/client-clockin"
 import { getClockInClient } from "../lib/clients.js"
 
 const app = new Hono()

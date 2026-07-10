@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { sdk } from "@miranum/client-dimacon"
+import { sdk } from "@miragon/client-dimacon"
 import { getDimaconClient } from "../lib/clients.js"
 
 const app = new Hono()

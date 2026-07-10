@@ -9,8 +9,10 @@ src/
 └── server/     Hono-Backend (proxy für die API-Clients)
     ├── lib/    env reader + lazy client singletons
     └── routes/ /api/{clockin,dimacon,lexoffice}/...
-packages/clients/{clockin,dimacon,lexoffice}/  workspace packages
 ```
+
+Die API-Clients kommen als npm-Packages (`@miragon/client-{clockin,dimacon,lexoffice}`)
+aus [Miragon/miranum-clients](https://github.com/Miragon/miranum-clients).
 
 Der Backend-Server serviert die API-Routes unter `/api/...` und im Production-Build
 auch die statischen Client-Assets aus `dist/client`. Im Dev läuft Vite separat
@@ -283,15 +285,16 @@ Tests laufen mit `pnpm test`.
 
 # API Clients
 
-Workspace-Packages unter `packages/clients/`:
+npm-Packages aus [Miragon/miranum-clients](https://github.com/Miragon/miranum-clients):
 
-- `@miranum/client-clockin` — ClockIn (`createClockInClient`)
-- `@miranum/client-dimacon` — Dimacon (`createDimaconClient`)
-- `@miranum/client-lexoffice` — Lexoffice (`createLexofficeClient`)
+- `@miragon/client-clockin` — ClockIn (`createClockInClient`)
+- `@miragon/client-dimacon` — Dimacon (`createDimaconClient`)
+- `@miragon/client-lexoffice` — Lexoffice (`createLexofficeClient`)
 
-ClockIn und Dimacon werden via `@hey-api/openapi-ts` aus OpenAPI-Specs generiert
-(`pnpm --filter @miranum/client-clockin generate`). Der Lexoffice-Client ist
-hand-geschrieben und nutzt Node's `Buffer` — daher Server-only.
+ClockIn und Dimacon werden via `@hey-api/openapi-ts` aus OpenAPI-Specs generiert,
+der Lexoffice-Client ist hand-geschrieben und nutzt Node's `Buffer` — daher
+Server-only. Generierung und Release passieren im miranum-clients-Repo; hier
+werden die Packages nur konsumiert.
 
 Eingebunden im Backend über `src/server/lib/clients.ts` (lazy singletons aus
 env-Variablen). Neue Endpoints werden in `src/server/routes/<service>.ts`
