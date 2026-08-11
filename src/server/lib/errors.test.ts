@@ -60,6 +60,54 @@ describe("formatError", () => {
     expect(out.endsWith("…")).toBe(true)
   })
 
+  it("appends an undici-shaped cause code", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ECONNREFUSED" },
+    })
+    expect(formatError(err)).toBe("fetch failed (ECONNREFUSED)")
+  })
+
+  it("appends a cause message when no code is present", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: new Error("unknown scheme"),
+    })
+    expect(formatError(err)).toBe("fetch failed (unknown scheme)")
+  })
+
+  it("prefers a non-empty cause message over an empty code", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "", message: "socket hang up" },
+    })
+    expect(formatError(err)).toBe("fetch failed (socket hang up)")
+  })
+
+  it("walks a nested cause chain", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { message: "", cause: { code: "ENOTFOUND" } },
+    })
+    expect(formatError(err)).toBe("fetch failed (ENOTFOUND)")
+  })
+
+  it("stops descending after the depth cutoff", () => {
+    // 6 levels deep — beyond the depth-5 cutoff, so the code is never reached.
+    let cause: Record<string, unknown> = { code: "DEEP" }
+    for (let i = 0; i < 6; i++) cause = { cause }
+    const err = Object.assign(new TypeError("fetch failed"), { cause })
+    expect(formatError(err)).toBe("fetch failed")
+  })
+
+  it("does not append a cause already contained in the message", () => {
+    const err = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8080"), {
+      cause: { code: "ECONNREFUSED" },
+    })
+    expect(formatError(err)).toBe("connect ECONNREFUSED 127.0.0.1:8080")
+  })
+
+  it("ignores a cause with no usable code or message", () => {
+    const err = Object.assign(new Error("boom"), { cause: { foo: 1 } })
+    expect(formatError(err)).toBe("boom")
+  })
+
   it("handles circular objects", () => {
     const circ: Record<string, unknown> = { name: "loop" }
     circ.self = circ

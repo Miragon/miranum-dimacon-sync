@@ -3,7 +3,12 @@ const MAX_LEN = 500
 export function formatError(err: unknown): string {
   if (err == null) return "unknown error"
   if (typeof err === "string") return cap(err)
-  if (err instanceof Error) return cap(err.message || err.name || "Error")
+  if (err instanceof Error) {
+    const base = err.message || err.name || "Error"
+    // Network wrappers (undici's "fetch failed", etc.) hide the real reason in `cause`.
+    const cause = causeSummary(err.cause)
+    return cap(cause && !base.includes(cause) ? `${base} (${cause})` : base)
+  }
   if (typeof err !== "object") return cap(String(err))
 
   const e = err as Record<string, unknown>
@@ -37,6 +42,20 @@ export function formatError(err: unknown): string {
   } catch {
     return "[unserializable error]"
   }
+}
+
+function causeSummary(cause: unknown): string | undefined {
+  let c = cause
+  for (let depth = 0; c != null && depth < 5; depth++) {
+    if (typeof c === "string") return c
+    if (typeof c !== "object") return undefined
+    const o = c as Record<string, unknown>
+    const code = typeof o.code === "string" && o.code.length > 0 ? o.code : undefined
+    const message = typeof o.message === "string" && o.message.length > 0 ? o.message : undefined
+    if (code ?? message) return code ?? message
+    c = o.cause
+  }
+  return undefined
 }
 
 function cap(s: string): string {
