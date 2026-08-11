@@ -270,10 +270,15 @@ curl http://localhost:3020/api/integrations
 # On-Demand-Lauf (kein Body = heute, dryRun=false)
 curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run
 
-# Mit Datum + dryRun
-curl -X POST http://localhost:3020/api/integrations/dimacon-lexoffice/run \
+# Mit Datum + dryRun (nur dimacon-clockin kennt `date`)
+curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run \
   -H "Content-Type: application/json" \
   -d '{ "date": "2026-05-09", "dryRun": true }'
+
+# dimacon-lexoffice läuft immer über den gesamten Kundenstamm — nur `dryRun`
+curl -X POST http://localhost:3020/api/integrations/dimacon-lexoffice/run \
+  -H "Content-Type: application/json" \
+  -d '{ "dryRun": true }'
 
 # Webhook (wenn SYNC_WEBHOOK_SECRET gesetzt)
 curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run \

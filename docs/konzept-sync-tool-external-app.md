@@ -38,41 +38,52 @@ und die statisch gebaute React-SPA aus einem Prozess (Port 3020, ein
 Docker-Image, Fly.io). Der Scheduler (`croner`) läuft in-process, die
 Scheduler-Konfiguration liegt als `settings.json` auf einem Volume
 (`SETTINGS_PATH`). Auth: WorkOS-PKCE im Frontend, JWT-Middleware (`jose`) vor
-`/api/{clockin,dimacon,lexoffice,settings}`; `/api/sync` ist bewusst davor
-gemountet — `POST /api/sync/run` nutzt stattdessen ein optionales Shared
-Secret (`SYNC_WEBHOOK_SECRET`), `GET /api/sync/healthz` ist ein offener
-Status-Endpoint.
+`/api/{integrations (Liste),systems,clockin,dimacon,lexoffice,settings}`.
+Bewusst **davor** gemountet sind `/api/sync` und die offenen
+Integrations-Routen `/api/integrations/:id/{run,healthz}`: die `run`-Endpoints
+nutzen ein **optionales** Shared Secret (`SYNC_WEBHOOK_SECRET`), die
+`healthz`-Endpoints sind offen. Ist das Secret nicht gesetzt, sind die
+`run`-Endpoints unauthentifiziert — siehe Abschnitt 9, Frage 7.
 
 ```mermaid
 flowchart LR
+    Browser["Browser"]
     subgraph Deployment["Eine Deployment-Unit (Fly.io, Port 3020)"]
         SPA["React SPA<br/>(statisch serviert)"]
         Hono["Hono API<br/>/api/*"]
         Sched["Scheduler<br/>(croner, in-process)"]
-        Sync["Sync-Kern<br/>CustomerSyncer · EmployeeMatcher · ProjectUpserter"]
+        Reg["Integrations-Registry<br/>defineIntegration()"]
+        DC["dimacon-clockin<br/>CustomerSyncer · EmployeeMatcher · ProjectUpserter"]
+        DL["dimacon-lexoffice<br/>CustomerAligner"]
         Settings[("settings.json<br/>(Volume)")]
+        Hono --> Reg
+        Sched --> Reg
+        Hono --> Settings
+        Reg --> DC
+        Reg --> DL
     end
-    Browser["Browser"] --> SPA
+    Browser --> SPA
     SPA -->|"fetch /api/… + Bearer"| Hono
-    Hono --> Sync
-    Sched --> Sync
-    Hono --> Settings
-    Sync --> Dimacon["Dimacon API"]
-    Sync --> ClockIn["ClockIn API"]
-    Sync --> Lexware["Lexware Office API"]
+    DC --> Dimacon["Dimacon API"]
+    DC --> ClockIn["ClockIn API"]
+    DL --> Dimacon
+    DL --> Lexware["Lexware Office API"]
 ```
 
 Drei funktionale Lücken prägen das Zielbild — sie sind keine Randnotizen,
 sondern genau die Datenbasis, die das UI-Konzept (Abschnitt 6) braucht:
 
-- **Keine Run-Historie.** Ergebnisse geplanter Läufe werden verworfen
-  (`scheduler.ts` ignoriert das `SyncResult`); es gibt keinerlei persistierten
+- **Keine Run-Historie.** `integrations/scheduler.ts` verwirft den
+  Rückgabewert von `runIntegration()`; es gibt keinerlei persistierten
   Zustand außer `settings.json`. Die UI kann nur das Ergebnis eines selbst
   angestoßenen Laufs anzeigen.
-- **Hartkodierte Mappings.** Alle Feld-Zuordnungen stecken inline in den drei
-  Syncer-Klassen (`src/server/sync/{customers,employees,projects}.ts`),
-  inklusive Konstanten wie der Startzeit `07:30` (`time.ts`) und dem
-  Ländercode `DE`. Es gibt keine Konfigurationsebene.
+- **Hartkodierte Mappings.** Alle Feld-Zuordnungen stecken inline in den vier
+  Syncer-/Aligner-Klassen beider Integrationen
+  (`src/server/integrations/dimacon-clockin/{customers,employees,projects}.ts`
+  und `src/server/integrations/dimacon-lexoffice/aligner.ts`), inklusive
+  Konstanten wie der Startzeit `07:30`
+  (`src/server/integrations/shared/time.ts`) und dem an zwei Stellen
+  hartkodierten Ländercode `DE`. Es gibt keine Konfigurationsebene.
 - **Keine persistierten Handlungsbedarfe.** Nicht zuordenbare Mitarbeiter,
   fehlende Kunden/Projekte, Nummern-Drift usw. existieren nur als flüchtiges
   `SyncError[]` einer einzelnen Response. Der Live-Check vom 2026-08-11 zeigt,
@@ -144,11 +155,11 @@ Hinweise zur Umsetzung:
 
 Bewertet wurden drei Optionen:
 
-| Option                                                    | Bewertung                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **(a) Widget-Framework des miranum-ai-MCP-Servers**       | **Nicht anbinden.** Das Framework existiert (`get-framework-manifest`, `render-view`, Dashboards), ist aber jung: Live-Manifest zeigt 0 registrierte Widgets und 0 Pipelines; der Quellcode liegt außerhalb dieses Repos; der Vertrag (Steps/Key-Contracts) ist auf Daten-Pipelines ausgelegt, nicht auf Job-UIs. Beobachten, später ggf. andocken.                                                                                                                                                                                                                                                    |
-| **(b) MCP Apps SDK (`ui://`-Resources)** — **Empfehlung** | Standardweg für Chat-Widgets in MCP-Hosts. Widgets werden als HTML-Resources am eigenen `/mcp`-Endpoint registriert und von Tools referenziert. Framework-Guidance liegt im Repo (`.claude/skills/mcp-apps-builder/references/widgets/`).                                                                                                                                                                                                                                                                                                                                                              |
-| **(c) Bestehende SPA-Komponenten**                        | **Als Bausteine wiederverwenden.** Rein präsentational und sofort nutzbar: `ElementBox`, `MnStatusBadge`, `MnAlert`, `MnFeature`, `SectionHead`, `MnTagline`, `MnStep` sowie die Miranum-gethemten shadcn-Basics (button/input/label/card/table). Vorarbeit nötig: die widget-förmigen, aber inline gebauten Views aus `sync.tsx`/`settings.tsx` (Stat-Grid, `ResultSectionHead`, Status-Chip-Zeile, Projekt-Tabelle mit `employeeDelta`) müssen in eigenständige Komponenten extrahiert werden — der Branch `feat/integrations-architecture` hat damit begonnen (`components/integrations/bits.tsx`). |
+| Option                                                    | Bewertung                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **(a) Widget-Framework des miranum-ai-MCP-Servers**       | **Nicht anbinden.** Das Framework existiert (`get-framework-manifest`, `render-view`, Dashboards), ist aber jung: Live-Manifest zeigt 0 registrierte Widgets und 0 Pipelines; der Quellcode liegt außerhalb dieses Repos; der Vertrag (Steps/Key-Contracts) ist auf Daten-Pipelines ausgelegt, nicht auf Job-UIs. Beobachten, später ggf. andocken.                                                                                                                                                                                                                                                            |
+| **(b) MCP Apps SDK (`ui://`-Resources)** — **Empfehlung** | Standardweg für Chat-Widgets in MCP-Hosts. Widgets werden als HTML-Resources am eigenen `/mcp`-Endpoint registriert und von Tools referenziert. Framework-Guidance liegt im Repo (`.claude/skills/mcp-apps-builder/references/widgets/`).                                                                                                                                                                                                                                                                                                                                                                      |
+| **(c) Bestehende SPA-Komponenten**                        | **Als Bausteine wiederverwenden.** Rein präsentational und sofort nutzbar: `ElementBox`, `MnStatusBadge`, `MnAlert`, `MnFeature`, `SectionHead`, `MnTagline`, `MnStep` sowie die Miranum-gethemten shadcn-Basics (button/input/label/card/table). Die Extraktion der widget-förmigen Views ist mit der Integrations-Architektur bereits erfolgt: `components/integrations/{bits,DimaconClockinResult,DimaconLexofficeResult,RunResultView,RunForm}.tsx` stehen als fertige Bausteine für `ui://`-Widgets bereit. Rest-Vorarbeit: die noch inline gebauten Schedule-Karten in `src/client/routes/settings.tsx`. |
 
 Einschränkung zu (b): Wie viele MCP-Hosts `ui://`-Widgets tatsächlich
 rendern, ist eine offene Risikofrage (Abschnitt 9, Frage 6). Die Tools
@@ -204,10 +215,13 @@ letzten N Läufe (z. B. 90) behalten den vollen Blob, ältere werden auf die
 Zählerstände reduziert — sonst wächst der Store bei täglichen Cron-Läufen
 unbegrenzt.
 
-**SPA:** `/sync` wird zur Run-Liste (Tabelle: Zeitpunkt, Trigger, Modus,
-Status-Chips, Dauer) mit Detail-Ansicht (bestehende Ergebnis-Ansicht aus
-`sync.tsx`, unverändert wiederverwendet) und manuellem Trigger-Formular
-(Datum + Dry-Run-Toggle, wie heute).
+**SPA:** `/sync` bleibt die Integrations-Übersicht; die Run-Historie kommt auf
+die Detailroute `/sync/$integrationId` (Tabelle: Zeitpunkt, Trigger, Modus,
+Status-Chips, Dauer) und rendert im Detail die bestehenden
+`RunResultView`/`DimaconClockinResult`-Komponenten unverändert weiter. Das
+Trigger-Formular ist über `RunForm.tsx` bereits pro Integration
+unterschiedlich (Datum + Dry-Run nur für `dimacon-clockin`, Dry-Run-only für
+`dimacon-lexoffice`).
 
 **Chat/MCP:** Tools `trigger_sync(integrationId, date?, dryRun?)`,
 `list_runs(integrationId?, limit?)`, `get_run(runId)`. Ein Ergebnis-Widget
@@ -218,11 +232,18 @@ Tool-Call → Widget mit Ergebnis.
 ### 6.2 Mapper-Konfiguration
 
 **Datenmodell:** deklarative Mapping-Konfiguration pro Integration als
-Erweiterung der bestehenden Settings-Persistenz:
+**eigener Top-Level-Key** neben der bestehenden Settings-Persistenz. Wichtig:
+`integrations.<id>` ist bereits durch `ScheduleSettingsSchema`
+(`enabled`/`cron`/`timezone`) belegt, und Zod entfernt unbekannte Keys — eine
+Mapping-Konfiguration unterhalb dieses Keys würde beim nächsten PUT still
+verloren gehen. Deshalb ein Geschwister-Key:
 
 ```jsonc
 {
   "integrations": {
+    "dimacon-clockin": { "enabled": true, "cron": "0 5 * * *", "timezone": "Europe/Berlin" },
+  },
+  "mappings": {
     "dimacon-clockin": {
       "defaults": { "startTime": "07:30", "country": "DE" },
       "fields": [
@@ -328,3 +349,12 @@ Konfiguration der Stand der Technik.
    MCP-Apps-Widgets (`ui://`) tatsächlich? Ohne Widget-Support degradiert
    die Chat-Oberfläche auf Text-Tools — funktional, aber ohne den halben
    Mehrwert.
+7. **Credential-Modell der `run`-Endpoints (offen und dringend):** Heute
+   liegen `POST /api/{sync,integrations/:id}/run` **vor** der Auth-Middleware
+   und werden nur geprüft, wenn `SYNC_WEBHOOK_SECRET` gesetzt ist — sonst
+   sind sie unauthentifiziert (fail-open). Gleichzeitig schließen sich
+   Secret und UI gegenseitig aus: der Run-Button schickt das WorkOS-JWT im
+   selben `Authorization`-Header, den der offene Handler als Shared Secret
+   interpretiert. Nötig ist ein Modell, das beide Aufrufer bedient (JWT
+   **oder** Secret akzeptieren) und fail-closed ist. Mit `dimacon-lexoffice`
+   hängt daran jetzt ein Schreibzugriff auf den gesamten Kundenstamm.

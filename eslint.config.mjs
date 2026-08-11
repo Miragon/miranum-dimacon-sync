@@ -9,7 +9,6 @@ export default [
       "**/dist/**",
       "**/node_modules/**",
       "**/generated/**",
-      "packages/clients/*/scripts/**",
       "**/routeTree.gen.ts",
       "**/.context/**",
       "**/.tanstack/**",

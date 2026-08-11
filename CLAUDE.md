@@ -2,7 +2,7 @@
 
 ## Architektur
 
-Single-Repo, pnpm-Workspace. Frontend + Backend in einem Service:
+Single-Repo (ein pnpm-Package). Frontend + Backend in einem Service:
 
 ```
 src/client/      React SPA (TanStack Router, Vite, Tailwind v4)
