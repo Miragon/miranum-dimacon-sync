@@ -1,5 +1,9 @@
 const DEFAULT_START_HHMM = "07:30"
 
+export function todayInBerlin(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date())
+}
+
 export function startDateForClockin(date: string, hhmm: string = DEFAULT_START_HHMM): string {
   const [hours, minutes] = hhmm.split(":").map(Number)
   if (Number.isNaN(hours) || Number.isNaN(minutes)) {

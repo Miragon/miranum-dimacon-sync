@@ -7,8 +7,12 @@ Miranum App Template — React SPA + Hono backend mit den Miranum-Clients
 src/
 ├── client/     React-SPA (TanStack Router, Tailwind, shadcn)
 └── server/     Hono-Backend (proxy für die API-Clients)
-    ├── lib/    env reader + lazy client singletons
-    └── routes/ /api/{clockin,dimacon,lexoffice}/...
+    ├── lib/    env reader + lazy client singletons + settings
+    ├── integrations/            Integrations-Registry (Mutex, Scheduler)
+    │   ├── shared/              gemeinsame Loader/Helper (Dimacon, Zeit)
+    │   ├── dimacon-clockin/     Tagesplanung Dimacon → Clockin
+    │   └── dimacon-lexoffice/   Kunden-Sync Dimacon → Lexware Office
+    └── routes/ /api/{clockin,dimacon,lexoffice,integrations,settings}/...
 ```
 
 Die API-Clients kommen als npm-Packages (`@miragon/client-{clockin,dimacon,lexoffice}`)
@@ -33,36 +37,39 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                  | Beschreibung                                               | Pflicht |
-| ------------------------- | ---------------------------------------------------------- | ------- |
-| `PORT`                    | Server-Port (default: 3020)                                | nein    |
-| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                          | ja\*    |
-| `CLOCKIN_BASE_URL`        | ClockIn override                                           | nein    |
-| `DIMACON_BASE_URL`        | Dimacon Base URL                                           | ja\*    |
-| `DIMACON_TENANT`          | Dimacon Tenant                                             | ja\*    |
-| `DIMACON_API_TOKEN`       | Dimacon API Token                                          | ja\*    |
-| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                          | ja\*    |
-| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                         | nein    |
-| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für `POST /api/sync/run` (leer = offen)      | nein    |
-| `SETTINGS_PATH`           | Pfad für Settings-JSON (default `./data/settings.json`)    | nein    |
-| `SYNC_CRON`               | Initial-Seed des Cron-Ausdrucks (danach UI-konfigurierbar) | nein    |
-| `SYNC_TZ`                 | Initial-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
-| `WORKOS_CLIENT_ID`        | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus.     | nein    |
-| `VITE_WORKOS_CLIENT_ID`   | Gleicher Wert für SPA-Bundle. Leer = Auth-UI aus.          | nein    |
-| `WORKOS_REQUIRED_ORG_ID`  | Org, deren `org_id` im Token akzeptiert wird               | nein    |
+| Variable                  | Beschreibung                                            | Pflicht |
+| ------------------------- | ------------------------------------------------------- | ------- |
+| `PORT`                    | Server-Port (default: 3020)                             | nein    |
+| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                       | ja\*    |
+| `CLOCKIN_BASE_URL`        | ClockIn override                                        | nein    |
+| `DIMACON_BASE_URL`        | Dimacon Base URL                                        | ja\*    |
+| `DIMACON_TENANT`          | Dimacon Tenant                                          | ja\*    |
+| `DIMACON_API_TOKEN`       | Dimacon API Token                                       | ja\*    |
+| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                       | ja\*    |
+| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                      | nein    |
+| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für alle `/run`-Webhooks (leer = offen)   | nein    |
+| `SETTINGS_PATH`           | Pfad für Settings-JSON (default `./data/settings.json`) | nein    |
+| `SYNC_CRON`               | Erst-Seed Cron für `dimacon-clockin` (danach UI)        | nein    |
+| `SYNC_TZ`                 | Erst-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
+| `WORKOS_CLIENT_ID`        | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus.  | nein    |
+| `VITE_WORKOS_CLIENT_ID`   | Gleicher Wert für SPA-Bundle. Leer = Auth-UI aus.       | nein    |
+| `WORKOS_REQUIRED_ORG_ID`  | Org, deren `org_id` im Token akzeptiert wird            | nein    |
 
 \* nur erforderlich wenn die jeweiligen `/api/<service>/...` Routes genutzt werden
 (lazy validation beim ersten Request).
 
-**Sync-Scheduler:** Cron-Ausdruck und Timezone werden **persistent in
-`SETTINGS_PATH`** (JSON) gehalten und über die UI unter `/settings` editiert.
-`SYNC_CRON` / `SYNC_TZ` werden nur beim ersten Start als Seed verwendet, falls
-das Settings-File noch nicht existiert. Für Fly: Volume an `/data` mounten und
+**Scheduler:** Jede Integration hat einen eigenen Cron (enabled, Ausdruck,
+Timezone), **persistent in `SETTINGS_PATH`** (JSON, keyed nach Integration-ID)
+und über die UI unter `/settings` editierbar. `SYNC_CRON` / `SYNC_TZ` werden
+nur beim allerersten Start als Seed für `dimacon-clockin` verwendet; eine
+Settings-Datei in der alten `{ "sync": ... }`-Form wird beim Laden automatisch
+migriert. Für Fly: Volume an `/data` mounten und
 `SETTINGS_PATH=/data/settings.json` setzen, damit Settings Redeploys überleben.
 
 **Auth (WorkOS):** Wenn `WORKOS_CLIENT_ID` gesetzt ist, schützt eine
-JWT-Middleware alle `/api/*`-Routes (außer `/api/sync/healthz` + `/api/sync/run` —
-Webhook hat eigenes Secret). Tokens werden gegen die WorkOS-JWKS verifiziert,
+JWT-Middleware alle `/api/*`-Routes (außer den `run`/`healthz`-Endpoints unter
+`/api/integrations/:id/...` und dem Legacy-Alias `/api/sync/...` — die
+`run`-Webhooks haben ihr eigenes Secret). Tokens werden gegen die WorkOS-JWKS verifiziert,
 zusätzlich wird `org_id === WORKOS_REQUIRED_ORG_ID` geprüft. Im Frontend bakt
 Vite `VITE_WORKOS_CLIENT_ID` ins Bundle und das `<AuthKitProvider>` macht
 Auth-Code-Flow mit PKCE. Im WorkOS-Dashboard müssen Redirect-URI **und**
@@ -240,46 +247,60 @@ function PeopleComponent() {
 
 Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
 
-# Sync (Dimacon → Clockin)
+# Integrationen
 
-Überträgt die Tagesplanung aus Dimacon nach Clockin. Logik in `src/server/sync/`,
-HTTP-Route in `src/server/routes/sync.ts`. Siehe `.context/attachments/SKILL.md`
-für die fachliche Spezifikation.
+Jede Integration ist ein in sich geschlossener Sync-Ablauf zwischen zwei der
+angebundenen Systeme (Dimacon, Clockin, Lexware Office). Registriert in
+`src/server/integrations/registry.ts` — damit bekommt sie automatisch eigenen
+Mutex (max. ein Lauf gleichzeitig, sonst HTTP 409), eigenen Cron-Slot,
+eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 
-**Drei Trigger, ein Endpoint** (`POST /api/sync/run`):
+| Integration         | Ablauf                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dimacon-clockin`   | Tagesplanung: Termine laden, Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit** — als Kundennummer dient die Dimacon-Nummer (Fallback: Dimacon-ID).                                           |
+| `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen. |
+
+**Endpoints** (run/healthz offen — run per `SYNC_WEBHOOK_SECRET` geschützt,
+Liste hinter Auth):
 
 ```bash
-# On-Demand (kein Body = heute, dryRun=false)
-curl -X POST http://localhost:3020/api/sync/run
+# Übersicht aller Integrationen (Auth)
+curl http://localhost:3020/api/integrations
+
+# On-Demand-Lauf (kein Body = heute, dryRun=false)
+curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run
 
 # Mit Datum + dryRun
-curl -X POST http://localhost:3020/api/sync/run \
+curl -X POST http://localhost:3020/api/integrations/dimacon-lexoffice/run \
   -H "Content-Type: application/json" \
   -d '{ "date": "2026-05-09", "dryRun": true }'
 
 # Webhook (wenn SYNC_WEBHOOK_SECRET gesetzt)
-curl -X POST http://localhost:3020/api/sync/run \
+curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run \
   -H "Authorization: Bearer $SYNC_WEBHOOK_SECRET"
 
-# Cron — Schedule wird in `SETTINGS_PATH` persistiert und über die UI
-# (`/settings`) editiert. Erst-Seed optional via Env beim ersten Start:
-SYNC_CRON="0 6 * * *" SYNC_TZ="Europe/Berlin" pnpm start
+# Status einer Integration
+curl http://localhost:3020/api/integrations/dimacon-clockin/healthz
 ```
 
-Response: `SyncResult` mit Listen `projects` (created / updated / unchanged /
-skipped / failed), `archived` und `errors`. Status-Endpoint:
-`GET /api/sync/healthz` zeigt ob ein Lauf gerade aktiv ist.
+`POST /api/sync/run` + `GET /api/sync/healthz` bleiben als **Legacy-Alias** für
+`dimacon-clockin` erhalten (bestehende Webhooks funktionieren unverändert).
 
-Architektur-Bausteine:
+Scheduling: pro Integration über die UI (`/settings`) — persistiert in
+`SETTINGS_PATH`, PUT auf `/api/settings/integrations/:id` restartet den
+jeweiligen Cron hot. Fachliche Spezifikation der Tagesplanung:
+`.context/attachments/SKILL.md`.
 
-- `sync/index.ts` — Orchestrator, fail-soft pro Projekt
-- `sync/appointments.ts` + `sync/enrichment.ts` — Daten laden (parallel via `p-limit`)
-- `sync/employees.ts` — Match Nachname → Vorname → E-Mail (mit In-Run-Cache)
-- `sync/customers.ts` — 3-Wege-Sync Dimacon ↔ Lexware ↔ Clockin
-- `sync/projects.ts` — Search-before-create, Mitarbeiter-Diff (attach/detach)
-- `sync/archive.ts` — Nicht-eingeplante Projekte archivieren
-- `sync/mutex.ts` — Verhindert parallele Läufe (HTTP 409)
-- `sync/scheduler.ts` — `croner` In-Process-Scheduler
+Architektur-Bausteine (`src/server/integrations/`):
+
+- `types.ts` + `registry.ts` — IntegrationDefinition, Registrierung, zentraler Mutex-Wrapper
+- `mutex.ts` — pro Integration max. ein Lauf (HTTP 409)
+- `scheduler.ts` — ein `croner`-Cron pro Integration, hot-restartbar
+- `shared/dimacon.ts` — gemeinsame Loader (Termine, Jobs, Kunden; parallel via `p-limit`)
+- `dimacon-clockin/` — Orchestrator (fail-soft pro Projekt), Employee-Matching
+  (Nachname → Vorname → E-Mail), Kunden-Upsert, Projekt-Upsert mit
+  Mitarbeiter-Diff (attach/detach), Archivierung
+- `dimacon-lexoffice/` — Lexware-Kontakt find-or-create + Kundennummern-Alignment
 
 Tests laufen mit `pnpm test`.
 

@@ -1,7 +1,7 @@
 import { sdk as clockin } from "@miragon/client-clockin"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
-import { withRetry } from "../lib/concurrency.js"
-import type { Logger } from "../lib/log.js"
+import { withRetry } from "../../lib/concurrency.js"
+import type { Logger } from "../../lib/log.js"
 import type { DimaconEmployeeInfo } from "./enrichment.js"
 import type { EmployeeMapping } from "./types.js"
 

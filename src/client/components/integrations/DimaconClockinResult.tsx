@@ -1,11 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router"
-import { useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
-import { Button } from "#/components/ui/button"
-import { Input } from "#/components/ui/input"
-import { Label } from "#/components/ui/label"
-import { useApiFetch } from "#/lib/api"
 import {
   Table,
   TableBody,
@@ -14,10 +8,9 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table"
+import { ResultSectionHead, Stat } from "./bits.js"
 
-export const Route = createFileRoute("/sync")({ component: SyncPage })
-
-interface ProjectSyncResult {
+export interface ProjectSyncResult {
   dimaconProjectId: string
   clockinProjectId?: number
   name: string
@@ -27,18 +20,18 @@ interface ProjectSyncResult {
   reason?: string
 }
 
-interface ArchiveResult {
+export interface ArchiveResult {
   clockinProjectId: number
   name: string
 }
 
-interface SyncError {
+export interface SyncError {
   scope: "appointments" | "enrichment" | "customer" | "employee" | "project" | "archive"
   refId?: string
   message: string
 }
 
-interface SyncResult {
+export interface SyncResult {
   date: string
   dryRun: boolean
   durationMs: number
@@ -47,105 +40,7 @@ interface SyncResult {
   errors: SyncError[]
 }
 
-function todayISO(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
-}
-
-function SyncPage() {
-  const [date, setDate] = useState<string>(todayISO())
-  const [dryRun, setDryRun] = useState<boolean>(true)
-  const [running, setRunning] = useState<boolean>(false)
-  const [result, setResult] = useState<SyncResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const apiFetch = useApiFetch()
-
-  async function run() {
-    setRunning(true)
-    setError(null)
-    setResult(null)
-    try {
-      const res = await apiFetch("/api/sync/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, dryRun }),
-      })
-      const json = (await res.json()) as SyncResult | { error: string }
-      if (!res.ok) {
-        setError("error" in json ? json.error : `HTTP ${res.status}`)
-      } else {
-        setResult(json as SyncResult)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRunning(false)
-    }
-  }
-
-  return (
-    <>
-      <header className="mb-12">
-        <span className="mn-mono">/sync · clockin × dimacon</span>
-        <h1 className="text-h-1 text-ink mt-4">Clockin · Dimacon Sync</h1>
-        <p className="text-body text-ink-2 mt-3 max-w-[540px]">
-          Tagesplanung aus Dimacon nach Clockin übertragen — Termine laden, Projekte upserten,
-          Mitarbeiter zuweisen, nicht eingeplante archivieren.
-        </p>
-      </header>
-
-      <section className="mb-16">
-        <div className="border-rule flex flex-wrap items-end gap-6 border p-6">
-          <div className="w-[180px]">
-            <Label htmlFor="sync-date">Datum</Label>
-            <Input
-              id="sync-date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="mt-2"
-              disabled={running}
-            />
-          </div>
-          <div>
-            <Label htmlFor="sync-dry-run">Modus</Label>
-            <label
-              htmlFor="sync-dry-run"
-              className="border-ink bg-paper text-ink mt-2 flex h-10 cursor-pointer items-center gap-3 border px-3 text-sm select-none"
-            >
-              <input
-                id="sync-dry-run"
-                type="checkbox"
-                checked={dryRun}
-                onChange={(e) => setDryRun(e.target.checked)}
-                disabled={running}
-                className="accent-mn-accent size-4"
-              />
-              dry-run (nur loggen)
-            </label>
-          </div>
-          <div className="ml-auto">
-            <Button onClick={run} disabled={running} variant={dryRun ? "default" : "accent"}>
-              {running ? "läuft …" : dryRun ? "Dry-Run starten" : "Sync starten"}
-            </Button>
-          </div>
-        </div>
-        {error ? (
-          <MnAlert label="Fehler" className="mt-6">
-            {error}
-          </MnAlert>
-        ) : null}
-      </section>
-
-      {result ? <ResultView result={result} /> : null}
-    </>
-  )
-}
-
-function ResultView({ result }: { result: SyncResult }) {
+export function DimaconClockinResult({ result }: { result: SyncResult }) {
   const counts = countByStatus(result.projects)
 
   return (
@@ -238,21 +133,6 @@ function ResultView({ result }: { result: SyncResult }) {
         </section>
       ) : null}
     </>
-  )
-}
-
-function ResultSectionHead({ title }: { title: string }) {
-  return (
-    <h2 className="text-ink mb-4 font-mono text-[0.75rem] tracking-[0.18em] uppercase">{title}</h2>
-  )
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-rule border-r border-b p-4 last:border-r-0 md:border-b-0">
-      <dt className="text-ink-3 font-mono text-[0.65rem] tracking-[0.18em] uppercase">{label}</dt>
-      <dd className="text-ink mt-1 font-mono text-base">{value}</dd>
-    </div>
   )
 }
 

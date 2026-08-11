@@ -7,7 +7,7 @@ vi.mock("@miragon/client-clockin", () => ({
 }))
 
 const { EmployeeMatcher } = await import("./employees.js")
-const { log } = await import("../lib/log.js")
+const { log } = await import("../../lib/log.js")
 
 const stubClient = {} as never
 const silentLog = log.child({ test: true })

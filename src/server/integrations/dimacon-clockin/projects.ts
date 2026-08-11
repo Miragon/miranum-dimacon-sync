@@ -1,9 +1,9 @@
 import { sdk as clockin } from "@miragon/client-clockin"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
-import { withRetry } from "../lib/concurrency.js"
-import type { Logger } from "../lib/log.js"
+import { withRetry } from "../../lib/concurrency.js"
+import type { Logger } from "../../lib/log.js"
 import type { DimaconProjectInfo } from "./enrichment.js"
-import { splitZipCity, startDateForClockin } from "./time.js"
+import { splitZipCity, startDateForClockin } from "../shared/time.js"
 import type { CustomerMapping, ProjectSyncResult } from "./types.js"
 
 interface ClockinProjectRow {
