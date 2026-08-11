@@ -9,20 +9,50 @@ function optional(name: string): string | undefined {
   return value && value.length > 0 ? value : undefined
 }
 
+/**
+ * Base-URLs früh prüfen: `new URL("localhost:8080")` wirft *nicht*, sondern
+ * liefert das Schema "localhost:" — der Fehler taucht sonst erst tief im Sync
+ * als undici-"fetch failed (unknown scheme)" auf.
+ */
+function assertHttpUrl(name: string, value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error(`Invalid ${name}: ${JSON.stringify(value)} is not a valid URL`)
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `Invalid ${name}: ${JSON.stringify(value)} must start with http:// or https:// ` +
+        `(parsed scheme: "${parsed.protocol}")`,
+    )
+  }
+  return value
+}
+
+function requiredUrl(name: string): string {
+  return assertHttpUrl(name, required(name))
+}
+
+function optionalUrl(name: string): string | undefined {
+  const value = optional(name)
+  return value === undefined ? undefined : assertHttpUrl(name, value)
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3020),
   clockin: {
     apiToken: () => required("CLOCKIN_API_TOKEN"),
-    baseUrl: () => optional("CLOCKIN_BASE_URL"),
+    baseUrl: () => optionalUrl("CLOCKIN_BASE_URL"),
   },
   dimacon: {
     apiToken: () => required("DIMACON_API_TOKEN"),
-    baseUrl: () => required("DIMACON_BASE_URL"),
+    baseUrl: () => requiredUrl("DIMACON_BASE_URL"),
     tenant: () => required("DIMACON_TENANT"),
   },
   lexoffice: {
     apiKey: () => required("LEXWARE_OFFICE_API_KEY"),
-    baseUrl: () => optional("LEXWARE_OFFICE_BASE_URL"),
+    baseUrl: () => optionalUrl("LEXWARE_OFFICE_BASE_URL"),
   },
   sync: {
     webhookSecret: () => optional("SYNC_WEBHOOK_SECRET"),

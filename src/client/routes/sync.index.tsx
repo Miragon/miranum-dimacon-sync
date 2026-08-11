@@ -2,7 +2,7 @@ import { Link, createFileRoute } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
-import { useApiFetch } from "#/lib/api"
+import { readJson, useApiFetch } from "#/lib/api"
 import { formatRunDate } from "#/lib/integrations"
 import type { IntegrationInfo } from "#/lib/integrations"
 import {
@@ -27,7 +27,7 @@ function IntegrationsPage() {
     setError(null)
     try {
       const res = await apiFetch("/api/integrations")
-      const json = (await res.json()) as IntegrationInfo[] | { error: string }
+      const json = await readJson<IntegrationInfo[] | { error: string }>(res)
       if (!res.ok) {
         setError("error" in json ? json.error : `HTTP ${res.status}`)
       } else {

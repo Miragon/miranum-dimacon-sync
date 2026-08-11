@@ -5,7 +5,7 @@ import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
-import { useApiFetch } from "#/lib/api"
+import { readJson, useApiFetch } from "#/lib/api"
 import { formatRunDate } from "#/lib/integrations"
 
 export const Route = createFileRoute("/settings")({ component: SettingsPage })
@@ -39,7 +39,7 @@ function SettingsPage() {
     setError(null)
     try {
       const res = await apiFetch("/api/settings/integrations")
-      const json = (await res.json()) as ScheduleEntry[] | { error: string }
+      const json = await readJson<ScheduleEntry[] | { error: string }>(res)
       if (!res.ok) {
         setError("error" in json ? json.error : `HTTP ${res.status}`)
       } else {
@@ -122,7 +122,7 @@ function ScheduleCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
-      const json = (await res.json()) as ScheduleEntry | { error: string }
+      const json = await readJson<ScheduleEntry | { error: string }>(res)
       if (!res.ok) {
         setError("error" in json ? json.error : `HTTP ${res.status}`)
       } else {

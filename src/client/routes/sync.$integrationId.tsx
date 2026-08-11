@@ -4,7 +4,7 @@ import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { RunForm } from "#/components/integrations/RunForm"
 import { RunResultView } from "#/components/integrations/RunResultView"
-import { useApiFetch } from "#/lib/api"
+import { readJson, useApiFetch } from "#/lib/api"
 import { formatRunDate } from "#/lib/integrations"
 import type { IntegrationInfo } from "#/lib/integrations"
 
@@ -26,7 +26,7 @@ function IntegrationDetailPage() {
     setLoadError(null)
     try {
       const res = await apiFetch("/api/integrations")
-      const json = (await res.json()) as IntegrationInfo[] | { error: string }
+      const json = await readJson<IntegrationInfo[] | { error: string }>(res)
       if (!res.ok) {
         setLoadError("error" in json ? json.error : `HTTP ${res.status}`)
       } else {
@@ -53,7 +53,7 @@ function IntegrationDetailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       })
-      const json = (await res.json()) as unknown
+      const json = await readJson<unknown>(res)
       if (!res.ok) {
         const message =
           typeof json === "object" && json !== null && "error" in json

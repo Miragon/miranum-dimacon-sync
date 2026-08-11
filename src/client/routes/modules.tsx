@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table"
-import { useApiFetch } from "#/lib/api"
+import { readJson, useApiFetch } from "#/lib/api"
 import { findElementBySystem } from "#/lib/elements"
 
 export const Route = createFileRoute("/modules")({ component: Modules })
@@ -35,7 +35,7 @@ function Modules() {
     setError(null)
     try {
       const res = await apiFetch("/api/systems")
-      const json = (await res.json()) as SystemStatus[] | { error: string }
+      const json = await readJson<SystemStatus[] | { error: string }>(res)
       if (!res.ok) {
         setError("error" in json ? json.error : `HTTP ${res.status}`)
       } else {
