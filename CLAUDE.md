@@ -7,12 +7,15 @@ Single-Repo (ein pnpm-Package). Frontend + Backend in einem Service:
 ```
 src/client/      React SPA (TanStack Router, Vite, Tailwind v4)
 src/server/      Hono Backend (Port 3020)
-  ├─ lib/        env reader + lazy client singletons + settings
+  ├─ lib/        env reader + lazy client singletons + settings + http helper
   ├─ integrations/   Integrations-Registry (Mutex, Scheduler, Definitionen)
-  │   ├─ shared/            gemeinsame Loader/Helper (Dimacon, Zeit)
+  │   ├─ shared/            gemeinsame Loader/Helper (Dimacon, Zeit) +
+  │   │                     Feld-Zuordnungs-Framework (field-catalog,
+  │   │                     field-mapping, mapping-context)
   │   ├─ dimacon-clockin/   Tagesplanung Dimacon → Clockin (OHNE Lexware)
-  │   └─ dimacon-lexoffice/ Kunden-Sync Dimacon → Lexware Office
-  └─ routes/     /api/{clockin,dimacon,lexoffice,integrations,settings}/...
+  │   ├─ dimacon-clockin-employees/ bidirektionaler Mitarbeiter-Abgleich
+  │   └─ dimacon-lexoffice/ Kunden-Sync + Nummern-Alignment Dimacon → Lexware
+  └─ routes/     /api/{clockin,dimacon,lexoffice,integrations,settings,mappings}/...
 ```
 
 API-Clients kommen als externe npm-Deps (`@miragon/client-{clockin,dimacon,lexoffice}`)
@@ -79,6 +82,18 @@ restartet den jeweiligen Cron hot. Alte Dateien in `{ "sync": ... }`-Form
 werden beim Laden automatisch auf `dimacon-clockin` migriert. Env-Vars
 `SYNC_CRON` / `SYNC_TZ` dienen nur als Erst-Seed beim allerersten Start.
 Auf Fly: Volume an `/data` mounten, `SETTINGS_PATH=/data/settings.json`.
+
+Dieselbe Datei trägt unter dem Top-Level-Key `fieldMappings` die
+**Feld-Zuordnungen** (`fieldMappings[integrationId][entity]`), editierbar
+unter `/sync/<id>/mapping` („Erweitert") via `/api/mappings/:id[/:entity]`.
+Katalog/Engine in `src/server/integrations/shared/field-{catalog,mapping}.ts`;
+ohne persistierte Zuordnung gelten die Default-Regeln (identisch zum
+hartkodierten Alt-Verhalten) und es gibt keine Discovery-API-Calls.
+Match-Keys (project.number, customer.identifier, employee-Namen/PN) sind
+fixiert und nie remappbar. Der dimacon-clockin-Sync akzeptiert außerdem
+`steps: { customers, employees, projects, archive }` im Run-Input (Default:
+alles an) — die Archiv-Phase schützt nur Projekte, die der Lauf auflöst,
+deshalb läuft die Projekt-Auflösung auch bei deaktivierten Schritten.
 
 ## Quality Gates
 

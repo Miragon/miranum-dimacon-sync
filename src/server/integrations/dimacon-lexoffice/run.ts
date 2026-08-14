@@ -1,14 +1,18 @@
-import { getDimaconClient, getLexofficeClient } from "../../lib/clients.js"
+import { getClockInClient, getDimaconClient, getLexofficeClient } from "../../lib/clients.js"
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
 import { log as rootLog } from "../../lib/log.js"
 import { loadAllCustomers } from "../shared/dimacon.js"
+import { loadMappingContext } from "../shared/mapping-context.js"
+import type { EntityMappingContext } from "../shared/mapping-context.js"
 import { CustomerAligner } from "./aligner.js"
+import { DEFAULT_LEXOFFICE_STEPS } from "./types.js"
 import type {
   CustomerAlignRow,
   CustomerSyncError,
   CustomerSyncInput,
   CustomerSyncResult,
+  LexofficeSyncSteps,
 } from "./types.js"
 
 /**
@@ -23,7 +27,8 @@ export async function runDimaconLexofficeSync(
 ): Promise<CustomerSyncResult> {
   const startedAt = Date.now()
   const dryRun = input.dryRun ?? false
-  const log = rootLog.child({ syncRun: { integration: "dimacon-lexoffice", dryRun } })
+  let steps = input.steps ?? DEFAULT_LEXOFFICE_STEPS
+  const log = rootLog.child({ syncRun: { integration: "dimacon-lexoffice", dryRun, steps } })
 
   log.info("customer sync started")
 
@@ -33,6 +38,36 @@ export async function runDimaconLexofficeSync(
   const dimaconClient = getDimaconClient()
   const lexofficeClient = getLexofficeClient()
 
+  // Feld-Zuordnung — ohne persistierte Regeln keine zusätzlichen API-Calls.
+  // Safe-Mode bei Ladefehler: keine Kontakt-Anlagen mit unklarer Zuordnung,
+  // das Nummern-Alignment braucht keine Zuordnung und läuft weiter.
+  let mapping: EntityMappingContext | undefined
+  try {
+    const context = await loadMappingContext(dimaconClient, getClockInClient, "dimacon-lexoffice", [
+      "lexofficeContact",
+    ])
+    mapping = context.get("lexofficeContact")
+  } catch (err) {
+    const message = formatError(err)
+    log.error("failed to load field mapping — disabling contact creation for this run", {
+      error: message,
+    })
+    errors.push({
+      scope: "mapping",
+      message: `Feld-Zuordnung konnte nicht geladen werden — Kontakt-Anlage für diesen Lauf deaktiviert (${message})`,
+    })
+    steps = { ...steps, createContacts: false }
+  }
+  const onMappingWarning = (message: string) => {
+    log.warn("field mapping warning", { message })
+    errors.push({ scope: "mapping", message })
+  }
+
+  if (!steps.createContacts && !steps.alignNumbers) {
+    log.info("all steps disabled — nothing to do")
+    return result(dryRun, steps, startedAt, rows, errors)
+  }
+
   let customers
   try {
     customers = await loadAllCustomers(dimaconClient)
@@ -40,18 +75,26 @@ export async function runDimaconLexofficeSync(
     const message = formatError(err)
     log.error("failed to load customers", { error: message })
     errors.push({ scope: "customers", message })
-    return result(dryRun, startedAt, rows, errors)
+    return result(dryRun, steps, startedAt, rows, errors)
   }
 
   log.info("customers loaded", { customers: customers.length })
 
   if (customers.length === 0) {
     log.info("no customers in dimacon — nothing to sync")
-    return result(dryRun, startedAt, rows, errors)
+    return result(dryRun, steps, startedAt, rows, errors)
   }
 
   const limit = createLimit()
-  const aligner = new CustomerAligner(dimaconClient, lexofficeClient, log, dryRun)
+  const aligner = new CustomerAligner(
+    dimaconClient,
+    lexofficeClient,
+    log,
+    dryRun,
+    steps,
+    mapping,
+    onMappingWarning,
+  )
 
   await Promise.all(
     customers.map((customer) =>
@@ -73,7 +116,7 @@ export async function runDimaconLexofficeSync(
     ),
   )
 
-  const final = result(dryRun, startedAt, rows, errors)
+  const final = result(dryRun, steps, startedAt, rows, errors)
   log.info("customer sync finished", {
     durationMs: final.durationMs,
     customers: final.customers.length,
@@ -84,12 +127,14 @@ export async function runDimaconLexofficeSync(
 
 function result(
   dryRun: boolean,
+  steps: LexofficeSyncSteps,
   startedAt: number,
   customers: CustomerAlignRow[],
   errors: CustomerSyncError[],
 ): CustomerSyncResult {
   return {
     dryRun,
+    steps,
     durationMs: Date.now() - startedAt,
     customers,
     errors,

@@ -56,8 +56,8 @@ describe("CustomerSyncer (ohne Lexware)", () => {
 
     const mapping = await syncer.resolve(customer)
 
-    expect(mapping.clockinId).toBe(42)
-    expect(mapping.number).toBe("D-100")
+    expect(mapping?.clockinId).toBe(42)
+    expect(mapping?.number).toBe("D-100")
     expect(createCustomerMock.mock.calls[0][0]).toMatchObject({
       body: { company: "Muster GmbH", identifier: "D-100", zip: "80331", city: "München" },
     })
@@ -73,7 +73,7 @@ describe("CustomerSyncer (ohne Lexware)", () => {
 
     const mapping = await syncer.resolve({ ...customer, customerNumber: "L-200" })
 
-    expect(mapping.clockinId).toBe(7)
+    expect(mapping?.clockinId).toBe(7)
     expect(searchForCustomersMock).toHaveBeenCalledTimes(2)
     expect(searchForCustomersMock.mock.calls[0][0]).toMatchObject({
       body: { scopes: [{ name: "byNameOrNumber", parameters: ["L-200"] }] },
@@ -91,7 +91,7 @@ describe("CustomerSyncer (ohne Lexware)", () => {
 
     const mapping = await syncer.resolve({ ...customer, customerNumber: undefined })
 
-    expect(mapping.number).toBe("cust-1")
+    expect(mapping?.number).toBe("cust-1")
     expect(createCustomerMock.mock.calls[0][0]).toMatchObject({
       body: { identifier: "cust-1" },
     })
@@ -103,7 +103,17 @@ describe("CustomerSyncer (ohne Lexware)", () => {
 
     const mapping = await syncer.resolve(customer)
 
-    expect(mapping.clockinId).toBe(-1)
+    expect(mapping?.clockinId).toBe(-1)
+    expect(createCustomerMock).not.toHaveBeenCalled()
+  })
+
+  it("returns null instead of creating when createMissing is off", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    const syncer = new CustomerSyncer(stubClient, silentLog, false, false)
+
+    const mapping = await syncer.resolve(customer)
+
+    expect(mapping).toBeNull()
     expect(createCustomerMock).not.toHaveBeenCalled()
   })
 })

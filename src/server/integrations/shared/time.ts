@@ -4,6 +4,11 @@ export function todayInBerlin(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date())
 }
 
+export function nextDay(date: string): string {
+  const [y, m, d] = date.split("-").map(Number)
+  return new Date(Date.UTC(y, (m ?? 1) - 1, (d ?? 1) + 1)).toISOString().slice(0, 10)
+}
+
 export function startDateForClockin(date: string, hhmm: string = DEFAULT_START_HHMM): string {
   const [hours, minutes] = hhmm.split(":").map(Number)
   if (Number.isNaN(hours) || Number.isNaN(minutes)) {

@@ -44,16 +44,29 @@ export function formatError(err: unknown): string {
   }
 }
 
+/**
+ * Fehler samt verschachtelter `cause`-Glieder als flache Liste, tiefenbegrenzt
+ * gegen zyklische Ketten. undici hängt den echten Netzwerkfehler (ECONNREFUSED
+ * etc.) als `cause` an ein generisches "fetch failed".
+ */
+export function causeChain(err: unknown, maxDepth = 5): unknown[] {
+  const chain: unknown[] = []
+  let c = err
+  for (let depth = 0; c != null && depth < maxDepth; depth++) {
+    chain.push(c)
+    c = typeof c === "object" ? (c as { cause?: unknown }).cause : undefined
+  }
+  return chain
+}
+
 function causeSummary(cause: unknown): string | undefined {
-  let c = cause
-  for (let depth = 0; c != null && depth < 5; depth++) {
+  for (const c of causeChain(cause)) {
     if (typeof c === "string") return c
     if (typeof c !== "object") return undefined
     const o = c as Record<string, unknown>
     const code = typeof o.code === "string" && o.code.length > 0 ? o.code : undefined
     const message = typeof o.message === "string" && o.message.length > 0 ? o.message : undefined
     if (code ?? message) return code ?? message
-    c = o.cause
   }
   return undefined
 }

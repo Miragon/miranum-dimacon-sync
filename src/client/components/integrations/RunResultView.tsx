@@ -1,3 +1,5 @@
+import { DimaconClockinEmployeesResult } from "./DimaconClockinEmployeesResult.js"
+import type { EmployeeSyncResult } from "./DimaconClockinEmployeesResult.js"
 import { DimaconClockinResult } from "./DimaconClockinResult.js"
 import type { SyncResult } from "./DimaconClockinResult.js"
 import { DimaconLexofficeResult } from "./DimaconLexofficeResult.js"
@@ -17,6 +19,9 @@ export function RunResultView({
 }) {
   if (integrationId === "dimacon-clockin") {
     return <DimaconClockinResult result={result as SyncResult} />
+  }
+  if (integrationId === "dimacon-clockin-employees") {
+    return <DimaconClockinEmployeesResult result={result as EmployeeSyncResult} />
   }
   if (integrationId === "dimacon-lexoffice") {
     return <DimaconLexofficeResult result={result as CustomerSyncResult} />

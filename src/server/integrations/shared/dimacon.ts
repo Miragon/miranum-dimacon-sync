@@ -1,6 +1,7 @@
 import { sdk as dimacon } from "@miragon/client-dimacon"
 import type { Client as DimaconClient } from "@miragon/client-dimacon"
 import { createLimit, withRetry } from "../../lib/concurrency.js"
+import { nextDay } from "./time.js"
 
 export interface AppointmentForDate {
   id: string
@@ -14,6 +15,8 @@ export interface LoadedAppointments {
   appointments: AppointmentForDate[]
   jobIds: string[]
   byJobId: Map<string, AppointmentForDate[]>
+  /** total = alle Termine des Datums (inkl. archivierte), live = nach Filter */
+  counts: { total: number; live: number }
 }
 
 export interface DimaconJobBundle {
@@ -31,16 +34,23 @@ export interface DimaconCustomerInfo {
   zipCity?: string
   phoneNumber?: string
   email?: string
+  description?: string
+  customAttributeValues?: { attributeId: string; value?: string }[]
 }
 
 export async function loadAppointments(
   client: DimaconClient,
   date: string,
 ): Promise<LoadedAppointments> {
-  const result = (await dimacon.getAllJobAppointmentsInPeriod({
-    client,
-    query: { from: date, to: date },
-  })) as unknown as {
+  const result = (await withRetry(() =>
+    dimacon.getAllJobAppointmentsInPeriod({
+      client,
+      // `to` wirkt exklusiv (Start des Tages): Termine tragen Datetimes,
+      // ein from=to-Fenster ist daher immer leer. Folgetag anfragen und
+      // lokal aufs angefragte Datum filtern.
+      query: { from: date, to: nextDay(date) },
+    }),
+  )) as unknown as {
     id: string
     jobId: string
     teamId: string
@@ -48,7 +58,8 @@ export async function loadAppointments(
     isArchived: boolean
   }[]
 
-  const live = result.filter((a) => !a.isArchived)
+  const forDate = result.filter((a) => a.date.startsWith(date))
+  const live = forDate.filter((a) => !a.isArchived)
   const byJobId = new Map<string, AppointmentForDate[]>()
   for (const a of live) {
     const list = byJobId.get(a.jobId) ?? []
@@ -60,6 +71,7 @@ export async function loadAppointments(
     appointments: live,
     jobIds: [...new Set(live.map((a) => a.jobId))],
     byJobId,
+    counts: { total: forDate.length, live: live.length },
   }
 }
 
@@ -91,6 +103,68 @@ export async function loadJobBundles(
       }),
     ),
   )
+}
+
+export type DimaconEmployeeRole = "CRAFTSMAN" | "CONSTRUCTION_LEADER" | "BACKOFFICE" | "INSPECTOR"
+
+export interface DimaconEmployeeFull {
+  id: string
+  firstName: string
+  lastName: string
+  personnelNumber?: string
+  phoneNumber?: string
+  team?: string
+  additionalInformation?: string
+  role: DimaconEmployeeRole
+  color: string
+  timeTrackingActive: boolean
+  isArchived: boolean
+  /** E-Mail des zugehörigen User-Kontos — liegt in Dimacon nicht am Mitarbeiter */
+  email?: string
+}
+
+export async function loadEmployeesWithEmail(
+  client: DimaconClient,
+): Promise<DimaconEmployeeFull[]> {
+  const [employees, users] = await Promise.all([
+    withRetry(() => dimacon.getAllEmployees({ client })) as Promise<unknown>,
+    withRetry(() => dimacon.getAllUsers({ client })) as Promise<unknown>,
+  ])
+
+  const emailByEmployeeId = new Map(
+    (users as { employeeId?: string; emailAddress?: string }[])
+      .filter((u) => u.employeeId && u.emailAddress)
+      .map((u) => [u.employeeId as string, u.emailAddress as string]),
+  )
+
+  return (
+    employees as {
+      id: string
+      firstName: string
+      lastName: string
+      personnelNumber?: string
+      phoneNumber?: string
+      team?: string
+      additionalInformation?: string
+      role: DimaconEmployeeRole
+      color: string
+      timeTrackingActive: boolean
+      isArchived: boolean
+    }[]
+  ).map((e) => ({
+    id: e.id,
+    firstName: e.firstName,
+    lastName: e.lastName,
+    personnelNumber: e.personnelNumber,
+    phoneNumber: e.phoneNumber,
+    team: e.team,
+    additionalInformation: e.additionalInformation,
+    role: e.role,
+    color: e.color,
+    timeTrackingActive: e.timeTrackingActive,
+    isArchived: e.isArchived,
+    email: emailByEmployeeId.get(e.id),
+  }))
 }
 
 export async function loadAllCustomers(client: DimaconClient): Promise<DimaconCustomerInfo[]> {

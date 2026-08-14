@@ -26,7 +26,7 @@ export interface ArchiveResult {
 }
 
 export interface SyncError {
-  scope: "appointments" | "enrichment" | "customer" | "employee" | "project" | "archive"
+  scope: "appointments" | "enrichment" | "customer" | "employee" | "project" | "archive" | "mapping"
   refId?: string
   message: string
 }
@@ -35,9 +35,19 @@ export interface SyncResult {
   date: string
   dryRun: boolean
   durationMs: number
+  /** optional: ältere Server-Versionen liefern die Felder nicht */
+  appointments?: { total: number; live: number }
+  steps?: { customers: boolean; employees: boolean; projects: boolean; archive: boolean }
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
+}
+
+const STEP_LABELS: Record<string, string> = {
+  customers: "kunden",
+  employees: "mitarbeiter",
+  projects: "projekte",
+  archive: "archivierung",
 }
 
 export function DimaconClockinResult({ result }: { result: SyncResult }) {
@@ -47,15 +57,36 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
     <>
       <section className="mb-16">
         <ResultSectionHead title="Zusammenfassung" />
-        <dl className="border-rule grid grid-cols-2 border md:grid-cols-6">
+        <dl className="border-rule grid grid-cols-2 border md:grid-cols-7">
           <Stat label="Datum" value={result.date} />
           <Stat label="Modus" value={result.dryRun ? "dry-run" : "live"} />
           <Stat label="Dauer" value={`${(result.durationMs / 1000).toFixed(1)}s`} />
+          <Stat
+            label="Termine"
+            value={result.appointments ? String(result.appointments.live) : "—"}
+          />
           <Stat label="Projekte" value={String(result.projects.length)} />
           <Stat label="Archiviert" value={String(result.archived.length)} />
           <Stat label="Fehler" value={String(result.errors.length)} />
         </dl>
+        {result.appointments?.live === 0 && result.errors.length === 0 ? (
+          <p className="text-ink-2 mt-4 text-[0.8rem]">
+            Keine Termine in Dimacon für dieses Datum — es gibt nichts zu synchronisieren.
+            {result.appointments.total > 0
+              ? ` (${result.appointments.total} archivierte Termine wurden ignoriert.)`
+              : ""}
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap gap-2">
+          {result.steps
+            ? Object.entries(result.steps)
+                .filter(([, on]) => !on)
+                .map(([step]) => (
+                  <MnStatusBadge key={step} variant="warn">
+                    {STEP_LABELS[step] ?? step} aus
+                  </MnStatusBadge>
+                ))
+            : null}
           {(["created", "updated", "unchanged", "skipped", "failed"] as const).map((s) =>
             counts[s] > 0 ? (
               <MnStatusBadge key={s} variant={badgeVariant(s)}>
@@ -80,8 +111,8 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {result.projects.map((p) => (
-                <TableRow key={p.dimaconProjectId}>
+              {result.projects.map((p, i) => (
+                <TableRow key={`${p.dimaconProjectId}-${i}`}>
                   <TableCell>
                     <MnStatusBadge variant={badgeVariant(p.status)}>{p.status}</MnStatusBadge>
                   </TableCell>

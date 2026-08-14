@@ -3,19 +3,25 @@ import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
 import { log as rootLog } from "../../lib/log.js"
 import { loadAppointments } from "../shared/dimacon.js"
+import { FIELD_CATALOG } from "../shared/field-catalog.js"
+import { EMPTY_DISCOVERY } from "../shared/field-mapping.js"
+import { loadMappingContext } from "../shared/mapping-context.js"
+import type { EntityMappingContext, MappingContext } from "../shared/mapping-context.js"
 import { todayInBerlin } from "../shared/time.js"
 import { archiveUnplanned } from "./archive.js"
 import { CustomerSyncer } from "./customers.js"
 import { EmployeeMatcher } from "./employees.js"
 import { enrich } from "./enrichment.js"
 import { ProjectUpserter } from "./projects.js"
-import type { ProjectSyncResult, SyncError, SyncResult, SyncRunInput } from "./types.js"
+import { DEFAULT_STEPS } from "./types.js"
+import type { ProjectSyncResult, SyncError, SyncResult, SyncRunInput, SyncSteps } from "./types.js"
 
 export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncResult> {
   const startedAt = Date.now()
   const date = input.date ?? todayInBerlin()
   const dryRun = input.dryRun ?? false
-  const log = rootLog.child({ syncRun: { integration: "dimacon-clockin", date, dryRun } })
+  let steps = input.steps ?? DEFAULT_STEPS
+  const log = rootLog.child({ syncRun: { integration: "dimacon-clockin", date, dryRun, steps } })
 
   log.info("sync started")
 
@@ -33,17 +39,18 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
     const message = formatError(err)
     log.error("failed to load appointments", { error: message })
     errors.push({ scope: "appointments", message })
-    return result(date, dryRun, startedAt, projects, [], errors)
+    return result(date, dryRun, steps, startedAt, { total: 0, live: 0 }, projects, [], errors)
   }
 
   log.info("appointments loaded", {
-    appointments: loaded.appointments.length,
+    appointmentsTotal: loaded.counts.total,
+    appointmentsLive: loaded.counts.live,
     jobs: loaded.jobIds.length,
   })
 
   if (loaded.jobIds.length === 0) {
     log.info("no appointments for date — nothing to sync")
-    return result(date, dryRun, startedAt, projects, [], errors)
+    return result(date, dryRun, steps, startedAt, loaded.counts, projects, [], errors)
   }
 
   let enriched
@@ -53,12 +60,60 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
     const message = formatError(err)
     log.error("enrichment failed", { error: message })
     errors.push({ scope: "enrichment", message })
-    return result(date, dryRun, startedAt, projects, [], errors)
+    return result(date, dryRun, steps, startedAt, loaded.counts, projects, [], errors)
+  }
+
+  // Feld-Zuordnung laden — ohne persistierte Regeln macht das keine API-Calls
+  // und entspricht exakt dem bisherigen Verhalten.
+  let mappingContext: MappingContext
+  try {
+    mappingContext = await loadMappingContext(
+      dimaconClient,
+      () => clockinClient,
+      "dimacon-clockin",
+      ["project", "customer"],
+    )
+  } catch (err) {
+    const message = formatError(err)
+    // Safe-Mode: mit unklarer Zuordnung nichts schreiben — Auflösung,
+    // Mitarbeiter-Zuordnung und Archiv-Schutz laufen normal weiter.
+    log.error("failed to load field mapping — disabling project/customer writes for this run", {
+      error: message,
+    })
+    errors.push({
+      scope: "mapping",
+      message: `Feld-Zuordnung konnte nicht geladen werden — Projekt-/Kunden-Schreibschritte für diesen Lauf deaktiviert (${message})`,
+    })
+    steps = { ...steps, projects: false, customers: false }
+    mappingContext = new Map()
+  }
+  const projectMapping = mappingContext.get("project") ?? defaultContext("project")
+  const customerMapping_ = mappingContext.get("customer") ?? defaultContext("customer")
+  const onMappingWarning = (message: string) => {
+    log.warn("field mapping warning", { message })
+    errors.push({ scope: "mapping", message })
   }
 
   const employeeMatcher = new EmployeeMatcher(clockinClient, log)
-  const customerSyncer = new CustomerSyncer(clockinClient, log, dryRun)
-  const upserter = new ProjectUpserter(clockinClient, log, dryRun)
+  const customerSyncer = new CustomerSyncer(
+    clockinClient,
+    log,
+    dryRun,
+    steps.customers,
+    customerMapping_,
+    onMappingWarning,
+  )
+  const upserter = new ProjectUpserter(
+    clockinClient,
+    log,
+    dryRun,
+    steps,
+    projectMapping,
+    onMappingWarning,
+    // Archiv-Schutz unabhängig vom Zeilen-Status: jede aufgelöste oder
+    // angelegte Clockin-ID zählt als "heute eingeplant".
+    (clockinProjectId) => syncedClockinIds.add(clockinProjectId),
+  )
 
   const limit = createLimit()
 
@@ -70,7 +125,7 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
           dimaconProjectId: job.projectId,
           name: "(unknown)",
           status: "skipped",
-          reason: "project not found in dimacon",
+          reason: "Projekt in Dimacon nicht gefunden",
         }
         projects.push(r)
         return
@@ -82,31 +137,28 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
           dimaconProjectId: project.id,
           name: project.name,
           status: "skipped",
-          reason: "customer not found in dimacon",
+          reason: "Kunde in Dimacon nicht gefunden",
         })
         return
       }
 
-      let customerMapping
+      let customerMapping: Awaited<ReturnType<typeof customerSyncer.resolve>> = null
       try {
         customerMapping = await customerSyncer.resolve(dimaconCustomer)
       } catch (err) {
         const message = formatError(err)
         log.error("customer sync failed", { dimaconCustomerId: dimaconCustomer.id, error: message })
         errors.push({ scope: "customer", refId: dimaconCustomer.id, message })
-        projects.push({
-          dimaconProjectId: project.id,
-          name: project.name,
-          status: "skipped",
-          reason: `customer sync failed: ${message}`,
-        })
-        return
+        // NICHT abbrechen: der Upsert muss die Clockin-ID trotzdem auflösen,
+        // sonst archiviert die Archiv-Phase ein heute eingeplantes Projekt.
       }
 
       const desiredEmployeeIds: number[] = []
-      const dimaconEmployeeIds = unique(
-        job.teamAssignments.filter((a) => a.date.startsWith(date)).map((a) => a.employeeId),
-      )
+      const dimaconEmployeeIds = steps.employees
+        ? unique(
+            job.teamAssignments.filter((a) => a.date.startsWith(date)).map((a) => a.employeeId),
+          )
+        : []
 
       for (const employeeId of dimaconEmployeeIds) {
         const employee = enriched.employees.get(employeeId)
@@ -141,7 +193,8 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
           desiredEmployeeIds,
         })
         projects.push(result)
-        if (result.clockinProjectId !== undefined && result.status !== "failed") {
+        // Auch failed-Zeilen mit bekannter ID sind eingeplant — nie archivieren.
+        if (result.clockinProjectId !== undefined) {
           syncedClockinIds.add(result.clockinProjectId)
         }
       } catch (err) {
@@ -161,15 +214,19 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
   await Promise.all(projectTasks)
 
   let archived: Awaited<ReturnType<typeof archiveUnplanned>> = []
-  try {
-    archived = await archiveUnplanned(clockinClient, syncedClockinIds, log, dryRun)
-  } catch (err) {
-    const message = formatError(err)
-    log.error("archive phase failed", { error: message })
-    errors.push({ scope: "archive", message })
+  if (steps.archive) {
+    try {
+      archived = await archiveUnplanned(clockinClient, syncedClockinIds, log, dryRun)
+    } catch (err) {
+      const message = formatError(err)
+      log.error("archive phase failed", { error: message })
+      errors.push({ scope: "archive", message })
+    }
+  } else {
+    log.info("archive step disabled — skipping")
   }
 
-  const final = result(date, dryRun, startedAt, projects, archived, errors)
+  const final = result(date, dryRun, steps, startedAt, loaded.counts, projects, archived, errors)
   log.info("sync finished", {
     durationMs: final.durationMs,
     projects: final.projects.length,
@@ -182,7 +239,9 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
 function result(
   date: string,
   dryRun: boolean,
+  steps: SyncSteps,
   startedAt: number,
+  appointments: SyncResult["appointments"],
   projects: ProjectSyncResult[],
   archived: SyncResult["archived"],
   errors: SyncError[],
@@ -190,10 +249,23 @@ function result(
   return {
     date,
     dryRun,
+    steps,
     durationMs: Date.now() - startedAt,
+    appointments,
     projects,
     archived,
     errors,
+  }
+}
+
+function defaultContext(entity: "project" | "customer"): EntityMappingContext {
+  return {
+    entity,
+    rules: FIELD_CATALOG[entity].defaultRules,
+    catalog: FIELD_CATALOG[entity],
+    discovery: EMPTY_DISCOVERY,
+    isCustomized: false,
+    hasCustomTargets: false,
   }
 }
 

@@ -15,12 +15,12 @@ export interface CustomerAlignRow {
   name: string
   lexwareContactId?: string
   lexwareNumber?: string
-  status: "created" | "aligned" | "unchanged" | "failed"
+  status: "created" | "aligned" | "unchanged" | "skipped" | "failed"
   reason?: string
 }
 
 export interface CustomerSyncError {
-  scope: "customers" | "customer"
+  scope: "customers" | "customer" | "mapping"
   refId?: string
   message: string
 }
@@ -28,8 +28,15 @@ export interface CustomerSyncError {
 export interface CustomerSyncResult {
   dryRun: boolean
   durationMs: number
+  /** optional: ältere Server-Versionen liefern das Feld nicht */
+  steps?: { createContacts: boolean; alignNumbers: boolean }
   customers: CustomerAlignRow[]
   errors: CustomerSyncError[]
+}
+
+const STEP_LABELS: Record<string, string> = {
+  createContacts: "kontakte anlegen",
+  alignNumbers: "nummern-abgleich",
 }
 
 export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult }) {
@@ -46,7 +53,16 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
           <Stat label="Fehler" value={String(result.errors.length)} />
         </dl>
         <div className="mt-4 flex flex-wrap gap-2">
-          {(["created", "aligned", "unchanged", "failed"] as const).map((s) =>
+          {result.steps
+            ? Object.entries(result.steps)
+                .filter(([, on]) => !on)
+                .map(([step]) => (
+                  <MnStatusBadge key={step} variant="warn">
+                    {STEP_LABELS[step] ?? step} aus
+                  </MnStatusBadge>
+                ))
+            : null}
+          {(["created", "aligned", "unchanged", "skipped", "failed"] as const).map((s) =>
             counts[s] > 0 ? (
               <MnStatusBadge key={s} variant={badgeVariant(s)}>
                 {s} · {counts[s]}
@@ -108,7 +124,7 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
 
 function badgeVariant(status: CustomerAlignRow["status"]): "default" | "ok" | "warn" {
   if (status === "created" || status === "aligned") return "ok"
-  if (status === "failed") return "warn"
+  if (status === "failed" || status === "skipped") return "warn"
   return "default"
 }
 
@@ -117,6 +133,7 @@ function countByStatus(rows: CustomerAlignRow[]): Record<CustomerAlignRow["statu
     created: 0,
     aligned: 0,
     unchanged: 0,
+    skipped: 0,
     failed: 0,
   }
   for (const r of rows) counts[r.status]++

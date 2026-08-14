@@ -2,8 +2,10 @@ import { Hono } from "hono"
 import type { Context } from "hono"
 import { timingSafeEqual } from "node:crypto"
 import { env } from "../lib/env.js"
+import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import { isRunning, SyncBusyError } from "../integrations/mutex.js"
+import { MAPPABLE_ENTITIES } from "../integrations/shared/field-catalog.js"
 import { getIntegration, integrations, runIntegration } from "../integrations/registry.js"
 import { getNextRun, isCronActive } from "../integrations/scheduler.js"
 import { isConfigured, missingEnv } from "../integrations/types.js"
@@ -50,6 +52,8 @@ integrationsApiRoutes.get("/", (c) =>
       running: isRunning(def.id),
       cronActive: isCronActive(def.id),
       nextRun: getNextRun(def.id),
+      // Single Source of Truth für den „Erweitert"-Link im Client
+      mappable: def.id in MAPPABLE_ENTITIES,
     })),
   ),
 )
@@ -84,15 +88,6 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
       return c.json({ error: err.message }, 409)
     }
     throw err
-  }
-}
-
-async function safeJson(req: Request): Promise<unknown> {
-  if (req.headers.get("content-length") === "0") return {}
-  try {
-    return await req.json()
-  } catch {
-    return {}
   }
 }
 

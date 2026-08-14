@@ -136,6 +136,22 @@ function IntegrationDetailPage() {
             {runError}
           </MnAlert>
         ) : null}
+        {info.mappable ? (
+          <div className="mt-6">
+            <span className="text-ink-3 font-mono text-[0.65rem] tracking-[0.18em] uppercase">
+              Erweitert
+            </span>
+            <div className="mt-1">
+              <Link
+                to="/sync/$integrationId/mapping"
+                params={{ integrationId: info.id }}
+                className="text-ink-2 hover:text-ink font-mono text-[0.75rem] tracking-[0.08em] underline underline-offset-4"
+              >
+                feld-zuordnung konfigurieren →
+              </Link>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {result != null ? <RunResultView integrationId={info.id} result={result} /> : null}

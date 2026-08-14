@@ -8,6 +8,8 @@ export interface IntegrationInfo {
   running: boolean
   cronActive: boolean
   nextRun: string | null
+  /** true = Feld-Zuordnungs-Editor unter /sync/<id>/mapping verfügbar */
+  mappable?: boolean
 }
 
 export function formatRunDate(iso: string, tz = "Europe/Berlin"): string {

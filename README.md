@@ -255,10 +255,11 @@ angebundenen Systeme (Dimacon, Clockin, Lexware Office). Registriert in
 Mutex (max. ein Lauf gleichzeitig, sonst HTTP 409), eigenen Cron-Slot,
 eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 
-| Integration         | Ablauf                                                                                                                                                                                                                                           |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `dimacon-clockin`   | Tagesplanung: Termine laden, Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit** — als Kundennummer dient die Dimacon-Nummer (Fallback: Dimacon-ID).                                           |
-| `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen. |
+| Integration                 | Ablauf                                                                                                                                                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dimacon-clockin`           | Tagesplanung: Termine laden, Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit** — als Kundennummer dient die Dimacon-Nummer (Fallback: Dimacon-ID). Schritte per `steps` zuschaltbar.           |
+| `dimacon-clockin-employees` | **Bidirektionaler** Mitarbeiter-Abgleich: fehlende Mitarbeiter auf beiden Seiten anlegen, bei Abweichungen gewinnt Dimacon, Archivierungen werden nur gemeldet. Achtung: Live-Lauf legt Mitarbeiter in beiden Systemen an — vorher dry-run prüfen. |
+| `dimacon-lexoffice`         | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.   |
 
 **Endpoints** (run/healthz offen — run per `SYNC_WEBHOOK_SECRET` geschützt,
 Liste hinter Auth):
@@ -296,15 +297,26 @@ Scheduling: pro Integration über die UI (`/settings`) — persistiert in
 jeweiligen Cron hot. Fachliche Spezifikation der Tagesplanung:
 `.context/attachments/SKILL.md`.
 
+**Feld-Zuordnung (Erweitert):** Unter `/sync/<id>/mapping` lässt sich per
+Drag & Drop konfigurieren, welche Dimacon-Felder (inkl. Custom-Attribute) in
+welche Zielfelder (inkl. Clockin-Custom-Felder) geschrieben werden — API:
+`/api/mappings/:id[/:entity]`, persistiert in `SETTINGS_PATH` unter
+`fieldMappings`. Ohne gespeicherte Zuordnung gelten Default-Regeln, die dem
+bisherigen Verhalten entsprechen; Match-Keys sind fixiert.
+
 Architektur-Bausteine (`src/server/integrations/`):
 
 - `types.ts` + `registry.ts` — IntegrationDefinition, Registrierung, zentraler Mutex-Wrapper
 - `mutex.ts` — pro Integration max. ein Lauf (HTTP 409)
 - `scheduler.ts` — ein `croner`-Cron pro Integration, hot-restartbar
 - `shared/dimacon.ts` — gemeinsame Loader (Termine, Jobs, Kunden; parallel via `p-limit`)
+- `shared/field-{catalog,mapping}.ts` + `mapping-context.ts` — Feld-Zuordnungs-Framework
+  (Katalog, pure Engine, Discovery von Custom-Attributen/-Feldern)
 - `dimacon-clockin/` — Orchestrator (fail-soft pro Projekt), Employee-Matching
   (Nachname → Vorname → E-Mail), Kunden-Upsert, Projekt-Upsert mit
   Mitarbeiter-Diff (attach/detach), Archivierung
+- `dimacon-clockin-employees/` — bidirektionaler Mitarbeiter-Abgleich (Matching
+  Personalnummer → E-Mail → Name, Dimacon gewinnt, Personalnummer-Backfill)
 - `dimacon-lexoffice/` — Lexware-Kontakt find-or-create + Kundennummern-Alignment
 
 Tests laufen mit `pnpm test`.

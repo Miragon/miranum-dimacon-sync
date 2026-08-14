@@ -3,7 +3,9 @@ import type { Client as ClockInClient } from "@miragon/client-clockin"
 import { withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
 import type { DimaconCustomerInfo } from "../shared/dimacon.js"
-import { splitZipCity } from "../shared/time.js"
+import { customerSourceValues } from "../shared/field-catalog.js"
+import { applyMapping } from "../shared/field-mapping.js"
+import type { EntityMappingContext } from "../shared/mapping-context.js"
 import type { CustomerMapping } from "./types.js"
 
 interface ClockinCustomerRow {
@@ -11,6 +13,9 @@ interface ClockinCustomerRow {
   company?: string
   identifier?: string | null
 }
+
+// Body kommt aus der Feld-Zuordnung; Feldnamen sichert validateRules + Katalog.
+type CustomerWriteBody = NonNullable<Parameters<typeof clockin.createCustomer>[0]>["body"]
 
 /**
  * Kunden-Sync Dimacon → Clockin. Bewusst ohne Lexware: als Identifier dient
@@ -20,15 +25,20 @@ interface ClockinCustomerRow {
  * konsistent.
  */
 export class CustomerSyncer {
-  private inflight = new Map<string, Promise<CustomerMapping>>()
+  private inflight = new Map<string, Promise<CustomerMapping | null>>()
 
   constructor(
     private readonly clockinClient: ClockInClient,
     private readonly log: Logger,
     private readonly dryRun: boolean,
+    /** false = Kunden-Schritt deaktiviert: nur nachschlagen, nie anlegen */
+    private readonly createMissing = true,
+    /** Feld-Zuordnung für den Create-Body (Kunden werden nie aktualisiert) */
+    private readonly mapping?: EntityMappingContext,
+    private readonly onMappingWarning: (message: string) => void = () => undefined,
   ) {}
 
-  async resolve(customer: DimaconCustomerInfo): Promise<CustomerMapping> {
+  async resolve(customer: DimaconCustomerInfo): Promise<CustomerMapping | null> {
     const cached = this.inflight.get(customer.id)
     if (cached) return cached
 
@@ -38,7 +48,7 @@ export class CustomerSyncer {
     return promise
   }
 
-  private async doResolve(customer: DimaconCustomerInfo): Promise<CustomerMapping> {
+  private async doResolve(customer: DimaconCustomerInfo): Promise<CustomerMapping | null> {
     const lookupNumber = customer.customerNumber ?? customer.name
 
     let found = await this.findInClockin(lookupNumber)
@@ -66,6 +76,14 @@ export class CustomerSyncer {
         number: found.identifier ?? lookupNumber,
         name: found.company ?? customer.name,
       }
+    }
+
+    if (!this.createMissing) {
+      this.log.info("customer not found in clockin; create disabled by steps", {
+        dimaconCustomerId: customer.id,
+        name: customer.name,
+      })
+      return null
     }
 
     const number = customer.customerNumber ?? customer.id
@@ -97,18 +115,11 @@ export class CustomerSyncer {
       }
     }
 
-    const { zip, city } = splitZipCity(customer.zipCity)
+    const body = this.buildCreateBody(customer, number)
     const result = (await withRetry(() =>
       clockin.createCustomer({
         client: this.clockinClient,
-        body: {
-          company: customer.name,
-          identifier: number,
-          street: customer.street ?? null,
-          zip: zip || null,
-          city: city || null,
-          country: "DE",
-        },
+        body,
       }),
     )) as unknown as { data?: { id?: number } }
 
@@ -123,5 +134,37 @@ export class CustomerSyncer {
       number,
       name: customer.name,
     }
+  }
+
+  private buildCreateBody(customer: DimaconCustomerInfo, number: string): CustomerWriteBody {
+    if (!this.mapping) {
+      // Ohne Kontext (Tests, direkte Nutzung): identisch zur Default-Zuordnung
+      const values = customerSourceValues(customer)
+      return {
+        company: customer.name,
+        identifier: number,
+        street: values.standard.street ?? null,
+        zip: values.standard["zipCity.zip"] || null,
+        city: values.standard["zipCity.city"] || null,
+        country: "DE",
+      }
+    }
+
+    const applied = applyMapping(
+      this.mapping.rules,
+      this.mapping.catalog,
+      this.mapping.discovery,
+      customerSourceValues(customer),
+    )
+    for (const warning of applied.warnings) {
+      this.onMappingWarning(`Kunde ${customer.name}: ${warning.message}`)
+    }
+
+    return {
+      ...applied.standardFields,
+      identifier: number,
+      country: "DE",
+      ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
+    } as CustomerWriteBody
   }
 }

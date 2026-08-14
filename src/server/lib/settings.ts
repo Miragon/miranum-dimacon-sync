@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { z } from "zod"
+import { EntityFieldMappingSchema } from "../integrations/shared/field-mapping-schema.js"
+import type { EntityFieldMapping } from "../integrations/shared/field-mapping-schema.js"
 import { log } from "./log.js"
 
 export const ScheduleSettingsSchema = z.object({
@@ -11,8 +13,15 @@ export const ScheduleSettingsSchema = z.object({
 
 export type ScheduleSettings = z.infer<typeof ScheduleSettingsSchema>
 
+// Feld-Zuordnungen, keyed nach Integration-ID → Entity ("project" etc.).
+// Muss im Datei-Schema deklariert sein — Zod strippt unbekannte Keys beim Laden.
+const FieldMappingsSchema = z
+  .record(z.string(), z.record(z.string(), EntityFieldMappingSchema))
+  .default({})
+
 const SettingsFileSchema = z.object({
   integrations: z.record(z.string(), ScheduleSettingsSchema),
+  fieldMappings: FieldMappingsSchema,
 })
 
 /** Alte Dateiform (eine einzige Sync-Konfiguration) — wird beim Laden migriert. */
@@ -64,7 +73,7 @@ export async function loadSettings(): Promise<SettingsFile> {
 
   const legacy = LegacyFileSchema.safeParse(parsed)
   if (legacy.success) {
-    cache = { integrations: { [LEGACY_INTEGRATION_ID]: legacy.data.sync } }
+    cache = { integrations: { [LEGACY_INTEGRATION_ID]: legacy.data.sync }, fieldMappings: {} }
     await persist(cache)
     log.info("settings file migrated from legacy shape", { path })
     return cache
@@ -103,6 +112,41 @@ export async function updateScheduleSettings(
   return task
 }
 
+export async function getFieldMapping(
+  integrationId: string,
+  entity: string,
+): Promise<EntityFieldMapping | undefined> {
+  const file = await loadSettings()
+  return file.fieldMappings[integrationId]?.[entity]
+}
+
+/** `null` löscht die Zuordnung (zurück auf Default) und räumt leere Objekte weg. */
+export async function updateFieldMapping(
+  integrationId: string,
+  entity: string,
+  mapping: EntityFieldMapping | null,
+): Promise<void> {
+  const task = writeChain.then(async () => {
+    const current = await loadSettings()
+    const forIntegration = { ...(current.fieldMappings[integrationId] ?? {}) }
+    if (mapping === null) delete forIntegration[entity]
+    else forIntegration[entity] = mapping
+
+    const fieldMappings = { ...current.fieldMappings }
+    if (Object.keys(forIntegration).length === 0) delete fieldMappings[integrationId]
+    else fieldMappings[integrationId] = forIntegration
+
+    const next: SettingsFile = { ...current, fieldMappings }
+    await persist(next)
+    cache = next
+  })
+  writeChain = task.then(
+    () => undefined,
+    () => undefined,
+  )
+  return task
+}
+
 async function persist(data: SettingsFile): Promise<void> {
   const path = settingsPath()
   await mkdir(dirname(path), { recursive: true })
@@ -123,5 +167,6 @@ function seedFromEnv(): SettingsFile {
         timezone: tzEnv && tzEnv.length > 0 ? tzEnv : "Europe/Berlin",
       },
     },
+    fieldMappings: {},
   }
 }

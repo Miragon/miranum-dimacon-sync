@@ -9,6 +9,7 @@ export interface DimaconProjectInfo {
   name: string
   street: string
   zipCity: string
+  customAttributeValues?: { attributeId: string; value?: string }[]
 }
 
 export interface DimaconEmployeeInfo {

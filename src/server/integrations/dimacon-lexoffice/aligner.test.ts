@@ -88,6 +88,72 @@ describe("CustomerAligner", () => {
     })
   })
 
+  it("echoes custom attribute values and description on the alignment write-back", async () => {
+    // Regression: das Dimacon-PUT ist ein Voll-Replace — ein leeres
+    // customAttributeValues-Array hat die Attributwerte gelöscht.
+    const lex = lexClient({
+      get: vi.fn().mockResolvedValue({
+        content: [
+          {
+            id: "lex-1",
+            version: 1,
+            company: { name: "Muster GmbH" },
+            roles: { customer: { number: "L-200" } },
+          },
+        ],
+      }),
+    })
+    const aligner = new CustomerAligner(dimaconClient, lex as never, silentLog, false)
+
+    await aligner.align({
+      ...customer,
+      description: "wichtiger Kunde",
+      customAttributeValues: [{ attributeId: "attr-1", value: "42" }],
+    })
+
+    expect(updateCustomerMock.mock.calls[0][0].body).toMatchObject({
+      description: "wichtiger Kunde",
+      customAttributeValues: [{ attributeId: "attr-1", value: "42" }],
+    })
+  })
+
+  it("skips creation when the createContacts step is off", async () => {
+    const lex = lexClient()
+    const aligner = new CustomerAligner(dimaconClient, lex as never, silentLog, false, {
+      createContacts: false,
+      alignNumbers: true,
+    })
+
+    const row = await aligner.align(customer)
+
+    expect(row.status).toBe("skipped")
+    expect(lex.post).not.toHaveBeenCalled()
+  })
+
+  it("skips number alignment when the alignNumbers step is off", async () => {
+    const lex = lexClient({
+      get: vi.fn().mockResolvedValue({
+        content: [
+          {
+            id: "lex-1",
+            version: 1,
+            company: { name: "Muster GmbH" },
+            roles: { customer: { number: "L-200" } },
+          },
+        ],
+      }),
+    })
+    const aligner = new CustomerAligner(dimaconClient, lex as never, silentLog, false, {
+      createContacts: true,
+      alignNumbers: false,
+    })
+
+    const row = await aligner.align(customer)
+
+    expect(row.status).toBe("unchanged")
+    expect(updateCustomerMock).not.toHaveBeenCalled()
+  })
+
   it("does not align when the dimacon customer has no number", async () => {
     const lex = lexClient({
       get: vi.fn().mockResolvedValue({
@@ -118,6 +184,23 @@ describe("CustomerAligner", () => {
     expect(row.status).toBe("created")
     expect(row.lexwareContactId).toBe("lex-new")
     expect(lex.post).toHaveBeenCalledTimes(1)
+    // Default-Zuordnung reproduziert den bisherigen hartkodierten Body
+    expect((lex.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({
+      version: 0,
+      roles: { customer: {} },
+      company: { name: "Muster GmbH" },
+      addresses: {
+        billing: [
+          {
+            supplement: undefined,
+            street: "Musterweg 1",
+            zip: "80331",
+            city: "München",
+            countryCode: "DE",
+          },
+        ],
+      },
+    })
     // Create-Response enthält keine roles → kein Alignment in diesem Lauf
     expect(updateCustomerMock).not.toHaveBeenCalled()
   })

@@ -5,6 +5,7 @@ import {
   ScheduleSettingsSchema,
   updateScheduleSettings,
 } from "../lib/settings.js"
+import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import { getIntegration, integrations } from "../integrations/registry.js"
 import { getNextRun, isCronActive, startIntegrationCron } from "../integrations/scheduler.js"
@@ -62,15 +63,6 @@ function scheduleEntry(id: string, name: string, settings: ScheduleSettings) {
     active: isCronActive(id),
     nextRun: getNextRun(id),
     nextRuns: previewNextRuns(settings.cron, settings.timezone, 5),
-  }
-}
-
-async function safeJson(req: Request): Promise<unknown> {
-  if (req.headers.get("content-length") === "0") return {}
-  try {
-    return await req.json()
-  } catch {
-    return {}
   }
 }
 

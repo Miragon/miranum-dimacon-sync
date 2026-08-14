@@ -54,7 +54,10 @@ export async function archiveUnplanned(
       clockin.updateProject({
         client,
         path: { project: row.id! },
-        body: { name: row.name ?? "", archived: true },
+        // `number` mitschicken: bei Replace-Semantik des Updates würde die
+        // Projektnummer sonst genullt — findByNumber fände das Projekt am
+        // Folgetag nicht mehr und legte ein Duplikat an.
+        body: { name: row.name ?? "", number: row.number ?? null, archived: true },
       }),
     )
     archived.push({ clockinProjectId: row.id, name: row.name ?? "" })

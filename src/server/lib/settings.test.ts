@@ -36,6 +36,7 @@ describe("settings", () => {
       integrations: {
         "dimacon-clockin": { enabled: true, cron: "0 6 * * *", timezone: "Europe/Vienna" },
       },
+      fieldMappings: {},
     })
   })
 
@@ -121,6 +122,85 @@ describe("settings", () => {
       enabled: true,
       cron: "30 5 * * *",
       timezone: "Europe/Berlin",
+    })
+  })
+
+  it("loads files without fieldMappings (older shape) with an empty default", async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        integrations: {
+          "dimacon-clockin": { enabled: false, timezone: "Europe/Berlin" },
+        },
+      }),
+      "utf-8",
+    )
+    const { getFieldMapping } = await loadModule()
+    expect(await getFieldMapping("dimacon-clockin", "project")).toBeUndefined()
+  })
+
+  it("round-trips field mappings without touching schedules", async () => {
+    const { getFieldMapping, getScheduleSettings, updateFieldMapping, updateScheduleSettings } =
+      await loadModule()
+
+    await updateScheduleSettings("dimacon-clockin", {
+      enabled: true,
+      cron: "0 6 * * *",
+      timezone: "Europe/Berlin",
+    })
+    const mapping = {
+      version: 1 as const,
+      rules: [
+        {
+          source: { kind: "standard" as const, field: "name" },
+          target: { kind: "standard" as const, field: "name" },
+        },
+      ],
+    }
+    await updateFieldMapping("dimacon-clockin", "project", mapping)
+
+    expect(await getFieldMapping("dimacon-clockin", "project")).toEqual(mapping)
+    expect((await getScheduleSettings("dimacon-clockin")).cron).toBe("0 6 * * *")
+
+    const persisted = JSON.parse(await readFile(path, "utf-8")) as {
+      fieldMappings: Record<string, Record<string, unknown>>
+    }
+    expect(persisted.fieldMappings["dimacon-clockin"]?.project).toBeDefined()
+  })
+
+  it("deletes a mapping and prunes empty integration objects", async () => {
+    const { getFieldMapping, updateFieldMapping } = await loadModule()
+
+    await updateFieldMapping("dimacon-clockin", "project", {
+      version: 1,
+      rules: [],
+    })
+    await updateFieldMapping("dimacon-clockin", "project", null)
+
+    expect(await getFieldMapping("dimacon-clockin", "project")).toBeUndefined()
+    const persisted = JSON.parse(await readFile(path, "utf-8")) as {
+      fieldMappings: Record<string, unknown>
+    }
+    expect(persisted.fieldMappings["dimacon-clockin"]).toBeUndefined()
+  })
+
+  it("serializes parallel schedule and mapping updates", async () => {
+    const { getFieldMapping, getScheduleSettings, updateFieldMapping, updateScheduleSettings } =
+      await loadModule()
+
+    await Promise.all([
+      updateScheduleSettings("dimacon-clockin", {
+        enabled: true,
+        cron: "0 6 * * *",
+        timezone: "Europe/Berlin",
+      }),
+      updateFieldMapping("dimacon-clockin", "customer", { version: 1, rules: [] }),
+    ])
+
+    expect((await getScheduleSettings("dimacon-clockin")).cron).toBe("0 6 * * *")
+    expect(await getFieldMapping("dimacon-clockin", "customer")).toEqual({
+      version: 1,
+      rules: [],
     })
   })
 })

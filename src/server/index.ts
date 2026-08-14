@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises"
 import clockin from "./routes/clockin.js"
 import dimacon from "./routes/dimacon.js"
 import lexoffice from "./routes/lexoffice.js"
+import mappings from "./routes/mappings.js"
 import settings from "./routes/settings.js"
 import sync from "./routes/sync.js"
 import systems from "./routes/systems.js"
@@ -34,6 +35,7 @@ app.route("/api/clockin", clockin)
 app.route("/api/dimacon", dimacon)
 app.route("/api/lexoffice", lexoffice)
 app.route("/api/settings", settings)
+app.route("/api/mappings", mappings)
 
 if (isAuthConfigured()) {
   log.info("auth enabled", { requiredOrg: env.workos.requiredOrgId() ?? null })
