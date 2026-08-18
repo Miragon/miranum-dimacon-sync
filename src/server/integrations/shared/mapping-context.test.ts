@@ -188,12 +188,9 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     })
     const getClockin = vi.fn(() => clockinStub)
 
-    const context = await loadMappingContext(
-      dimaconClient,
-      getClockin,
-      "dimacon-clockin-employees",
-      ["employee"],
-    )
+    const context = await loadMappingContext(dimaconClient, getClockin, "dimacon-clockin", [
+      "employee",
+    ])
 
     const ctx = context.get("employee")
     expect(ctx?.isCustomized).toBe(true)

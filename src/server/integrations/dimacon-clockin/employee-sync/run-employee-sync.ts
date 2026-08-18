@@ -1,45 +1,48 @@
 import { sdk as clockin } from "@miragon/client-clockin"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
-import { getClockInClient, getDimaconClient } from "../../lib/clients.js"
-import { createLimit, withRetry } from "../../lib/concurrency.js"
-import { formatError } from "../../lib/errors.js"
-import { log as rootLog } from "../../lib/log.js"
-import type { Logger } from "../../lib/log.js"
-import { loadEmployeesWithEmail } from "../shared/dimacon.js"
-import { FIELD_CATALOG } from "../shared/field-catalog.js"
-import { EMPTY_DISCOVERY } from "../shared/field-mapping.js"
-import { loadMappingContext } from "../shared/mapping-context.js"
-import type { EntityMappingContext } from "../shared/mapping-context.js"
+import type { Client as DimaconClient } from "@miragon/client-dimacon"
+import { createLimit, withRetry } from "../../../lib/concurrency.js"
+import { formatError } from "../../../lib/errors.js"
+import type { Logger } from "../../../lib/log.js"
+import { loadEmployeesWithEmail } from "../../shared/dimacon.js"
+import type { EntityMappingContext } from "../../shared/mapping-context.js"
 import { matchEmployees } from "./matcher.js"
 import { EmployeeSyncer } from "./syncer.js"
-import type {
-  ClockinEmployeeInfo,
-  EmployeeSyncError,
-  EmployeeSyncInput,
-  EmployeeSyncResult,
-  EmployeeSyncRow,
-} from "./types.js"
+import type { ClockinEmployeeInfo, EmployeeSyncCounts, EmployeeSyncRow } from "./types.js"
+
+export interface EmployeeSyncError {
+  scope: "load" | "employee" | "mapping"
+  refId?: string
+  message: string
+}
+
+export interface EmployeeSyncOutcome {
+  counts: EmployeeSyncCounts
+  rows: EmployeeSyncRow[]
+  errors: EmployeeSyncError[]
+  /** dimaconEmployeeId → clockinEmployeeId — seedet den Zuordnungs-Matcher */
+  pairs: Map<string, number>
+}
 
 /**
- * Bidirektionaler Mitarbeiter-Abgleich Dimacon ⇄ Clockin: fehlende
- * Mitarbeiter werden auf beiden Seiten angelegt; bei gematchten Paaren
- * gewinnt Dimacon (Rückschreibung nur für fehlende Personalnummern);
- * Archivierungen werden nur gemeldet, nie propagiert.
+ * Bidirektionaler Mitarbeiter-Stammdaten-Abgleich Dimacon ⇄ Clockin:
+ * fehlende Mitarbeiter werden auf beiden Seiten angelegt; bei gematchten
+ * Paaren gewinnt Dimacon (Rückschreibung nur für fehlende Personalnummern);
+ * Archivierungen werden nur gemeldet. Läuft als Schritt des
+ * dimacon-clockin-Syncs VOR der Tagesplanung, damit frisch angelegte
+ * Mitarbeiter sofort zuordenbar sind.
  */
-export async function runDimaconClockinEmployeeSync(
-  input: EmployeeSyncInput,
-): Promise<EmployeeSyncResult> {
-  const startedAt = Date.now()
-  const dryRun = input.dryRun ?? false
-  const log = rootLog.child({ syncRun: { integration: "dimacon-clockin-employees", dryRun } })
-
-  log.info("employee sync started")
-
+export async function runEmployeeSync(
+  dimaconClient: DimaconClient,
+  clockinClient: ClockInClient,
+  mapping: EntityMappingContext,
+  dryRun: boolean,
+  log: Logger,
+  onMappingWarning: (message: string) => void,
+): Promise<EmployeeSyncOutcome> {
   const errors: EmployeeSyncError[] = []
   const rows: EmployeeSyncRow[] = []
-
-  const dimaconClient = getDimaconClient()
-  const clockinClient = getClockInClient()
+  const pairs = new Map<string, number>()
 
   let dimaconEmployees
   try {
@@ -48,28 +51,7 @@ export async function runDimaconClockinEmployeeSync(
     const message = formatError(err)
     log.error("failed to load dimacon employees", { error: message })
     errors.push({ scope: "load", refId: "dimacon", message })
-    return result(dryRun, startedAt, { dimacon: 0, clockin: 0, matched: 0 }, rows, errors)
-  }
-
-  // Feld-Zuordnung — ohne persistierte Regeln keine zusätzlichen API-Calls
-  let mapping: EntityMappingContext
-  try {
-    const context = await loadMappingContext(dimaconClient, () => clockinClient, INTEGRATION_ID, [
-      "employee",
-    ])
-    mapping = context.get("employee") ?? defaultEmployeeContext()
-  } catch (err) {
-    const message = formatError(err)
-    log.error("failed to load field mapping — falling back to defaults", { error: message })
-    errors.push({
-      scope: "mapping",
-      message: `Feld-Zuordnung konnte nicht geladen werden — Standard-Regeln für diesen Lauf verwendet (${message})`,
-    })
-    mapping = defaultEmployeeContext()
-  }
-  const onMappingWarning = (message: string) => {
-    log.warn("field mapping warning", { message })
-    errors.push({ scope: "mapping", message })
+    return { counts: { dimacon: 0, clockin: 0, matched: 0 }, rows, errors, pairs }
   }
 
   let clockinEmployees
@@ -79,13 +61,12 @@ export async function runDimaconClockinEmployeeSync(
     const message = formatError(err)
     log.error("failed to load clockin employees", { error: message })
     errors.push({ scope: "load", refId: "clockin", message })
-    return result(
-      dryRun,
-      startedAt,
-      { dimacon: dimaconEmployees.length, clockin: 0, matched: 0 },
+    return {
+      counts: { dimacon: dimaconEmployees.length, clockin: 0, matched: 0 },
       rows,
       errors,
-    )
+      pairs,
+    }
   }
 
   const outcome = matchEmployees(dimaconEmployees, clockinEmployees)
@@ -97,6 +78,10 @@ export async function runDimaconClockinEmployeeSync(
     clockinOnly: outcome.clockinOnly.length,
     ambiguous: outcome.ambiguous.length,
   })
+
+  for (const pair of outcome.pairs) {
+    pairs.set(pair.dimacon.id, pair.clockin.id)
+  }
 
   for (const a of outcome.ambiguous) {
     rows.push({
@@ -141,7 +126,11 @@ export async function runDimaconClockinEmployeeSync(
       limit(() =>
         syncer
           .createInClockin(e)
-          .then((row) => void rows.push(row))
+          .then((row) => {
+            rows.push(row)
+            // Live angelegte Mitarbeiter sind sofort zuordenbar
+            if (row.clockinId !== undefined) pairs.set(e.id, row.clockinId)
+          })
           .catch(collect(e.id, `${e.firstName} ${e.lastName}`, "dimacon→clockin")),
       ),
     ),
@@ -155,35 +144,15 @@ export async function runDimaconClockinEmployeeSync(
     ),
   ])
 
-  const final = result(
-    dryRun,
-    startedAt,
-    {
+  return {
+    counts: {
       dimacon: dimaconEmployees.length,
       clockin: clockinEmployees.length,
       matched: outcome.pairs.length,
     },
     rows,
     errors,
-  )
-  log.info("employee sync finished", {
-    durationMs: final.durationMs,
-    rows: final.employees.length,
-    errors: final.errors.length,
-  })
-  return final
-}
-
-const INTEGRATION_ID = "dimacon-clockin-employees"
-
-function defaultEmployeeContext(): EntityMappingContext {
-  return {
-    entity: "employee",
-    rules: FIELD_CATALOG.employee.defaultRules,
-    catalog: FIELD_CATALOG.employee,
-    discovery: EMPTY_DISCOVERY,
-    isCustomized: false,
-    hasCustomTargets: false,
+    pairs,
   }
 }
 
@@ -237,20 +206,4 @@ async function loadClockinEmployees(
       raw: r as unknown as Record<string, unknown>,
       customFieldValues: r.customFields,
     }))
-}
-
-function result(
-  dryRun: boolean,
-  startedAt: number,
-  counts: EmployeeSyncResult["counts"],
-  employees: EmployeeSyncRow[],
-  errors: EmployeeSyncError[],
-): EmployeeSyncResult {
-  return {
-    dryRun,
-    durationMs: Date.now() - startedAt,
-    counts,
-    employees,
-    errors,
-  }
 }

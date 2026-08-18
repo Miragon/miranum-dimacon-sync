@@ -1,11 +1,3 @@
-import { z } from "zod"
-
-export const EmployeeSyncInputSchema = z.object({
-  dryRun: z.boolean().optional(),
-})
-
-export type EmployeeSyncInput = z.infer<typeof EmployeeSyncInputSchema>
-
 export type EmployeeSyncDirection = "dimacon→clockin" | "clockin→dimacon" | "match"
 
 export type EmployeeSyncStatus =
@@ -25,18 +17,10 @@ export interface EmployeeSyncRow {
   reason?: string
 }
 
-export interface EmployeeSyncError {
-  scope: "load" | "employee" | "mapping"
-  refId?: string
-  message: string
-}
-
-export interface EmployeeSyncResult {
-  dryRun: boolean
-  durationMs: number
-  counts: { dimacon: number; clockin: number; matched: number }
-  employees: EmployeeSyncRow[]
-  errors: EmployeeSyncError[]
+export interface EmployeeSyncCounts {
+  dimacon: number
+  clockin: number
+  matched: number
 }
 
 /** Normalisierte Sicht auf einen Clockin-Mitarbeiter (EmployeeResource) */

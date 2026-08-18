@@ -18,9 +18,26 @@ export class EmployeeMatcher {
   constructor(
     private readonly client: ClockInClient,
     private readonly log: Logger,
+    /**
+     * Vorab bekannte Paare (dimaconId → clockinId) aus dem Stammdaten-
+     * Abgleich — erspart die byLastName-Suche pro Mitarbeiter. Für nicht
+     * geseedete IDs (z. B. Schritt deaktiviert) bleibt die Suche als
+     * Fallback aktiv.
+     */
+    private readonly seededPairs: ReadonlyMap<string, number> = new Map(),
   ) {}
 
   async match(employee: DimaconEmployeeInfo): Promise<EmployeeMapping | null> {
+    const seeded = this.seededPairs.get(employee.id)
+    if (seeded !== undefined) {
+      return {
+        dimaconId: employee.id,
+        clockinId: seeded,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+      }
+    }
+
     const cached = this.inflight.get(employee.id)
     if (cached) return cached
 

@@ -10,6 +10,10 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 FROM base AS build
+# Build-Zeit-Konfiguration: Vite bakt VITE_* ins Bundle — ein Fly-Secret zur
+# Laufzeit kann Auth im Frontend NICHT aktivieren, nur dieses Build-Arg.
+ARG VITE_WORKOS_CLIENT_ID=""
+ENV VITE_WORKOS_CLIENT_ID=${VITE_WORKOS_CLIENT_ID}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build

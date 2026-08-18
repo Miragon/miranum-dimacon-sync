@@ -1,4 +1,4 @@
-import type { DimaconEmployeeFull } from "../shared/dimacon.js"
+import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
 import type { ClockinEmployeeInfo } from "./types.js"
 
 export type MatchedBy = "personnelNumber" | "email" | "name"

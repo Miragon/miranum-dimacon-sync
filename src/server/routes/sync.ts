@@ -5,10 +5,12 @@ import { getNextRun, isCronActive } from "../integrations/scheduler.js"
 import { handleIntegrationRun } from "./integrations.js"
 
 /**
- * Legacy-Alias für die Dimacon→Clockin-Integration. Externe Webhooks
+ * Legacy-Alias für die Dimacon⇄Clockin-Integration. Externe Webhooks
  * (`POST /api/sync/run` mit SYNC_WEBHOOK_SECRET) und Status-Checks
- * (`GET /api/sync/healthz`) funktionieren unverändert weiter — neue
- * Consumer nutzen `/api/integrations/dimacon-clockin/...`.
+ * (`GET /api/sync/healthz`) erreichen weiter dieselbe Integration — ACHTUNG:
+ * ohne Body läuft der komplette Schritt-Satz inklusive Live-Mitarbeiter-
+ * Abgleich; nur Tagesplanung = `{ "steps": { "employees": false } }`.
+ * Neue Consumer nutzen `/api/integrations/dimacon-clockin/...`.
  */
 const LEGACY_ID = "dimacon-clockin"
 

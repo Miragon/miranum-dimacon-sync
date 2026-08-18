@@ -60,7 +60,13 @@ const mapping: EntityMappingContext = {
   hasCustomTargets: false,
 }
 
-const DEFAULT_STEPS: SyncSteps = { customers: true, employees: true, projects: true, archive: true }
+const DEFAULT_STEPS: SyncSteps = {
+  employees: true,
+  customers: true,
+  projects: true,
+  assignments: true,
+  archive: true,
+}
 
 /** Clockin-Row, die exakt dem gemappten Soll-Zustand entspricht (→ unchanged) */
 function matchingRow(overrides: Record<string, unknown> = {}) {
@@ -227,9 +233,9 @@ describe("ProjectUpserter", () => {
     expect(updateProjectMock).not.toHaveBeenCalled()
   })
 
-  it("never reads project employees when the employee step is off", async () => {
+  it("never reads project employees when the assignments step is off", async () => {
     searchForProjectsMock.mockResolvedValue({ data: [matchingRow()] })
-    const upserter = makeUpserter({ steps: { employees: false } })
+    const upserter = makeUpserter({ steps: { assignments: false } })
 
     const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [2, 3] })
 

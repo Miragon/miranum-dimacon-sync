@@ -232,7 +232,7 @@ export class ProjectUpserter {
 
     let toAdd: number[] = []
     let toRemove: number[] = []
-    if (this.steps.employees) {
+    if (this.steps.assignments) {
       const currentEmployees = await this.listEmployees(clockinId)
       const desired = new Set(desiredEmployeeIds)
       const current = new Set(currentEmployees)

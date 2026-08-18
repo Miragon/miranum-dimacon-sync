@@ -22,9 +22,12 @@ export function PageChrome({
 }: PageChromeProps) {
   return (
     <>
-      <div className="text-ink-3 pointer-events-none fixed top-6 left-12 z-50 font-mono text-[10px] tracking-[0.22em] uppercase max-md:hidden">
+      <Link
+        to="/"
+        className="text-ink-3 hover:text-ink fixed top-6 left-12 z-50 font-mono text-[10px] tracking-[0.22em] uppercase transition-colors max-md:hidden"
+      >
         {label}
-      </div>
+      </Link>
       <div className="text-ink-3 pointer-events-none fixed right-12 bottom-6 z-50 font-mono text-[10px] tracking-[0.18em] max-md:hidden">
         {foot}
       </div>

@@ -4,9 +4,10 @@ import { SyncRunInputSchema } from "./types.js"
 
 export const dimaconClockinIntegration = defineIntegration({
   id: "dimacon-clockin",
-  name: "Dimacon → Clockin",
+  name: "Dimacon ⇄ Clockin",
   description:
-    "Tagesplanung aus Dimacon nach Clockin übertragen — Termine laden, Projekte upserten, " +
+    "Kompletter Clockin-Sync mit zuschaltbaren Schritten — Mitarbeiter-Stammdaten " +
+    "bidirektional abgleichen, dann Tagesplanung: Kunden/Projekte upserten, " +
     "Mitarbeiter zuweisen, nicht Eingeplante archivieren.",
   systems: ["dimacon", "clockin"],
   requiredEnv: ["DIMACON_BASE_URL", "DIMACON_TENANT", "DIMACON_API_TOKEN", "CLOCKIN_API_TOKEN"],

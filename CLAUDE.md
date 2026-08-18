@@ -12,8 +12,9 @@ src/server/      Hono Backend (Port 3020)
   │   ├─ shared/            gemeinsame Loader/Helper (Dimacon, Zeit) +
   │   │                     Feld-Zuordnungs-Framework (field-catalog,
   │   │                     field-mapping, mapping-context)
-  │   ├─ dimacon-clockin/   Tagesplanung Dimacon → Clockin (OHNE Lexware)
-  │   ├─ dimacon-clockin-employees/ bidirektionaler Mitarbeiter-Abgleich
+  │   ├─ dimacon-clockin/   kompletter Clockin-Sync (OHNE Lexware):
+  │   │   └─ employee-sync/ Schritt 1 — bidirektionaler Mitarbeiter-
+  │   │                     Stammdaten-Abgleich; danach Tagesplanung
   │   └─ dimacon-lexoffice/ Kunden-Sync + Nummern-Alignment Dimacon → Lexware
   └─ routes/     /api/{clockin,dimacon,lexoffice,integrations,settings,mappings}/...
 ```
@@ -91,9 +92,13 @@ ohne persistierte Zuordnung gelten die Default-Regeln (identisch zum
 hartkodierten Alt-Verhalten) und es gibt keine Discovery-API-Calls.
 Match-Keys (project.number, customer.identifier, employee-Namen/PN) sind
 fixiert und nie remappbar. Der dimacon-clockin-Sync akzeptiert außerdem
-`steps: { customers, employees, projects, archive }` im Run-Input (Default:
-alles an) — die Archiv-Phase schützt nur Projekte, die der Lauf auflöst,
-deshalb läuft die Projekt-Auflösung auch bei deaktivierten Schritten.
+`steps: { employees, customers, projects, assignments, archive }` im
+Run-Input (Default: alles an) — `employees` ist der bidirektionale
+Stammdaten-Abgleich (läuft zuerst, seedet den Zuordnungs-Matcher),
+`assignments` die Projekt-Zuordnung. Die Archiv-Phase schützt nur Projekte,
+die der Lauf auflöst, deshalb läuft die Projekt-Auflösung auch bei
+deaktivierten Schritten. Eine Settings-Datei mit dem alten
+`dimacon-clockin-employees`-Key wird beim Laden automatisch migriert.
 
 ## Quality Gates
 
@@ -116,7 +121,12 @@ load-bearing — `/api/sync` und die offenen Integrations-Routen
 `/api/integrations/:id/{run,healthz}` werden **vor** der Middleware gemountet,
 damit Webhook + Status offen bleiben; `run` schützt sich per
 `SYNC_WEBHOOK_SECRET`).
-Wenn `WORKOS_CLIENT_ID` leer ist, ist Auth aus (Dev-Fallback). Frontend-Gate
-prüft `VITE_WORKOS_CLIENT_ID` build-time und mountet `<AuthKitProvider>` +
-`<AuthGate>` nur dann. Alle UI-Fetches gehen über `useApiFetch()` in
-`src/client/lib/api.ts`, das den Bearer-Header anhängt.
+Wenn `WORKOS_CLIENT_ID` leer ist, ist Auth aus (Dev-Fallback). **In
+Produktion (`NODE_ENV=production`) verweigert `index.ts` den Start ohne
+`WORKOS_CLIENT_ID` + `WORKOS_REQUIRED_ORG_ID` + `SYNC_WEBHOOK_SECRET`**;
+die App-Konstruktion liegt testbar in `src/server/app.ts` (`createApp()`).
+Frontend-Gate prüft `VITE_WORKOS_CLIENT_ID` build-time (CI übergibt es als
+Docker-Build-Arg!) und mountet `<AuthKitProvider>` + `<AuthGate>` nur dann.
+Alle UI-Fetches gehen über `useApiFetch()` in `src/client/lib/api.ts`, das
+den Bearer-Header anhängt und bei 401/abgelaufener Session den PKCE-Flow
+neu startet.

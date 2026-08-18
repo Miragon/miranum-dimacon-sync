@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { DimaconEmployeeFull } from "../shared/dimacon.js"
+import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
 import { diffPair, matchEmployees } from "./matcher.js"
 import type { ClockinEmployeeInfo } from "./types.js"
 

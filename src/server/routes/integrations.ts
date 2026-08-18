@@ -61,6 +61,14 @@ integrationsApiRoutes.get("/", (c) =>
 /** Gemeinsamer Run-Handler — auch vom Legacy-`/api/sync/run` genutzt. */
 export async function handleIntegrationRun(def: IntegrationDefinition, c: Context) {
   const secret = env.sync.webhookSecret()
+  // Zweite Verteidigungslinie zum Startup-Guard in index.ts: in Produktion
+  // laufen die offenen run-Webhooks nie ohne konfiguriertes Secret.
+  if (!secret && process.env.NODE_ENV === "production") {
+    log.error("integration run rejected — SYNC_WEBHOOK_SECRET not configured in production", {
+      integration: def.id,
+    })
+    return c.json({ error: "webhook secret not configured" }, 503)
+  }
   if (secret) {
     const provided = extractToken(c.req.header("authorization"), c.req.header("x-sync-token"))
     if (!provided || !constantTimeEqual(provided, secret)) {

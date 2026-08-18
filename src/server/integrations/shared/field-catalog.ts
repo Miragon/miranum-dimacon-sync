@@ -203,8 +203,7 @@ export const FIELD_CATALOG: Record<MappingEntity, EntityCatalog> = {
 
 /** Welche Integration bildet welche Entitäten ab */
 export const MAPPABLE_ENTITIES: Record<string, MappingEntity[]> = {
-  "dimacon-clockin": ["project", "customer"],
-  "dimacon-clockin-employees": ["employee"],
+  "dimacon-clockin": ["project", "customer", "employee"],
   "dimacon-lexoffice": ["lexofficeContact"],
 }
 

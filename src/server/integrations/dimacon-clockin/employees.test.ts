@@ -20,6 +20,26 @@ beforeEach(() => {
 })
 
 describe("EmployeeMatcher.match", () => {
+  it("returns a seeded pair without hitting the clockin search", async () => {
+    const matcher = new EmployeeMatcher(stubClient, silentLog, new Map([["d1", 77]]))
+    const m = await matcher.match({ id: "d1", firstName: "Anna", lastName: "Müller" })
+
+    expect(m).toEqual({ dimaconId: "d1", clockinId: 77, firstName: "Anna", lastName: "Müller" })
+    expect(searchForEmployeesMock).not.toHaveBeenCalled()
+  })
+
+  it("falls back to the search for unseeded ids", async () => {
+    searchForEmployeesMock.mockResolvedValue({
+      data: [{ id: 42, first_name: "Anna", last_name: "Müller" }],
+    })
+
+    const matcher = new EmployeeMatcher(stubClient, silentLog, new Map([["other-id", 77]]))
+    const m = await matcher.match({ id: "d1", firstName: "Anna", lastName: "Müller" })
+
+    expect(m?.clockinId).toBe(42)
+    expect(searchForEmployeesMock).toHaveBeenCalledTimes(1)
+  })
+
   it("stage 1: returns the only candidate when lastName matches uniquely", async () => {
     searchForEmployeesMock.mockResolvedValue({
       data: [{ id: 42, first_name: "Anna", last_name: "Müller" }],

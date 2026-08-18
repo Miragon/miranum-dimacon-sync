@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { DimaconEmployeeFull } from "../shared/dimacon.js"
-import type { EntityMappingContext } from "../shared/mapping-context.js"
+import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
+import type { EntityMappingContext } from "../../shared/mapping-context.js"
 import type { EmployeePair } from "./matcher.js"
 import type { ClockinEmployeeInfo } from "./types.js"
 
@@ -17,9 +17,9 @@ vi.mock("@miragon/client-dimacon", () => ({
 }))
 
 const { EmployeeSyncer } = await import("./syncer.js")
-const { FIELD_CATALOG } = await import("../shared/field-catalog.js")
-const { EMPTY_DISCOVERY } = await import("../shared/field-mapping.js")
-const { log } = await import("../../lib/log.js")
+const { FIELD_CATALOG } = await import("../../shared/field-catalog.js")
+const { EMPTY_DISCOVERY } = await import("../../shared/field-mapping.js")
+const { log } = await import("../../../lib/log.js")
 
 const silentLog = log.child({ test: true })
 ;(silentLog as unknown as { info: () => void }).info = () => {

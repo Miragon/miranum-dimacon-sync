@@ -1,23 +1,28 @@
 import { z } from "zod"
+import type { EmployeeSyncCounts, EmployeeSyncRow } from "./employee-sync/types.js"
 
 /**
- * Zuschaltbare Phasen des Tages-Syncs. Teilobjekte wie `{archive:false}`
- * werden durch die inneren Defaults vervollständigt; fehlt `steps` ganz
- * (auch beim Scheduler-`parse({})`), läuft alles wie bisher.
+ * Zuschaltbare Phasen des Clockin-Syncs. `employees` ist der bidirektionale
+ * Mitarbeiter-Stammdaten-Abgleich (läuft vor der Tagesplanung),
+ * `assignments` die Mitarbeiter-Zuordnung auf Projekte. Teilobjekte wie
+ * `{archive:false}` werden durch die inneren Defaults vervollständigt;
+ * fehlt `steps` ganz (auch beim Scheduler-`parse({})`), läuft alles.
  */
 export const SyncStepsSchema = z.object({
-  customers: z.boolean().default(true),
   employees: z.boolean().default(true),
+  customers: z.boolean().default(true),
   projects: z.boolean().default(true),
+  assignments: z.boolean().default(true),
   archive: z.boolean().default(true),
 })
 
 export type SyncSteps = z.infer<typeof SyncStepsSchema>
 
 export const DEFAULT_STEPS: SyncSteps = {
-  customers: true,
   employees: true,
+  customers: true,
   projects: true,
+  assignments: true,
   archive: true,
 }
 
@@ -50,7 +55,15 @@ export interface ArchiveResult {
 }
 
 export interface SyncError {
-  scope: "appointments" | "enrichment" | "customer" | "employee" | "project" | "archive" | "mapping"
+  scope:
+    | "appointments"
+    | "enrichment"
+    | "customer"
+    | "employee"
+    | "project"
+    | "archive"
+    | "mapping"
+    | "load"
   refId?: string
   message: string
 }
@@ -62,6 +75,11 @@ export interface SyncResult {
   steps: SyncSteps
   /** Termine in Dimacon für das Datum — macht "nichts zu tun" erklärbar */
   appointments: { total: number; live: number }
+  /** Ergebnis des Mitarbeiter-Stammdaten-Abgleichs — fehlt bei deaktiviertem Schritt */
+  employeeSync?: {
+    counts: EmployeeSyncCounts
+    rows: EmployeeSyncRow[]
+  }
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]

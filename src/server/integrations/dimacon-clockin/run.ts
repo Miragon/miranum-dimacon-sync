@@ -10,6 +10,7 @@ import type { EntityMappingContext, MappingContext } from "../shared/mapping-con
 import { todayInBerlin } from "../shared/time.js"
 import { archiveUnplanned } from "./archive.js"
 import { CustomerSyncer } from "./customers.js"
+import { runEmployeeSync } from "./employee-sync/run-employee-sync.js"
 import { EmployeeMatcher } from "./employees.js"
 import { enrich } from "./enrichment.js"
 import { ProjectUpserter } from "./projects.js"
@@ -32,6 +33,61 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
   const clockinClient = getClockInClient()
   const dimaconClient = getDimaconClient()
 
+  // Feld-Zuordnung laden — ohne persistierte Regeln macht das keine API-Calls
+  // und entspricht exakt dem bisherigen Verhalten.
+  let mappingContext: MappingContext
+  try {
+    mappingContext = await loadMappingContext(
+      dimaconClient,
+      () => clockinClient,
+      "dimacon-clockin",
+      ["project", "customer", "employee"],
+    )
+  } catch (err) {
+    const message = formatError(err)
+    // Safe-Mode: mit unklarer Zuordnung nichts schreiben — Auflösung,
+    // Mitarbeiter-Zuordnung und Archiv-Schutz laufen normal weiter.
+    log.error("failed to load field mapping — disabling write steps for this run", {
+      error: message,
+    })
+    errors.push({
+      scope: "mapping",
+      message: `Feld-Zuordnung konnte nicht geladen werden — Schreibschritte (Mitarbeiter/Kunden/Projekte) für diesen Lauf deaktiviert (${message})`,
+    })
+    steps = { ...steps, employees: false, projects: false, customers: false }
+    mappingContext = new Map()
+  }
+  const projectMapping = mappingContext.get("project") ?? defaultContext("project")
+  const customerMapping_ = mappingContext.get("customer") ?? defaultContext("customer")
+  const employeeMapping = mappingContext.get("employee") ?? defaultContext("employee")
+  const onMappingWarning = (message: string) => {
+    log.warn("field mapping warning", { message })
+    errors.push({ scope: "mapping", message })
+  }
+
+  // Phase 1: Mitarbeiter-Stammdaten-Abgleich — vor der Tagesplanung, damit
+  // frisch angelegte Clockin-Mitarbeiter sofort zuordenbar sind. Läuft auch
+  // an Tagen ohne Termine (nicht datumsgebunden).
+  let employeeSync: SyncResult["employeeSync"]
+  let employeePairs: ReadonlyMap<string, number> = new Map()
+  if (steps.employees) {
+    const outcome = await runEmployeeSync(
+      dimaconClient,
+      clockinClient,
+      employeeMapping,
+      dryRun,
+      log,
+      onMappingWarning,
+    )
+    employeeSync = { counts: outcome.counts, rows: outcome.rows }
+    employeePairs = outcome.pairs
+    errors.push(...outcome.errors)
+    log.info("employee sync finished", { ...outcome.counts, rows: outcome.rows.length })
+  } else {
+    log.info("employee sync step disabled — skipping")
+  }
+
+  // Phase 2: Tagesplanung
   let loaded
   try {
     loaded = await loadAppointments(dimaconClient, date)
@@ -39,7 +95,17 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
     const message = formatError(err)
     log.error("failed to load appointments", { error: message })
     errors.push({ scope: "appointments", message })
-    return result(date, dryRun, steps, startedAt, { total: 0, live: 0 }, projects, [], errors)
+    return result(
+      date,
+      dryRun,
+      steps,
+      startedAt,
+      { total: 0, live: 0 },
+      employeeSync,
+      projects,
+      [],
+      errors,
+    )
   }
 
   log.info("appointments loaded", {
@@ -49,8 +115,8 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
   })
 
   if (loaded.jobIds.length === 0) {
-    log.info("no appointments for date — nothing to sync")
-    return result(date, dryRun, steps, startedAt, loaded.counts, projects, [], errors)
+    log.info("no appointments for date — skipping daily plan")
+    return result(date, dryRun, steps, startedAt, loaded.counts, employeeSync, projects, [], errors)
   }
 
   let enriched
@@ -60,41 +126,10 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
     const message = formatError(err)
     log.error("enrichment failed", { error: message })
     errors.push({ scope: "enrichment", message })
-    return result(date, dryRun, steps, startedAt, loaded.counts, projects, [], errors)
+    return result(date, dryRun, steps, startedAt, loaded.counts, employeeSync, projects, [], errors)
   }
 
-  // Feld-Zuordnung laden — ohne persistierte Regeln macht das keine API-Calls
-  // und entspricht exakt dem bisherigen Verhalten.
-  let mappingContext: MappingContext
-  try {
-    mappingContext = await loadMappingContext(
-      dimaconClient,
-      () => clockinClient,
-      "dimacon-clockin",
-      ["project", "customer"],
-    )
-  } catch (err) {
-    const message = formatError(err)
-    // Safe-Mode: mit unklarer Zuordnung nichts schreiben — Auflösung,
-    // Mitarbeiter-Zuordnung und Archiv-Schutz laufen normal weiter.
-    log.error("failed to load field mapping — disabling project/customer writes for this run", {
-      error: message,
-    })
-    errors.push({
-      scope: "mapping",
-      message: `Feld-Zuordnung konnte nicht geladen werden — Projekt-/Kunden-Schreibschritte für diesen Lauf deaktiviert (${message})`,
-    })
-    steps = { ...steps, projects: false, customers: false }
-    mappingContext = new Map()
-  }
-  const projectMapping = mappingContext.get("project") ?? defaultContext("project")
-  const customerMapping_ = mappingContext.get("customer") ?? defaultContext("customer")
-  const onMappingWarning = (message: string) => {
-    log.warn("field mapping warning", { message })
-    errors.push({ scope: "mapping", message })
-  }
-
-  const employeeMatcher = new EmployeeMatcher(clockinClient, log)
+  const employeeMatcher = new EmployeeMatcher(clockinClient, log, employeePairs)
   const customerSyncer = new CustomerSyncer(
     clockinClient,
     log,
@@ -154,7 +189,7 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
       }
 
       const desiredEmployeeIds: number[] = []
-      const dimaconEmployeeIds = steps.employees
+      const dimaconEmployeeIds = steps.assignments
         ? unique(
             job.teamAssignments.filter((a) => a.date.startsWith(date)).map((a) => a.employeeId),
           )
@@ -226,9 +261,20 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
     log.info("archive step disabled — skipping")
   }
 
-  const final = result(date, dryRun, steps, startedAt, loaded.counts, projects, archived, errors)
+  const final = result(
+    date,
+    dryRun,
+    steps,
+    startedAt,
+    loaded.counts,
+    employeeSync,
+    projects,
+    archived,
+    errors,
+  )
   log.info("sync finished", {
     durationMs: final.durationMs,
+    employeeRows: final.employeeSync?.rows.length ?? 0,
     projects: final.projects.length,
     archived: final.archived.length,
     errors: final.errors.length,
@@ -242,6 +288,7 @@ function result(
   steps: SyncSteps,
   startedAt: number,
   appointments: SyncResult["appointments"],
+  employeeSync: SyncResult["employeeSync"],
   projects: ProjectSyncResult[],
   archived: SyncResult["archived"],
   errors: SyncError[],
@@ -252,13 +299,14 @@ function result(
     steps,
     durationMs: Date.now() - startedAt,
     appointments,
+    employeeSync,
     projects,
     archived,
     errors,
   }
 }
 
-function defaultContext(entity: "project" | "customer"): EntityMappingContext {
+function defaultContext(entity: "project" | "customer" | "employee"): EntityMappingContext {
   return {
     entity,
     rules: FIELD_CATALOG[entity].defaultRules,

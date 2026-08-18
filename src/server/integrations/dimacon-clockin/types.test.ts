@@ -10,9 +10,10 @@ describe("SyncRunInputSchema", () => {
   it("completes partial steps with true defaults", () => {
     const parsed = SyncRunInputSchema.parse({ steps: { archive: false } })
     expect(parsed.steps).toEqual({
-      customers: true,
       employees: true,
+      customers: true,
       projects: true,
+      assignments: true,
       archive: false,
     })
   })

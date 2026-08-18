@@ -48,6 +48,11 @@ vi.mock("../shared/mapping-context.js", () => ({ loadMappingContext: loadMapping
 const archiveUnplannedMock = vi.fn()
 vi.mock("./archive.js", () => ({ archiveUnplanned: archiveUnplannedMock }))
 
+const runEmployeeSyncMock = vi.fn()
+vi.mock("./employee-sync/run-employee-sync.js", () => ({
+  runEmployeeSync: runEmployeeSyncMock,
+}))
+
 const { runDimaconClockinSync } = await import("./run.js")
 const { log } = await import("../../lib/log.js")
 
@@ -113,6 +118,12 @@ beforeEach(() => {
   // Leerer Kontext → run.ts fällt auf die Default-Zuordnung zurück
   loadMappingContextMock.mockResolvedValue(new Map())
   archiveUnplannedMock.mockResolvedValue([])
+  runEmployeeSyncMock.mockResolvedValue({
+    counts: { dimacon: 2, clockin: 2, matched: 2 },
+    rows: [],
+    errors: [],
+    pairs: new Map(),
+  })
 
   searchForProjectsMock.mockResolvedValue({
     data: [
@@ -146,7 +157,10 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     // Safe-Mode: Schreibschritte deaktiviert, Fehler dokumentiert
     expect(result.steps.projects).toBe(false)
     expect(result.steps.customers).toBe(false)
+    expect(result.steps.employees).toBe(false)
     expect(result.errors.some((e) => e.scope === "mapping")).toBe(true)
+    expect(runEmployeeSyncMock).not.toHaveBeenCalled()
+    expect(result.employeeSync).toBeUndefined()
     expect(createProjectMock).not.toHaveBeenCalled()
     expect(updateProjectMock).not.toHaveBeenCalled()
     expect(createCustomerMock).not.toHaveBeenCalled()
@@ -177,12 +191,84 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
   it("skips the archive phase entirely when steps.archive is disabled", async () => {
     const result = await runDimaconClockinSync({
       date: DATE,
-      steps: { customers: true, employees: true, projects: true, archive: false },
+      steps: {
+        employees: true,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: false,
+      },
     })
 
     expect(result.errors).toEqual([])
     expect(result.steps.archive).toBe(false)
     expect(archiveUnplannedMock).not.toHaveBeenCalled()
     expect(result.archived).toEqual([])
+  })
+
+  it("runs the employee master sync before the daily plan and reports its outcome", async () => {
+    runEmployeeSyncMock.mockResolvedValue({
+      counts: { dimacon: 3, clockin: 2, matched: 2 },
+      rows: [{ direction: "dimacon→clockin", name: "Laura Officanis", status: "created" }],
+      errors: [{ scope: "employee", refId: "e-1", message: "boom" }],
+      pairs: new Map([["e-1", 77]]),
+    })
+
+    const result = await runDimaconClockinSync({ date: DATE })
+
+    expect(runEmployeeSyncMock).toHaveBeenCalledTimes(1)
+    expect(result.employeeSync).toEqual({
+      counts: { dimacon: 3, clockin: 2, matched: 2 },
+      rows: [{ direction: "dimacon→clockin", name: "Laura Officanis", status: "created" }],
+    })
+    // Fehler des Abgleichs landen im gemeinsamen errors-Array
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ scope: "employee", refId: "e-1" }),
+    )
+    // Tagesplanung lief danach normal weiter
+    expect(result.projects).toHaveLength(1)
+  })
+
+  it("carries the employee sync result through the no-appointments early exit", async () => {
+    loadAppointmentsMock.mockResolvedValue({
+      appointments: [],
+      jobIds: [],
+      byJobId: new Map(),
+      counts: { total: 2, live: 0 },
+    })
+
+    const result = await runDimaconClockinSync({ date: DATE })
+
+    // Stammdaten-Abgleich lief trotz leerer Tagesplanung — Ergebnis erhalten
+    expect(runEmployeeSyncMock).toHaveBeenCalledTimes(1)
+    expect(result.employeeSync?.counts).toEqual({ dimacon: 2, clockin: 2, matched: 2 })
+    expect(result.projects).toEqual([])
+    expect(archiveUnplannedMock).not.toHaveBeenCalled()
+  })
+
+  it("carries the employee sync result when the appointments load fails", async () => {
+    loadAppointmentsMock.mockRejectedValue(new Error("boom 400"))
+
+    const result = await runDimaconClockinSync({ date: DATE })
+
+    expect(result.employeeSync).toBeDefined()
+    expect(result.errors).toContainEqual(expect.objectContaining({ scope: "appointments" }))
+  })
+
+  it("skips the employee master sync when steps.employees is disabled", async () => {
+    const result = await runDimaconClockinSync({
+      date: DATE,
+      steps: {
+        employees: false,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: true,
+      },
+    })
+
+    expect(runEmployeeSyncMock).not.toHaveBeenCalled()
+    expect(result.employeeSync).toBeUndefined()
+    expect(result.projects).toHaveLength(1)
   })
 })

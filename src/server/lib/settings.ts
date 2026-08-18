@@ -44,9 +44,32 @@ function settingsPath(): string {
 }
 
 let cache: SettingsFile | undefined
+let loading: Promise<SettingsFile> | undefined
 
+/**
+ * Single-Flight: parallele Erst-Loads (z. B. mehrere Requests direkt nach
+ * dem Boot) teilen sich EIN Laden — sonst seeden/migrieren zwei Loads
+ * gleichzeitig und konkurrieren um dieselbe tmp-Datei beim Persist.
+ */
 export async function loadSettings(): Promise<SettingsFile> {
   if (cache) return cache
+  if (!loading) {
+    loading = doLoadSettings().then(
+      (file) => {
+        cache = file
+        loading = undefined
+        return file
+      },
+      (err: unknown) => {
+        loading = undefined
+        throw err
+      },
+    )
+  }
+  return loading
+}
+
+async function doLoadSettings(): Promise<SettingsFile> {
   const path = settingsPath()
 
   let raw: string
@@ -55,10 +78,10 @@ export async function loadSettings(): Promise<SettingsFile> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code === "ENOENT") {
-      cache = seedFromEnv()
-      await persist(cache)
+      const seeded = seedFromEnv()
+      await persist(seeded)
       log.info("settings file seeded", { path, source: "env" })
-      return cache
+      return seeded
     }
     throw err
   }
@@ -67,19 +90,54 @@ export async function loadSettings(): Promise<SettingsFile> {
 
   const modern = SettingsFileSchema.safeParse(parsed)
   if (modern.success) {
-    cache = modern.data
-    return cache
+    return migrateRemovedEmployeesIntegration(modern.data, path)
   }
 
   const legacy = LegacyFileSchema.safeParse(parsed)
   if (legacy.success) {
-    cache = { integrations: { [LEGACY_INTEGRATION_ID]: legacy.data.sync }, fieldMappings: {} }
-    await persist(cache)
+    const migrated: SettingsFile = {
+      integrations: { [LEGACY_INTEGRATION_ID]: legacy.data.sync },
+      fieldMappings: {},
+    }
+    await persist(migrated)
     log.info("settings file migrated from legacy shape", { path })
-    return cache
+    return migrated
   }
 
   throw new Error(`settings file at ${path} has an unrecognized shape`)
+}
+
+// Die Integration "dimacon-clockin-employees" wurde in "dimacon-clockin"
+// gefaltet (Mitarbeiter-Abgleich ist jetzt ein Schritt): ihre persistierte
+// Feld-Zuordnung wandert mit, der eigene Cron-Slot entfällt.
+const REMOVED_EMPLOYEES_ID = "dimacon-clockin-employees"
+
+async function migrateRemovedEmployeesIntegration(
+  file: SettingsFile,
+  path: string,
+): Promise<SettingsFile> {
+  const hasSchedule = REMOVED_EMPLOYEES_ID in file.integrations
+  const hasMappings = REMOVED_EMPLOYEES_ID in file.fieldMappings
+  if (!hasSchedule && !hasMappings) return file
+
+  const integrations = { ...file.integrations }
+  delete integrations[REMOVED_EMPLOYEES_ID]
+
+  const fieldMappings = { ...file.fieldMappings }
+  const removed = fieldMappings[REMOVED_EMPLOYEES_ID]
+  delete fieldMappings[REMOVED_EMPLOYEES_ID]
+  if (removed?.employee) {
+    fieldMappings[LEGACY_INTEGRATION_ID] = {
+      // Ein bestehender employee-Eintrag unter dimacon-clockin gewinnt
+      ...{ employee: removed.employee },
+      ...(fieldMappings[LEGACY_INTEGRATION_ID] ?? {}),
+    }
+  }
+
+  const next: SettingsFile = { integrations, fieldMappings }
+  await persist(next)
+  log.info("settings migrated: folded dimacon-clockin-employees into dimacon-clockin", { path })
+  return next
 }
 
 export async function getScheduleSettings(integrationId: string): Promise<ScheduleSettings> {
@@ -147,12 +205,27 @@ export async function updateFieldMapping(
   return task
 }
 
+let tmpCounter = 0
+
 async function persist(data: SettingsFile): Promise<void> {
   const path = settingsPath()
   await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp`
+  // Eindeutiger tmp-Name: parallele Persists (zweiter Prozess, Tests) dürfen
+  // sich nicht gegenseitig die tmp-Datei unterm Rename wegziehen.
+  const tmp = `${path}.${process.pid}.${++tmpCounter}.tmp`
   await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8")
-  await rename(tmp, path)
+  // Windows: rename liefert transient EPERM/EBUSY (Virenscanner, parallele
+  // Handles) — kurz erneut versuchen statt hart zu scheitern.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await rename(tmp, path)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (attempt >= 3 || (code !== "EPERM" && code !== "EBUSY")) throw err
+      await new Promise((resolve) => setTimeout(resolve, 50 * attempt))
+    }
+  }
 }
 
 function seedFromEnv(): SettingsFile {

@@ -184,6 +184,92 @@ describe("settings", () => {
     expect(persisted.fieldMappings["dimacon-clockin"]).toBeUndefined()
   })
 
+  it("migrates the removed dimacon-clockin-employees integration on load", async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        integrations: {
+          "dimacon-clockin": { enabled: false, timezone: "Europe/Berlin" },
+          "dimacon-clockin-employees": {
+            enabled: true,
+            cron: "0 5 * * *",
+            timezone: "Europe/Berlin",
+          },
+        },
+        fieldMappings: {
+          "dimacon-clockin-employees": {
+            employee: {
+              version: 1,
+              rules: [
+                {
+                  source: { kind: "standard", field: "phoneNumber" },
+                  target: { kind: "standard", field: "phone_work" },
+                },
+              ],
+            },
+          },
+        },
+      }),
+      "utf-8",
+    )
+    const { getFieldMapping, getScheduleSettings } = await loadModule()
+
+    // Mapping wandert unter dimacon-clockin, der alte Cron-Slot verschwindet
+    const mapping = await getFieldMapping("dimacon-clockin", "employee")
+    expect(mapping?.rules).toHaveLength(1)
+    expect(await getFieldMapping("dimacon-clockin-employees", "employee")).toBeUndefined()
+    expect((await getScheduleSettings("dimacon-clockin-employees")).enabled).toBe(false)
+
+    const persisted = JSON.parse(await readFile(path, "utf-8")) as {
+      integrations: Record<string, unknown>
+      fieldMappings: Record<string, unknown>
+    }
+    expect(persisted.integrations["dimacon-clockin-employees"]).toBeUndefined()
+    expect(persisted.fieldMappings["dimacon-clockin-employees"]).toBeUndefined()
+    expect(persisted.fieldMappings["dimacon-clockin"]).toBeDefined()
+  })
+
+  it("keeps an existing dimacon-clockin employee mapping over the migrated one", async () => {
+    const keep = {
+      version: 1,
+      rules: [
+        {
+          source: { kind: "standard", field: "email" },
+          target: { kind: "standard", field: "email" },
+        },
+      ],
+    }
+    await writeFile(
+      path,
+      JSON.stringify({
+        integrations: {},
+        fieldMappings: {
+          "dimacon-clockin": { employee: keep },
+          "dimacon-clockin-employees": { employee: { version: 1, rules: [] } },
+        },
+      }),
+      "utf-8",
+    )
+    const { getFieldMapping } = await loadModule()
+
+    expect(await getFieldMapping("dimacon-clockin", "employee")).toEqual(keep)
+  })
+
+  it("does not rewrite files without the removed integration id", async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        integrations: { "dimacon-clockin": { enabled: false, timezone: "Europe/Berlin" } },
+        fieldMappings: {},
+      }),
+      "utf-8",
+    )
+    const before = await readFile(path, "utf-8")
+    const { loadSettings } = await loadModule()
+    await loadSettings()
+    expect(await readFile(path, "utf-8")).toBe(before)
+  })
+
   it("serializes parallel schedule and mapping updates", async () => {
     const { getFieldMapping, getScheduleSettings, updateFieldMapping, updateScheduleSettings } =
       await loadModule()

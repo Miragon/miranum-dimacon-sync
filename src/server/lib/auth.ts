@@ -20,13 +20,32 @@ interface AuthEnv {
 
 const WORKOS_JWKS_BASE = "https://api.workos.com/sso/jwks"
 
-let jwks: ReturnType<typeof createRemoteJWKSet> | undefined
+// AuthKit-Access-Tokens tragen diesen Issuer (User-Management-API).
+// Bei einem Issuer-Mismatch loggt jose die Details — siehe "auth token
+// invalid"-Warnung mit ERR_JWT_CLAIM_VALIDATION_FAILED.
+function expectedIssuer(clientId: string): string {
+  return `https://api.workos.com/user_management/${clientId}`
+}
+
+// Pro Client-ID gecacht (nicht global): ein geänderter WORKOS_CLIENT_ID darf
+// nie stillschweigend das alte Key-Set weiterverwenden.
+const jwksByClientId = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
 
 function getJWKS(clientId: string) {
+  let jwks = jwksByClientId.get(clientId)
   if (!jwks) {
-    jwks = createRemoteJWKSet(new URL(`${WORKOS_JWKS_BASE}/${clientId}`))
+    jwks = createRemoteJWKSet(new URL(`${WORKOS_JWKS_BASE}/${clientId}`), {
+      timeoutDuration: 5_000,
+      cooldownDuration: 30_000,
+    })
+    jwksByClientId.set(clientId, jwks)
   }
   return jwks
+}
+
+/** Nur für Tests: JWKS-Cache leeren. */
+export function resetJwksCache(): void {
+  jwksByClientId.clear()
 }
 
 export function isAuthConfigured(): boolean {
@@ -44,7 +63,10 @@ export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
   }
 
   try {
-    const { payload } = await jwtVerify(match[1], getJWKS(clientId))
+    const { payload } = await jwtVerify(match[1], getJWKS(clientId), {
+      algorithms: ["RS256"],
+      issuer: expectedIssuer(clientId),
+    })
     const claims = payload as WorkOSClaims
     const requiredOrg = env.workos.requiredOrgId()
     if (requiredOrg && claims.org_id !== requiredOrg) {

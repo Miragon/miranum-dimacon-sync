@@ -26,9 +26,34 @@ export interface ArchiveResult {
 }
 
 export interface SyncError {
-  scope: "appointments" | "enrichment" | "customer" | "employee" | "project" | "archive" | "mapping"
+  scope:
+    | "appointments"
+    | "enrichment"
+    | "customer"
+    | "employee"
+    | "project"
+    | "archive"
+    | "mapping"
+    | "load"
   refId?: string
   message: string
+}
+
+export type EmployeeSyncStatus =
+  | "created"
+  | "updated"
+  | "unchanged"
+  | "skipped"
+  | "reported"
+  | "failed"
+
+export interface EmployeeSyncRow {
+  direction: "dimacon→clockin" | "clockin→dimacon" | "match"
+  dimaconId?: string
+  clockinId?: number
+  name: string
+  status: EmployeeSyncStatus
+  reason?: string
 }
 
 export interface SyncResult {
@@ -37,17 +62,34 @@ export interface SyncResult {
   durationMs: number
   /** optional: ältere Server-Versionen liefern die Felder nicht */
   appointments?: { total: number; live: number }
-  steps?: { customers: boolean; employees: boolean; projects: boolean; archive: boolean }
+  steps?: {
+    employees: boolean
+    customers: boolean
+    projects: boolean
+    assignments: boolean
+    archive: boolean
+  }
+  employeeSync?: {
+    counts: { dimacon: number; clockin: number; matched: number }
+    rows: EmployeeSyncRow[]
+  }
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
 }
 
 const STEP_LABELS: Record<string, string> = {
+  employees: "mitarbeiter-abgleich",
   customers: "kunden",
-  employees: "mitarbeiter",
   projects: "projekte",
+  assignments: "zuordnung",
   archive: "archivierung",
+}
+
+const DIRECTION_LABELS: Record<EmployeeSyncRow["direction"], string> = {
+  "dimacon→clockin": "→ Clockin",
+  "clockin→dimacon": "→ Dimacon",
+  match: "Match",
 }
 
 export function DimaconClockinResult({ result }: { result: SyncResult }) {
@@ -71,7 +113,10 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
         </dl>
         {result.appointments?.live === 0 && result.errors.length === 0 ? (
           <p className="text-ink-2 mt-4 text-[0.8rem]">
-            Keine Termine in Dimacon für dieses Datum — es gibt nichts zu synchronisieren.
+            Keine Termine in Dimacon für dieses Datum — Tagesplanung übersprungen
+            {result.employeeSync && result.employeeSync.rows.length > 0
+              ? ", nur der Mitarbeiter-Abgleich lief."
+              : ", es gibt nichts zu synchronisieren."}
             {result.appointments.total > 0
               ? ` (${result.appointments.total} archivierte Termine wurden ignoriert.)`
               : ""}
@@ -96,6 +141,47 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
           )}
         </div>
       </section>
+
+      {result.employeeSync ? (
+        <section className="mb-16">
+          <ResultSectionHead title="Mitarbeiter-Abgleich" />
+          <dl className="border-rule grid grid-cols-3 border">
+            <Stat label="Dimacon" value={String(result.employeeSync.counts.dimacon)} />
+            <Stat label="Clockin" value={String(result.employeeSync.counts.clockin)} />
+            <Stat label="Matches" value={String(result.employeeSync.counts.matched)} />
+          </dl>
+          {result.employeeSync.rows.length > 0 ? (
+            <div className="mt-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-32">Status</TableHead>
+                    <TableHead className="w-32">Richtung</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Hinweis</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {result.employeeSync.rows.map((row, i) => (
+                    <TableRow key={`${row.dimaconId ?? ""}-${row.clockinId ?? ""}-${i}`}>
+                      <TableCell>
+                        <MnStatusBadge variant={employeeBadgeVariant(row.status)}>
+                          {row.status}
+                        </MnStatusBadge>
+                      </TableCell>
+                      <TableCell className="font-mono text-[0.8rem]">
+                        {DIRECTION_LABELS[row.direction]}
+                      </TableCell>
+                      <TableCell className="font-medium">{row.name}</TableCell>
+                      <TableCell className="text-ink-2 text-[0.8rem]">{row.reason ?? ""}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {result.projects.length > 0 ? (
         <section className="mb-16">
@@ -170,6 +256,12 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
 function badgeVariant(status: ProjectSyncResult["status"]): "default" | "ok" | "warn" {
   if (status === "created" || status === "updated") return "ok"
   if (status === "failed" || status === "skipped") return "warn"
+  return "default"
+}
+
+function employeeBadgeVariant(status: EmployeeSyncStatus): "default" | "ok" | "warn" {
+  if (status === "created" || status === "updated") return "ok"
+  if (status === "failed" || status === "skipped" || status === "reported") return "warn"
   return "default"
 }
 

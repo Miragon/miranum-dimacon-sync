@@ -60,7 +60,9 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 
 **Scheduler:** Jede Integration hat einen eigenen Cron (enabled, Ausdruck,
 Timezone), **persistent in `SETTINGS_PATH`** (JSON, keyed nach Integration-ID)
-und über die UI unter `/settings` editierbar. `SYNC_CRON` / `SYNC_TZ` werden
+und über die UI unter `/settings` editierbar. Geplante Läufe fahren den
+**kompletten** Schritt-Satz — beim `dimacon-clockin`-Cron also auch den
+Live-Mitarbeiter-Abgleich. `SYNC_CRON` / `SYNC_TZ` werden
 nur beim allerersten Start als Seed für `dimacon-clockin` verwendet; eine
 Settings-Datei in der alten `{ "sync": ... }`-Form wird beim Laden automatisch
 migriert. Für Fly: Volume an `/data` mounten und
@@ -255,11 +257,10 @@ angebundenen Systeme (Dimacon, Clockin, Lexware Office). Registriert in
 Mutex (max. ein Lauf gleichzeitig, sonst HTTP 409), eigenen Cron-Slot,
 eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 
-| Integration                 | Ablauf                                                                                                                                                                                                                                             |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dimacon-clockin`           | Tagesplanung: Termine laden, Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit** — als Kundennummer dient die Dimacon-Nummer (Fallback: Dimacon-ID). Schritte per `steps` zuschaltbar.           |
-| `dimacon-clockin-employees` | **Bidirektionaler** Mitarbeiter-Abgleich: fehlende Mitarbeiter auf beiden Seiten anlegen, bei Abweichungen gewinnt Dimacon, Archivierungen werden nur gemeldet. Achtung: Live-Lauf legt Mitarbeiter in beiden Systemen an — vorher dry-run prüfen. |
-| `dimacon-lexoffice`         | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.   |
+| Integration         | Ablauf                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dimacon-clockin`   | Kompletter Clockin-Sync, Schritte per `steps` zuschaltbar: (1) **bidirektionaler** Mitarbeiter-Stammdaten-Abgleich über den gesamten Bestand (Dimacon gewinnt, Live-Lauf legt Mitarbeiter in beiden Systemen an — vorher dry-run prüfen), (2) Tagesplanung: Termine laden, Kunden/Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit.** |
+| `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.                                                                                                                                         |
 
 **Endpoints** (run/healthz offen — run per `SYNC_WEBHOOK_SECRET` geschützt,
 Liste hinter Auth):
@@ -290,7 +291,11 @@ curl http://localhost:3020/api/integrations/dimacon-clockin/healthz
 ```
 
 `POST /api/sync/run` + `GET /api/sync/healthz` bleiben als **Legacy-Alias** für
-`dimacon-clockin` erhalten (bestehende Webhooks funktionieren unverändert).
+`dimacon-clockin` erhalten. **Achtung**: ein Aufruf ohne Body führt jetzt den
+kompletten Schritt-Satz aus — inklusive des **Live-Mitarbeiter-Abgleichs**
+(legt Mitarbeiter in beiden Systemen an). Bestehende Webhooks/Crons, die nur
+die Tagesplanung wollen, müssen `{ "steps": { "employees": false } }`
+mitschicken.
 
 Scheduling: pro Integration über die UI (`/settings`) — persistiert in
 `SETTINGS_PATH`, PUT auf `/api/settings/integrations/:id` restartet den
@@ -314,9 +319,9 @@ Architektur-Bausteine (`src/server/integrations/`):
   (Katalog, pure Engine, Discovery von Custom-Attributen/-Feldern)
 - `dimacon-clockin/` — Orchestrator (fail-soft pro Projekt), Employee-Matching
   (Nachname → Vorname → E-Mail), Kunden-Upsert, Projekt-Upsert mit
-  Mitarbeiter-Diff (attach/detach), Archivierung
-- `dimacon-clockin-employees/` — bidirektionaler Mitarbeiter-Abgleich (Matching
-  Personalnummer → E-Mail → Name, Dimacon gewinnt, Personalnummer-Backfill)
+  Mitarbeiter-Diff (attach/detach), Archivierung; `employee-sync/` darin ist
+  der bidirektionale Stammdaten-Abgleich (Matching Personalnummer → E-Mail →
+  Name, Dimacon gewinnt, Personalnummer-Backfill) als erster Schritt
 - `dimacon-lexoffice/` — Lexware-Kontakt find-or-create + Kundennummern-Alignment
 
 Tests laufen mit `pnpm test`.
@@ -342,15 +347,40 @@ ergänzt — Beispiele: `GET /api/clockin/projects`, `GET /api/dimacon/me`,
 # Deployment
 
 Dockerfile baut ein `node:22-alpine`-Image, läuft `tsx src/server/index.ts`
-auf Port 3020. Health-Check unter `/healthz`. Tokens werden über `fly secrets`
+auf Port 3020. Health-Check unter `/healthz`. Secrets werden über `fly secrets`
 gesetzt:
 
 ```bash
 fly secrets set \
   CLOCKIN_API_TOKEN=… \
   DIMACON_BASE_URL=… DIMACON_TENANT=… DIMACON_API_TOKEN=… \
-  LEXWARE_OFFICE_API_KEY=…
+  LEXWARE_OFFICE_API_KEY=… \
+  WORKOS_CLIENT_ID=… \
+  WORKOS_REQUIRED_ORG_ID=… \
+  SYNC_WEBHOOK_SECRET=…
 ```
+
+**Produktion erzwingt Authentifizierung**: mit `NODE_ENV=production` startet
+der Server nur, wenn `WORKOS_CLIENT_ID`, `WORKOS_REQUIRED_ORG_ID` **und**
+`SYNC_WEBHOOK_SECRET` gesetzt sind (sonst klare Fehlermeldung beim Boot).
+Zusätzlich lehnen die offenen `run`-Webhooks in Produktion Anfragen mit 503
+ab, solange kein Webhook-Secret konfiguriert ist. Im Dev bleibt der offene
+Fallback (Warnung im Log) erhalten.
+
+**⚠️ `VITE_WORKOS_CLIENT_ID` wird zur Build-Zeit ins Bundle gebakt** — ein
+Fly-Secret kann Frontend-Auth NICHT aktivieren. Die CI übergibt den Wert als
+Docker-Build-Arg aus den GitHub-Repository-Variablen `WORKOS_CLIENT_ID_PROD`
+bzw. `WORKOS_CLIENT_ID_STAGE` (Public-Client-ID, kein Secret — pro Umgebung
+ein eigener WorkOS-Client). Lokal: `docker build --build-arg
+VITE_WORKOS_CLIENT_ID=client_…`.
+
+WorkOS-Dashboard-Checkliste **pro Umgebung** (eigener Client für prod/stage):
+
+- Redirect-URI = exakt die App-Origin (z. B. `https://miranum-dimacon-sync.fly.dev`) —
+  AuthKit nutzt standardmäßig `window.location.origin` als Redirect-Ziel.
+- Dieselbe Origin als Allowed Origin (CORS) eintragen.
+- Client-ID sowohl als Fly-Secret (`WORKOS_CLIENT_ID`, Backend/JWKS) als auch
+  als GitHub-Variable (`WORKOS_CLIENT_ID_*`, Frontend-Build) hinterlegen.
 
 # Demo files
 
