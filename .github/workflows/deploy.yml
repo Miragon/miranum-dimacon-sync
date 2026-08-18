@@ -18,10 +18,12 @@ jobs:
             app: miranum-dimacon-sync
             org: miranum
             token_secret: FLY_TOKEN_PROD
+            workos_client_id_var: WORKOS_CLIENT_ID_PROD
           - env: stage
             app: miranum-dimacon-sync-stage
             org: miranum-stage
             token_secret: FLY_TOKEN_STAGE
+            workos_client_id_var: WORKOS_CLIENT_ID_STAGE
     name: build-and-push (${{ matrix.env }})
     steps:
       - name: Checkout
@@ -53,6 +55,13 @@ jobs:
         with:
           context: .
           push: true
+          # VITE_WORKOS_CLIENT_ID wird von Vite ins Bundle gebakt und MUSS
+          # deshalb als Build-Arg kommen (GitHub-Repo-Variable pro Umgebung,
+          # Public-Client-ID — kein Secret). Fehlt die Variable, baut das
+          # Image ohne Frontend-Auth und der Server-Startup-Guard verhindert
+          # den unauthentifizierten Betrieb in Produktion.
+          build-args: |
+            VITE_WORKOS_CLIENT_ID=${{ vars[matrix.workos_client_id_var] }}
           tags: |
             registry.fly.io/${{ matrix.app }}:latest
             registry.fly.io/${{ matrix.app }}:${{ github.sha }}

@@ -1,60 +1,68 @@
 import { Cron } from "croner"
 import { Hono } from "hono"
-import { getSyncSettings, SyncSettingsSchema, updateSyncSettings } from "../lib/settings.js"
+import {
+  getScheduleSettings,
+  ScheduleSettingsSchema,
+  updateScheduleSettings,
+} from "../lib/settings.js"
+import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
-import { getNextRun, isCronActive, startScheduler } from "../sync/scheduler.js"
+import { getIntegration, integrations } from "../integrations/registry.js"
+import { getNextRun, isCronActive, startIntegrationCron } from "../integrations/scheduler.js"
+import type { ScheduleSettings } from "../lib/settings.js"
 
 const app = new Hono()
 
-app.get("/sync", async (c) => {
-  const sync = await getSyncSettings()
-  return c.json({
-    ...sync,
-    active: isCronActive(),
-    nextRun: getNextRun(),
-    nextRuns: previewNextRuns(sync.cron, sync.timezone, 5),
-  })
+app.get("/integrations", async (c) => {
+  const entries = await Promise.all(
+    integrations.map(async (def) =>
+      scheduleEntry(def.id, def.name, await getScheduleSettings(def.id)),
+    ),
+  )
+  return c.json(entries)
 })
 
-app.put("/sync", async (c) => {
+app.put("/integrations/:id", async (c) => {
+  const id = c.req.param("id")
+  const def = getIntegration(id)
+  if (!def) return c.json({ error: "unknown integration" }, 404)
+
   const raw = await safeJson(c.req.raw)
-  const parsed = SyncSettingsSchema.safeParse(raw)
+  const parsed = ScheduleSettingsSchema.safeParse(raw)
   if (!parsed.success) {
     return c.json({ error: "invalid input", details: parsed.error.flatten() }, 400)
   }
   const input = parsed.data
 
   if (input.enabled && !input.cron) {
-    return c.json({ error: "cron expression required when sync is enabled" }, 400)
+    return c.json({ error: "cron expression required when schedule is enabled" }, 400)
   }
   if (input.cron) {
     const v = validateCron(input.cron, input.timezone)
     if (!v.ok) return c.json({ error: v.message }, 400)
   }
 
-  const saved = await updateSyncSettings(input)
-  await startScheduler()
-  log.info("sync settings updated", {
+  const saved = await updateScheduleSettings(id, input)
+  await startIntegrationCron(id)
+  log.info("integration schedule updated", {
+    integration: id,
     enabled: saved.enabled,
     cron: saved.cron ?? null,
     tz: saved.timezone,
   })
-  return c.json({
-    ...saved,
-    active: isCronActive(),
-    nextRun: getNextRun(),
-    nextRuns: previewNextRuns(saved.cron, saved.timezone, 5),
-  })
+  return c.json(scheduleEntry(id, def.name, saved))
 })
 
 export default app
 
-async function safeJson(req: Request): Promise<unknown> {
-  if (req.headers.get("content-length") === "0") return {}
-  try {
-    return await req.json()
-  } catch {
-    return {}
+function scheduleEntry(id: string, name: string, settings: ScheduleSettings) {
+  return {
+    id,
+    name,
+    ...settings,
+    active: isCronActive(id),
+    nextRun: getNextRun(id),
+    nextRuns: previewNextRuns(settings.cron, settings.timezone, 5),
   }
 }
 

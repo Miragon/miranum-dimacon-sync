@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { isTransient, withRetry } from "./concurrency.js"
+import { isRateLimited, isTransient, withRetry } from "./concurrency.js"
 
 describe("isTransient", () => {
   it("recognizes status field 429", () => {
@@ -54,6 +54,55 @@ describe("isTransient", () => {
     expect(isTransient(undefined)).toBe(false)
     expect(isTransient(42)).toBe(false)
   })
+
+  it("unwraps undici 'fetch failed' with a network code in cause", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ECONNREFUSED" },
+    })
+    expect(isTransient(err)).toBe(true)
+  })
+
+  it("unwraps a nested cause chain", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { message: "", cause: { code: "ECONNRESET" } },
+    })
+    expect(isTransient(err)).toBe(true)
+  })
+
+  it("recognizes undici UND_ERR_* codes", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+    })
+    expect(isTransient(err)).toBe(true)
+  })
+
+  it("recognizes 'socket hang up' in a cause message", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: new Error("socket hang up"),
+    })
+    expect(isTransient(err)).toBe(true)
+  })
+
+  it("does not retry a fetch TypeError with a non-transient cause", () => {
+    const err = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ERR_INVALID_URL" },
+    })
+    expect(isTransient(err)).toBe(false)
+  })
+})
+
+describe("isRateLimited", () => {
+  it("recognizes throttle messages and status 429", () => {
+    expect(isRateLimited({ message: "Too Many Attempts." })).toBe(true)
+    expect(isRateLimited({ status: 429 })).toBe(true)
+    expect(isRateLimited("rate limit exceeded")).toBe(true)
+  })
+
+  it("is false for network errors and other statuses", () => {
+    expect(isRateLimited({ code: "ECONNRESET" })).toBe(false)
+    expect(isRateLimited({ status: 503 })).toBe(false)
+    expect(isRateLimited(null)).toBe(false)
+  })
 })
 
 describe("withRetry", () => {
@@ -70,7 +119,7 @@ describe("withRetry", () => {
         if (calls < 3) throw { message: "Too Many Attempts." }
         return "ok"
       },
-      { baseMs: 1, maxMs: 5 },
+      { baseMs: 1, maxMs: 5, rateLimitWaitMs: 1 },
     )
     expect(result).toBe("ok")
     expect(calls).toBe(3)
@@ -98,9 +147,50 @@ describe("withRetry", () => {
           calls++
           throw { message: "Too Many Attempts." }
         },
-        { attempts: 2, baseMs: 1 },
+        { attempts: 2, baseMs: 1, rateLimitWaitMs: 1 },
       ),
     ).rejects.toMatchObject({ message: "Too Many Attempts." })
     expect(calls).toBe(2)
+  })
+
+  it("waits rateLimitWaitMs (not exponential backoff) for throttle errors", async () => {
+    const waits: number[] = []
+    let calls = 0
+    await withRetry(
+      async () => {
+        calls++
+        if (calls < 3) throw { message: "Too Many Attempts." }
+        return "ok"
+      },
+      {
+        baseMs: 1,
+        rateLimitWaitMs: 77,
+        sleep: async (ms) => {
+          waits.push(ms)
+        },
+      },
+    )
+    expect(waits).toEqual([77, 77])
+  })
+
+  it("uses exponential backoff for network errors", async () => {
+    const waits: number[] = []
+    let calls = 0
+    await withRetry(
+      async () => {
+        calls++
+        if (calls < 4)
+          throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } })
+        return "ok"
+      },
+      {
+        baseMs: 1,
+        maxMs: 100,
+        sleep: async (ms) => {
+          waits.push(ms)
+        },
+      },
+    )
+    expect(waits).toEqual([1, 2, 4])
   })
 })
