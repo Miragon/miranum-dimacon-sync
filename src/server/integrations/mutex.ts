@@ -1,17 +1,30 @@
+// Ein Lauf-Lock je (Mandant, Integration): Mandanten blockieren sich nie
+// gegenseitig, derselbe Mandant + dieselbe Integration läuft maximal einmal.
 const running = new Map<string, Promise<unknown>>()
 
-export function isRunning(id: string): boolean {
-  return running.has(id)
+function key(tenantId: string, integrationId: string): string {
+  return `${tenantId} ${integrationId}`
 }
 
-export async function runExclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
-  if (running.has(id)) {
-    throw new SyncBusyError(`integration "${id}" is already running`)
+export function isRunning(tenantId: string, integrationId: string): boolean {
+  return running.has(key(tenantId, integrationId))
+}
+
+export async function runExclusive<T>(
+  tenantId: string,
+  integrationId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const k = key(tenantId, integrationId)
+  if (running.has(k)) {
+    throw new SyncBusyError(
+      `integration "${integrationId}" is already running for tenant "${tenantId}"`,
+    )
   }
   const promise = fn().finally(() => {
-    if (running.get(id) === promise) running.delete(id)
+    if (running.get(k) === promise) running.delete(k)
   })
-  running.set(id, promise)
+  running.set(k, promise)
   return promise
 }
 

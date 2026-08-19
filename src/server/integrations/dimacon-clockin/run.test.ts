@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Logger } from "../../lib/log.js"
+import type { IntegrationRunContext } from "../types.js"
 import type { LoadedAppointments } from "../shared/dimacon.js"
 import type { EnrichedDimaconData } from "./enrichment.js"
 
@@ -30,12 +31,6 @@ vi.mock("@miragon/client-clockin", () => ({
 const clockinClientStub = { kind: "clockin" }
 const dimaconClientStub = { kind: "dimacon" }
 
-vi.mock("../../lib/clients.js", () => ({
-  getClockInClient: () => clockinClientStub,
-  getDimaconClient: () => dimaconClientStub,
-  getLexofficeClient: () => ({ kind: "lexoffice" }),
-}))
-
 const loadAppointmentsMock = vi.fn()
 vi.mock("../shared/dimacon.js", () => ({ loadAppointments: loadAppointmentsMock }))
 
@@ -54,7 +49,6 @@ vi.mock("./employee-sync/run-employee-sync.js", () => ({
 }))
 
 const { runDimaconClockinSync } = await import("./run.js")
-const { log } = await import("../../lib/log.js")
 
 const noop = () => {
   /* swallow */
@@ -66,8 +60,23 @@ const silentLog: Logger = {
   error: noop,
   child: () => silentLog,
 }
-// run.ts baut sich seinen Logger selbst per rootLog.child(...) — hier stummschalten
-;(log as { child: Logger["child"] }).child = () => silentLog
+
+// Tests bauen den Tenant-Kontext von Hand — kein Modul-Mock der Client-
+// Factory mehr nötig (genau dafür existiert die ctx-Injektion).
+function testCtx(): IntegrationRunContext {
+  return {
+    tenantId: "tenant-test",
+    trigger: "manual",
+    clients: {
+      tenantId: "tenant-test",
+      clockin: async () => clockinClientStub as never,
+      dimacon: async () => dimaconClientStub as never,
+      lexoffice: async () => ({ kind: "lexoffice" }) as never,
+    },
+    getFieldMapping: async () => undefined,
+    log: silentLog,
+  }
+}
 
 const DATE = "2026-08-01"
 const CLOCKIN_PROJECT_ID = 55
@@ -152,7 +161,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
     loadMappingContextMock.mockRejectedValue(new Error("boom 400"))
 
-    const result = await runDimaconClockinSync({ date: DATE })
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
 
     // Safe-Mode: Schreibschritte deaktiviert, Fehler dokumentiert
     expect(result.steps.projects).toBe(false)
@@ -175,7 +184,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
   it("still protects the resolved project id when the customer sync fails", async () => {
     searchForCustomersMock.mockRejectedValue(new Error("boom 400"))
 
-    const result = await runDimaconClockinSync({ date: DATE })
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
 
     expect(result.errors).toContainEqual(
       expect.objectContaining({ scope: "customer", refId: "cust-1" }),
@@ -189,7 +198,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
   })
 
   it("skips the archive phase entirely when steps.archive is disabled", async () => {
-    const result = await runDimaconClockinSync({
+    const result = await runDimaconClockinSync(testCtx(), {
       date: DATE,
       steps: {
         employees: true,
@@ -214,7 +223,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
       pairs: new Map([["e-1", 77]]),
     })
 
-    const result = await runDimaconClockinSync({ date: DATE })
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
 
     expect(runEmployeeSyncMock).toHaveBeenCalledTimes(1)
     expect(result.employeeSync).toEqual({
@@ -237,7 +246,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
       counts: { total: 2, live: 0 },
     })
 
-    const result = await runDimaconClockinSync({ date: DATE })
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
 
     // Stammdaten-Abgleich lief trotz leerer Tagesplanung — Ergebnis erhalten
     expect(runEmployeeSyncMock).toHaveBeenCalledTimes(1)
@@ -249,14 +258,14 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
   it("carries the employee sync result when the appointments load fails", async () => {
     loadAppointmentsMock.mockRejectedValue(new Error("boom 400"))
 
-    const result = await runDimaconClockinSync({ date: DATE })
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
 
     expect(result.employeeSync).toBeDefined()
     expect(result.errors).toContainEqual(expect.objectContaining({ scope: "appointments" }))
   })
 
   it("skips the employee master sync when steps.employees is disabled", async () => {
-    const result = await runDimaconClockinSync({
+    const result = await runDimaconClockinSync(testCtx(), {
       date: DATE,
       steps: {
         employees: false,

@@ -1,6 +1,7 @@
 import { useAuth } from "@workos-inc/authkit-react"
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
+import { TenantGate } from "#/components/TenantGate"
 import { Button } from "#/components/ui/button"
 import { TokenContext } from "#/lib/api"
 
@@ -43,5 +44,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
     )
   }
 
-  return <TokenContext.Provider value={auth}>{children}</TokenContext.Provider>
+  return (
+    <TokenContext.Provider value={auth}>
+      <TenantGate>{children}</TenantGate>
+    </TokenContext.Provider>
+  )
 }

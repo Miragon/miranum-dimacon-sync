@@ -67,22 +67,12 @@ describe("requireAuth", () => {
     expect(await res.json()).toEqual({ error: "invalid token" })
   })
 
-  it("rejects a token from the wrong organization with 403", async () => {
-    vi.stubEnv("WORKOS_CLIENT_ID", "client_test")
-    vi.stubEnv("WORKOS_REQUIRED_ORG_ID", "org_expected")
-    jwtVerifyMock.mockResolvedValue({ payload: { sub: "user_1", org_id: "org_other" } })
+  // Der Org-Vergleich (früher WORKOS_REQUIRED_ORG_ID → 403) lebt jetzt in
+  // lib/tenant.ts (resolveTenant) — Tests dazu in tenant.test.ts.
 
-    const res = await appWithAuth().request("/x", {
-      headers: { authorization: "Bearer token" },
-    })
-    expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: "forbidden: wrong organization" })
-  })
-
-  it("accepts a matching org and pins issuer + RS256", async () => {
+  it("accepts a valid token and pins issuer + RS256", async () => {
     vi.stubEnv("WORKOS_CLIENT_ID", "client_test")
-    vi.stubEnv("WORKOS_REQUIRED_ORG_ID", "org_expected")
-    jwtVerifyMock.mockResolvedValue({ payload: { sub: "user_1", org_id: "org_expected" } })
+    jwtVerifyMock.mockResolvedValue({ payload: { sub: "user_1", org_id: "org_whatever" } })
 
     const res = await appWithAuth().request("/x", {
       headers: { authorization: "Bearer token" },
@@ -94,15 +84,15 @@ describe("requireAuth", () => {
     })
   })
 
-  it("accepts any org when WORKOS_REQUIRED_ORG_ID is unset", async () => {
+  it("exposes verifyAccessToken returning claims or undefined", async () => {
+    const { verifyAccessToken } = await import("./auth.js")
     vi.stubEnv("WORKOS_CLIENT_ID", "client_test")
-    vi.stubEnv("WORKOS_REQUIRED_ORG_ID", "")
-    jwtVerifyMock.mockResolvedValue({ payload: { sub: "user_1", org_id: "org_whatever" } })
 
-    const res = await appWithAuth().request("/x", {
-      headers: { authorization: "Bearer token" },
-    })
-    expect(res.status).toBe(200)
+    jwtVerifyMock.mockResolvedValue({ payload: { sub: "user_1", org_id: "org_x" } })
+    expect(await verifyAccessToken("good")).toMatchObject({ sub: "user_1", org_id: "org_x" })
+
+    jwtVerifyMock.mockRejectedValue(new Error("expired"))
+    expect(await verifyAccessToken("bad")).toBeUndefined()
   })
 
   it("keys the JWKS cache by client id", async () => {

@@ -1,4 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router"
+import { Settings } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
@@ -51,7 +52,7 @@ function IntegrationsPage() {
         <h1 className="text-h-1 text-ink mt-4">Integrationen</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[540px]">
           Alle Sync-Abläufe zwischen Dimacon, Clockin und Lexware Office — Status einsehen, manuell
-          starten, Zeitpläne unter Settings konfigurieren.
+          starten; Zeitplan, Zugangsdaten und Feld-Zuordnung über das Zahnrad je Integration.
         </p>
       </header>
 
@@ -87,7 +88,7 @@ function IntegrationsPage() {
                     {i.configured ? (
                       <MnStatusBadge variant="ok">konfiguriert</MnStatusBadge>
                     ) : (
-                      <MnStatusBadge variant="warn">env fehlt</MnStatusBadge>
+                      <MnStatusBadge variant="warn">zugangsdaten fehlen</MnStatusBadge>
                     )}
                     {i.cronActive ? <MnStatusBadge>cron aktiv</MnStatusBadge> : null}
                     {i.running ? <MnStatusBadge>läuft</MnStatusBadge> : null}
@@ -97,13 +98,25 @@ function IntegrationsPage() {
                   {i.nextRun ? formatRunDate(i.nextRun) : "—"}
                 </TableCell>
                 <TableCell>
-                  <Link
-                    to="/sync/$integrationId"
-                    params={{ integrationId: i.id }}
-                    className="text-ink hover:text-ink-2 font-mono text-[0.75rem] tracking-[0.12em] uppercase underline underline-offset-4"
-                  >
-                    öffnen
-                  </Link>
+                  <span className="flex items-center gap-4">
+                    <Link
+                      to="/sync/$integrationId"
+                      params={{ integrationId: i.id }}
+                      className="text-ink hover:text-ink-2 font-mono text-[0.75rem] tracking-[0.12em] uppercase underline underline-offset-4"
+                    >
+                      öffnen
+                    </Link>
+                    <Link
+                      to="/sync/$integrationId/settings"
+                      params={{ integrationId: i.id }}
+                      search={{ tab: "zeitplan" }}
+                      aria-label={`Einstellungen für ${i.name}`}
+                      title="Einstellungen"
+                      className="text-ink-2 hover:text-ink transition-colors"
+                    >
+                      <Settings size={16} aria-hidden="true" />
+                    </Link>
+                  </span>
                 </TableCell>
               </TableRow>
             ))}

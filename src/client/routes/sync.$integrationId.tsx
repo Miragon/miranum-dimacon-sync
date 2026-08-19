@@ -114,8 +114,17 @@ function IntegrationDetailPage() {
 
       {!info.configured ? (
         <MnAlert label="Nicht konfiguriert" className="mb-12">
-          Fehlende Env-Variablen: {info.missingEnv.join(", ")}. Läufe sind erst möglich, wenn diese
-          gesetzt sind.
+          Für diesen Mandanten fehlen Zugangsdaten: {info.missingCredentials.join(", ")}. Läufe sind
+          erst möglich, wenn sie in den{" "}
+          <Link
+            to="/sync/$integrationId/settings"
+            params={{ integrationId: info.id }}
+            search={{ tab: "zugangsdaten" }}
+            className="text-ink underline underline-offset-4"
+          >
+            Einstellungen
+          </Link>{" "}
+          hinterlegt sind.
         </MnAlert>
       ) : null}
 
@@ -135,22 +144,6 @@ function IntegrationDetailPage() {
           <MnAlert label="Fehler" className="mt-6">
             {runError}
           </MnAlert>
-        ) : null}
-        {info.mappable ? (
-          <div className="mt-6">
-            <span className="text-ink-3 font-mono text-[0.65rem] tracking-[0.18em] uppercase">
-              Erweitert
-            </span>
-            <div className="mt-1">
-              <Link
-                to="/sync/$integrationId/mapping"
-                params={{ integrationId: info.id }}
-                className="text-ink-2 hover:text-ink font-mono text-[0.75rem] tracking-[0.08em] underline underline-offset-4"
-              >
-                feld-zuordnung konfigurieren →
-              </Link>
-            </div>
-          </div>
         ) : null}
       </section>
 

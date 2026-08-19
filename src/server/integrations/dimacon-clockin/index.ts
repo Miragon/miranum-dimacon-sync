@@ -10,7 +10,7 @@ export const dimaconClockinIntegration = defineIntegration({
     "bidirektional abgleichen, dann Tagesplanung: Kunden/Projekte upserten, " +
     "Mitarbeiter zuweisen, nicht Eingeplante archivieren.",
   systems: ["dimacon", "clockin"],
-  requiredEnv: ["DIMACON_BASE_URL", "DIMACON_TENANT", "DIMACON_API_TOKEN", "CLOCKIN_API_TOKEN"],
+  requiredCredentials: ["dimacon", "clockin"],
   inputSchema: SyncRunInputSchema,
   run: runDimaconClockinSync,
 })

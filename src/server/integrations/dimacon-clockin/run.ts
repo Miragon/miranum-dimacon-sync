@@ -1,7 +1,6 @@
-import { getClockInClient, getDimaconClient } from "../../lib/clients.js"
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
-import { log as rootLog } from "../../lib/log.js"
+import type { IntegrationRunContext } from "../types.js"
 import { loadAppointments } from "../shared/dimacon.js"
 import { FIELD_CATALOG } from "../shared/field-catalog.js"
 import { EMPTY_DISCOVERY } from "../shared/field-mapping.js"
@@ -17,12 +16,15 @@ import { ProjectUpserter } from "./projects.js"
 import { DEFAULT_STEPS } from "./types.js"
 import type { ProjectSyncResult, SyncError, SyncResult, SyncRunInput, SyncSteps } from "./types.js"
 
-export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncResult> {
+export async function runDimaconClockinSync(
+  ctx: IntegrationRunContext,
+  input: SyncRunInput,
+): Promise<SyncResult> {
   const startedAt = Date.now()
   const date = input.date ?? todayInBerlin()
   const dryRun = input.dryRun ?? false
   let steps = input.steps ?? DEFAULT_STEPS
-  const log = rootLog.child({ syncRun: { integration: "dimacon-clockin", date, dryRun, steps } })
+  const log = ctx.log.child({ syncRun: { integration: "dimacon-clockin", date, dryRun, steps } })
 
   log.info("sync started")
 
@@ -30,19 +32,20 @@ export async function runDimaconClockinSync(input: SyncRunInput): Promise<SyncRe
   const projects: ProjectSyncResult[] = []
   const syncedClockinIds = new Set<number>()
 
-  const clockinClient = getClockInClient()
-  const dimaconClient = getDimaconClient()
+  // Beide Systeme sind requiredCredentials — eager auflösen ist korrekt.
+  const clockinClient = await ctx.clients.clockin()
+  const dimaconClient = await ctx.clients.dimacon()
 
   // Feld-Zuordnung laden — ohne persistierte Regeln macht das keine API-Calls
   // und entspricht exakt dem bisherigen Verhalten.
   let mappingContext: MappingContext
   try {
-    mappingContext = await loadMappingContext(
+    mappingContext = await loadMappingContext({
       dimaconClient,
-      () => clockinClient,
-      "dimacon-clockin",
-      ["project", "customer", "employee"],
-    )
+      getClockinClient: () => clockinClient,
+      entities: ["project", "customer", "employee"],
+      getFieldMapping: ctx.getFieldMapping,
+    })
   } catch (err) {
     const message = formatError(err)
     // Safe-Mode: mit unklarer Zuordnung nichts schreiben — Auflösung,

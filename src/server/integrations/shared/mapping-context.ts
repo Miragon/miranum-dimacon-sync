@@ -3,7 +3,6 @@ import { sdk as dimacon } from "@miragon/client-dimacon"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
 import type { Client as DimaconClient } from "@miragon/client-dimacon"
 import { withRetry } from "../../lib/concurrency.js"
-import { getFieldMapping } from "../../lib/settings.js"
 import { FIELD_CATALOG } from "./field-catalog.js"
 import type { EntityCatalog } from "./field-catalog.js"
 import { EMPTY_DISCOVERY } from "./field-mapping.js"
@@ -14,7 +13,7 @@ import type {
   Discovery,
   EnumDef,
 } from "./field-mapping.js"
-import type { MappingEntity, MappingRule } from "./field-mapping-schema.js"
+import type { EntityFieldMapping, MappingEntity, MappingRule } from "./field-mapping-schema.js"
 
 export interface EntityMappingContext {
   entity: MappingEntity
@@ -54,21 +53,24 @@ interface ClockinCustomFieldRow {
  * KEINE zusätzlichen API-Calls gemacht — die Defaults referenzieren nur
  * Standardfelder, das Verhalten bleibt identisch zum bisherigen Sync.
  *
- * `getClockinClient` ist ein Lazy-Getter: er wird nur für Entities mit
- * Clockin-Custom-Feldern aufgerufen (dimacon-lexoffice hat keine
- * Clockin-Credentials — eine eager-Konstruktion würde dort werfen).
+ * `getClockinClient` ist ein Lazy-Getter (ggf. async): er wird nur für
+ * Entities mit Clockin-Custom-Feldern aufgerufen (dimacon-lexoffice hat
+ * keine Clockin-Credentials — eine eager-Konstruktion würde dort werfen).
+ * `getFieldMapping` kommt tenant-gescoped vom Aufrufer (Run-Kontext bzw.
+ * Mappings-Route) — dieses Modul kennt weder DB noch Mandanten.
  */
-export async function loadMappingContext(
-  dimaconClient: DimaconClient,
-  getClockinClient: () => ClockInClient,
-  integrationId: string,
-  entities: MappingEntity[],
-): Promise<MappingContext> {
+export async function loadMappingContext(opts: {
+  dimaconClient: DimaconClient
+  getClockinClient: () => ClockInClient | Promise<ClockInClient>
+  entities: MappingEntity[]
+  getFieldMapping: (entity: MappingEntity) => Promise<EntityFieldMapping | undefined>
+}): Promise<MappingContext> {
+  const { dimaconClient, getClockinClient, entities, getFieldMapping } = opts
   const context: MappingContext = new Map()
 
   for (const entity of entities) {
     const catalog = FIELD_CATALOG[entity]
-    const persisted = await getFieldMapping(integrationId, entity)
+    const persisted = await getFieldMapping(entity)
 
     if (!persisted) {
       context.set(entity, {
@@ -106,7 +108,7 @@ export async function loadMappingContext(
 /** Volle Discovery für den Editor (unabhängig von persistierten Regeln). */
 export async function loadDiscovery(
   dimaconClient: DimaconClient,
-  getClockinClient: () => ClockInClient,
+  getClockinClient: () => ClockInClient | Promise<ClockInClient>,
   entity: MappingEntity,
   rules?: MappingRule[],
 ): Promise<Discovery> {
@@ -139,9 +141,11 @@ async function loadAttributes(
   // Dimacon kennt keine Mitarbeiter-Attribute
   if (entity === "employee") return []
 
+  // ACHTUNG Namens-Falle des generierten Clients: getAllAttributes (ohne
+  // Suffix) sind die JOB-Attribute — Projekt ist getAllAttributes1.
   const rows = (await withRetry(() =>
     entity === "project"
-      ? dimacon.getAllAttributes({ client })
+      ? dimacon.getAllAttributes1({ client })
       : // customer + lexofficeContact: beide lesen die Kunden-Attribute
         dimacon.getAllAttributes2({ client }),
   )) as unknown as DimaconAttributeRow[]
@@ -157,19 +161,20 @@ async function loadAttributes(
 
 async function loadEnums(client: DimaconClient): Promise<Map<string, EnumDef>> {
   const rows = (await withRetry(() =>
-    dimacon.getAllEnums1({ client }),
+    // getAllEnums1 wäre die Guest-Route — /api/enum heißt seit 0.2.0 getAllEnums.
+    dimacon.getAllEnums({ client }),
   )) as unknown as DimaconEnumRow[]
   return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name, values: r.values ?? [] }]))
 }
 
 async function loadCustomFields(
-  getClient: () => ClockInClient,
+  getClient: () => ClockInClient | Promise<ClockInClient>,
   entity: MappingEntity,
 ): Promise<ClockinCustomFieldDef[]> {
   // Lexware Office kennt keine Custom-Felder — und braucht keinen Clockin-Client
   if (entity === "lexofficeContact") return []
 
-  const client = getClient()
+  const client = await getClient()
   const response = (await withRetry(() => {
     if (entity === "project") return clockin.getProjectCustomFields({ client })
     if (entity === "customer") return clockin.getCustomerCustomFields({ client })

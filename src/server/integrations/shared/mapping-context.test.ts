@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { MappingRule } from "./field-mapping-schema.js"
 
-const getAllAttributesMock = vi.fn()
-const getAllAttributes2Mock = vi.fn()
-const getAllEnums1Mock = vi.fn()
+const getAllAttributesMock = vi.fn() // JOB-Attribute — darf NIE aufgerufen werden
+const getAllAttributes1Mock = vi.fn() // Projekt-Attribute
+const getAllAttributes2Mock = vi.fn() // Kunden-Attribute
+const getAllEnumsMock = vi.fn() // /api/enum
+const getAllEnums1Mock = vi.fn() // Guest-Route — darf NIE aufgerufen werden
 const getProjectCustomFieldsMock = vi.fn()
 const getCustomerCustomFieldsMock = vi.fn()
 const getEmployeeCustomFieldsMock = vi.fn()
@@ -12,7 +14,9 @@ const getFieldMappingMock = vi.fn()
 vi.mock("@miragon/client-dimacon", () => ({
   sdk: {
     getAllAttributes: getAllAttributesMock,
+    getAllAttributes1: getAllAttributes1Mock,
     getAllAttributes2: getAllAttributes2Mock,
+    getAllEnums: getAllEnumsMock,
     getAllEnums1: getAllEnums1Mock,
   },
 }))
@@ -23,10 +27,6 @@ vi.mock("@miragon/client-clockin", () => ({
     getCustomerCustomFields: getCustomerCustomFieldsMock,
     getEmployeeCustomFields: getEmployeeCustomFieldsMock,
   },
-}))
-
-vi.mock("../../lib/settings.js", () => ({
-  getFieldMapping: getFieldMappingMock,
 }))
 
 const { loadDiscovery, loadMappingContext } = await import("./mapping-context.js")
@@ -45,7 +45,9 @@ function throwingClockinGetter() {
 
 function expectNoSdkCalls() {
   expect(getAllAttributesMock).not.toHaveBeenCalled()
+  expect(getAllAttributes1Mock).not.toHaveBeenCalled()
   expect(getAllAttributes2Mock).not.toHaveBeenCalled()
+  expect(getAllEnumsMock).not.toHaveBeenCalled()
   expect(getAllEnums1Mock).not.toHaveBeenCalled()
   expect(getProjectCustomFieldsMock).not.toHaveBeenCalled()
   expect(getCustomerCustomFieldsMock).not.toHaveBeenCalled()
@@ -54,7 +56,9 @@ function expectNoSdkCalls() {
 
 beforeEach(() => {
   getAllAttributesMock.mockReset()
+  getAllAttributes1Mock.mockReset()
   getAllAttributes2Mock.mockReset()
+  getAllEnumsMock.mockReset()
   getAllEnums1Mock.mockReset()
   getProjectCustomFieldsMock.mockReset()
   getCustomerCustomFieldsMock.mockReset()
@@ -67,10 +71,12 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     getFieldMappingMock.mockResolvedValue(undefined)
     const getClockin = throwingClockinGetter()
 
-    const context = await loadMappingContext(dimaconClient, getClockin, "dimacon-clockin", [
-      "project",
-      "customer",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient: dimaconClient,
+      getClockinClient: getClockin,
+      entities: ["project", "customer"],
+      getFieldMapping: getFieldMappingMock,
+    })
 
     for (const entity of ["project", "customer"] as const) {
       const ctx = context.get(entity)
@@ -94,9 +100,12 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     getFieldMappingMock.mockResolvedValue({ version: 1, rules })
     const getClockin = throwingClockinGetter()
 
-    const context = await loadMappingContext(dimaconClient, getClockin, "dimacon-clockin", [
-      "customer",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient: dimaconClient,
+      getClockinClient: getClockin,
+      entities: ["customer"],
+      getFieldMapping: getFieldMappingMock,
+    })
 
     const ctx = context.get("customer")
     expect(ctx?.isCustomized).toBe(true)
@@ -107,7 +116,7 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     expect(getClockin).not.toHaveBeenCalled()
   })
 
-  it("fetches project attributes (getAllAttributes) for an attribute-source rule", async () => {
+  it("fetches project attributes via getAllAttributes1 (never the job-route getAllAttributes)", async () => {
     const rules: MappingRule[] = [
       {
         source: { kind: "attribute", attributeId: "attr-1" },
@@ -115,19 +124,24 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
       },
     ]
     getFieldMappingMock.mockResolvedValue({ version: 1, rules })
-    getAllAttributesMock.mockResolvedValue([
+    getAllAttributes1Mock.mockResolvedValue([
       { id: "attr-1", label: "Abteilung", type: "STRING", isActive: true },
     ])
     getProjectCustomFieldsMock.mockResolvedValue({ data: [] })
 
-    const context = await loadMappingContext(dimaconClient, () => clockinStub, "dimacon-clockin", [
-      "project",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient,
+      getClockinClient: () => clockinStub,
+      entities: ["project"],
+      getFieldMapping: getFieldMappingMock,
+    })
 
-    expect(getAllAttributesMock).toHaveBeenCalledTimes(1)
+    expect(getAllAttributes1Mock).toHaveBeenCalledTimes(1)
+    // Namens-Falle des generierten Clients: getAllAttributes = JOB-Attribute
+    expect(getAllAttributesMock).not.toHaveBeenCalled()
     expect(getAllAttributes2Mock).not.toHaveBeenCalled()
     // STRING-Attribut → keine Enum-Definitionen nötig
-    expect(getAllEnums1Mock).not.toHaveBeenCalled()
+    expect(getAllEnumsMock).not.toHaveBeenCalled()
     expect(context.get("project")?.discovery.attributes).toEqual([
       {
         id: "attr-1",
@@ -156,18 +170,23 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
         isActive: true,
       },
     ])
-    getAllEnums1Mock.mockResolvedValue([
+    getAllEnumsMock.mockResolvedValue([
       { id: "enum-1", name: "Kategorien", values: [{ id: "v1", value: "A", isActive: true }] },
     ])
     getCustomerCustomFieldsMock.mockResolvedValue({ data: [] })
 
-    const context = await loadMappingContext(dimaconClient, () => clockinStub, "dimacon-clockin", [
-      "customer",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient: dimaconClient,
+      getClockinClient: () => clockinStub,
+      entities: ["customer"],
+      getFieldMapping: getFieldMappingMock,
+    })
 
     expect(getAllAttributes2Mock).toHaveBeenCalledTimes(1)
     expect(getAllAttributesMock).not.toHaveBeenCalled()
-    expect(getAllEnums1Mock).toHaveBeenCalledTimes(1)
+    expect(getAllEnumsMock).toHaveBeenCalledTimes(1)
+    // Namens-Falle: getAllEnums1 = Guest-Route
+    expect(getAllEnums1Mock).not.toHaveBeenCalled()
     expect(context.get("customer")?.discovery.enums.get("enum-1")).toEqual({
       id: "enum-1",
       name: "Kategorien",
@@ -188,9 +207,12 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     })
     const getClockin = vi.fn(() => clockinStub)
 
-    const context = await loadMappingContext(dimaconClient, getClockin, "dimacon-clockin", [
-      "employee",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient: dimaconClient,
+      getClockinClient: getClockin,
+      entities: ["employee"],
+      getFieldMapping: getFieldMappingMock,
+    })
 
     const ctx = context.get("employee")
     expect(ctx?.isCustomized).toBe(true)
@@ -201,8 +223,9 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     expect(ctx?.discovery.customFields).toEqual([{ id: 5, label: "Handy", dataType: "text" }])
     // Dimacon kennt keine Mitarbeiter-Attribute → keine Attribut-/Enum-Calls
     expect(getAllAttributesMock).not.toHaveBeenCalled()
+    expect(getAllAttributes1Mock).not.toHaveBeenCalled()
     expect(getAllAttributes2Mock).not.toHaveBeenCalled()
-    expect(getAllEnums1Mock).not.toHaveBeenCalled()
+    expect(getAllEnumsMock).not.toHaveBeenCalled()
   })
 
   it("reads customer attributes for lexofficeContact without constructing a clockin client", async () => {
@@ -218,9 +241,12 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     ])
     const getClockin = throwingClockinGetter()
 
-    const context = await loadMappingContext(dimaconClient, getClockin, "dimacon-lexoffice", [
-      "lexofficeContact",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient: dimaconClient,
+      getClockinClient: getClockin,
+      entities: ["lexofficeContact"],
+      getFieldMapping: getFieldMappingMock,
+    })
 
     expect(getAllAttributes2Mock).toHaveBeenCalledTimes(1)
     expect(getClockin).not.toHaveBeenCalled()
