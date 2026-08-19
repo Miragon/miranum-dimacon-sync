@@ -4,11 +4,12 @@ export interface IntegrationInfo {
   description: string
   systems: string[]
   configured: boolean
-  missingEnv: string[]
+  /** System-IDs, für die der Mandant noch keine Zugangsdaten hinterlegt hat */
+  missingCredentials: string[]
   running: boolean
   cronActive: boolean
   nextRun: string | null
-  /** true = Feld-Zuordnungs-Editor unter /sync/<id>/mapping verfügbar */
+  /** true = Feld-Zuordnungs-Tab in den Integrations-Einstellungen verfügbar */
   mappable?: boolean
 }
 

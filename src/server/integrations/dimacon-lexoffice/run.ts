@@ -1,7 +1,6 @@
-import { getClockInClient, getDimaconClient, getLexofficeClient } from "../../lib/clients.js"
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
-import { log as rootLog } from "../../lib/log.js"
+import type { IntegrationRunContext } from "../types.js"
 import { loadAllCustomers } from "../shared/dimacon.js"
 import { loadMappingContext } from "../shared/mapping-context.js"
 import type { EntityMappingContext } from "../shared/mapping-context.js"
@@ -23,29 +22,35 @@ import type {
  * ersten Live-Lauf einen dry-run prüfen.
  */
 export async function runDimaconLexofficeSync(
+  ctx: IntegrationRunContext,
   input: CustomerSyncInput,
 ): Promise<CustomerSyncResult> {
   const startedAt = Date.now()
   const dryRun = input.dryRun ?? false
   let steps = input.steps ?? DEFAULT_LEXOFFICE_STEPS
-  const log = rootLog.child({ syncRun: { integration: "dimacon-lexoffice", dryRun, steps } })
+  const log = ctx.log.child({ syncRun: { integration: "dimacon-lexoffice", dryRun, steps } })
 
   log.info("customer sync started")
 
   const errors: CustomerSyncError[] = []
   const rows: CustomerAlignRow[] = []
 
-  const dimaconClient = getDimaconClient()
-  const lexofficeClient = getLexofficeClient()
+  const dimaconClient = await ctx.clients.dimacon()
+  const lexofficeClient = await ctx.clients.lexoffice()
 
   // Feld-Zuordnung — ohne persistierte Regeln keine zusätzlichen API-Calls.
   // Safe-Mode bei Ladefehler: keine Kontakt-Anlagen mit unklarer Zuordnung,
   // das Nummern-Alignment braucht keine Zuordnung und läuft weiter.
+  // Clockin bleibt ein Lazy-Getter: er wird für lexofficeContact nie
+  // aufgerufen — der Mandant braucht dafür keine Clockin-Credentials.
   let mapping: EntityMappingContext | undefined
   try {
-    const context = await loadMappingContext(dimaconClient, getClockInClient, "dimacon-lexoffice", [
-      "lexofficeContact",
-    ])
+    const context = await loadMappingContext({
+      dimaconClient,
+      getClockinClient: () => ctx.clients.clockin(),
+      entities: ["lexofficeContact"],
+      getFieldMapping: ctx.getFieldMapping,
+    })
     mapping = context.get("lexofficeContact")
   } catch (err) {
     const message = formatError(err)

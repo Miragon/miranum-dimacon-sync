@@ -20,7 +20,6 @@ interface SystemStatus {
   id: string
   name: string
   configured: boolean
-  missingEnv: string[]
   integrations: string[]
 }
 
@@ -58,8 +57,8 @@ function Modules() {
         <span className="mn-mono">/modules · systeme</span>
         <h1 className="text-h-1 text-ink mt-4">Module</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[540px]">
-          Die drei angebundenen Systeme dieser Installation. Der Status kommt aus der
-          Server-Konfiguration — die Sync-Abläufe dazwischen laufen unter{" "}
+          Die drei angebundenen Systeme. Der Status kommt aus den hinterlegten Zugangsdaten des
+          aktiven Mandanten — die Sync-Abläufe dazwischen laufen unter{" "}
           <Link to="/sync" className="text-ink underline underline-offset-4">
             Integrationen
           </Link>
@@ -150,11 +149,24 @@ function Modules() {
                         {s.configured ? (
                           <MnStatusBadge variant="ok">konfiguriert</MnStatusBadge>
                         ) : (
-                          <span className="flex flex-col items-start gap-1">
-                            <MnStatusBadge variant="warn">env fehlt</MnStatusBadge>
-                            <span className="text-ink-3 font-mono text-[0.65rem]">
-                              {s.missingEnv.join(", ")}
-                            </span>
+                          <span className="flex flex-col items-start gap-1.5">
+                            <MnStatusBadge variant="warn">zugangsdaten fehlen</MnStatusBadge>
+                            {s.id === "dimacon" || s.integrations.length === 0 ? (
+                              <Link
+                                to="/settings"
+                                className="text-ink-2 hover:text-ink font-mono text-[0.7rem] underline underline-offset-4"
+                              >
+                                Zugangsdaten hinterlegen →
+                              </Link>
+                            ) : (
+                              <Link
+                                to="/sync/$integrationId/settings"
+                                params={{ integrationId: s.integrations[0] }}
+                                className="text-ink-2 hover:text-ink font-mono text-[0.7rem] underline underline-offset-4"
+                              >
+                                Zugangsdaten hinterlegen →
+                              </Link>
+                            )}
                           </span>
                         )}
                       </TableCell>

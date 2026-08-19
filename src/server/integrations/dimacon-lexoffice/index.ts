@@ -9,12 +9,7 @@ export const dimaconLexofficeIntegration = defineIntegration({
     "Alle Dimacon-Kunden mit Lexware Office abgleichen — fehlende Kontakte " +
     "anlegen und Dimacon-Kundennummern an die Lexware-Nummern angleichen.",
   systems: ["dimacon", "lexoffice"],
-  requiredEnv: [
-    "DIMACON_BASE_URL",
-    "DIMACON_TENANT",
-    "DIMACON_API_TOKEN",
-    "LEXWARE_OFFICE_API_KEY",
-  ],
+  requiredCredentials: ["dimacon", "lexoffice"],
   inputSchema: CustomerSyncInputSchema,
   run: runDimaconLexofficeSync,
 })

@@ -1,13 +1,11 @@
-import { createFileRoute, Link } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MappingEditor } from "#/components/mapping/MappingEditor"
 import type { MappingEntityBlock } from "#/components/mapping/MappingEditor"
 import { readJson, useApiFetch } from "#/lib/api"
 
-export const Route = createFileRoute("/sync_/$integrationId/mapping")({
-  component: MappingPage,
-})
+// Aus der früheren Route /sync/<id>/mapping extrahiert — lebt jetzt als
+// Tab „Feld-Zuordnung" auf der Einstellungsseite der Integration.
 
 const ENTITY_LABELS: Record<MappingEntityBlock["entity"], string> = {
   project: "Projekt",
@@ -21,8 +19,7 @@ interface MappingsResponse {
   entities: MappingEntityBlock[]
 }
 
-function MappingPage() {
-  const { integrationId } = Route.useParams()
+export function MappingPanel({ integrationId }: { integrationId: string }) {
   const apiFetch = useApiFetch()
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -66,23 +63,12 @@ function MappingPage() {
 
   return (
     <div>
-      <header className="mb-12">
-        <span className="mn-mono">/sync/{integrationId}/mapping · erweitert</span>
-        <h1 className="text-h-1 text-ink mt-4">Feld-Zuordnung</h1>
-        <p className="text-body mt-3 max-w-[540px]">
-          Legt fest, welche Dimacon-Felder in welche Zielfelder geschrieben werden — inklusive
-          Custom-Attributen und Custom-Feldern, wo das Zielsystem sie kennt. Fixierte Zeilen sind
-          Match-Keys und nicht veränderbar. Entfernte Regeln löschen bereits geschriebene Werte
-          nicht — das Feld wird nur nicht mehr gepflegt.
-        </p>
-        <Link
-          to="/sync/$integrationId"
-          params={{ integrationId }}
-          className="text-ink-2 hover:text-ink mt-4 inline-block font-mono text-[0.7rem] tracking-[0.14em] uppercase underline underline-offset-4"
-        >
-          ← zurück zur integration
-        </Link>
-      </header>
+      <p className="text-body-sm text-ink-2 mb-8 max-w-[540px]">
+        Legt fest, welche Dimacon-Felder in welche Zielfelder geschrieben werden — inklusive
+        Custom-Attributen und Custom-Feldern, wo das Zielsystem sie kennt. Fixierte Zeilen sind
+        Match-Keys und nicht veränderbar. Entfernte Regeln löschen bereits geschriebene Werte nicht
+        — das Feld wird nur nicht mehr gepflegt.
+      </p>
 
       {loading ? <p className="text-ink-3 font-mono text-sm">lade …</p> : null}
       {loadError ? <MnAlert label="Fehler">{loadError}</MnAlert> : null}
@@ -90,7 +76,7 @@ function MappingPage() {
       {!loading && !loadError && blocks.length > 0 ? (
         <>
           {blocks.length > 1 ? (
-            <div className="mb-8 flex gap-3">
+            <div className="mb-8 flex flex-wrap gap-3">
               {blocks.map((b) => (
                 <button
                   key={b.entity}

@@ -1,0 +1,22 @@
+# Lokaler Dev-Stack (nur Postgres). Start aus dem Repo-Root:
+#   pnpm stack:up   (bzw. docker compose -f stack/docker-compose.yml up -d)
+#
+# `name:` ist gepinnt, damit Container-/Volume-Namen stabil bleiben —
+# Compose würde sonst den Ordnernamen "stack" als Projektnamen nehmen und
+# das bestehende pgdata-Volume nicht mehr finden.
+name: miranum-dimacon-sync
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: miranum_sync
+    ports:
+      - "5400:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

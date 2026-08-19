@@ -1,10 +1,12 @@
 import { Hono } from "hono"
 import { z } from "zod"
-import { getClockInClient, getDimaconClient } from "../lib/clients.js"
+import { getFieldMapping, updateFieldMapping } from "../db/repos/field-mappings.js"
+import { getClientsForTenant } from "../lib/clients.js"
+import { CredentialCryptoError } from "../lib/crypto.js"
 import { formatError } from "../lib/errors.js"
 import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
-import { getFieldMapping, updateFieldMapping } from "../lib/settings.js"
+import type { AppEnv } from "../lib/tenant.js"
 import { FIELD_CATALOG, MAPPABLE_ENTITIES } from "../integrations/shared/field-catalog.js"
 import { validateRules } from "../integrations/shared/field-mapping.js"
 import type { Discovery } from "../integrations/shared/field-mapping.js"
@@ -12,7 +14,7 @@ import { MappingRuleSchema } from "../integrations/shared/field-mapping-schema.j
 import type { MappingEntity } from "../integrations/shared/field-mapping-schema.js"
 import { loadDiscovery } from "../integrations/shared/mapping-context.js"
 
-const app = new Hono()
+const app = new Hono<AppEnv>()
 
 const PutBodySchema = z.object({
   rules: z.array(MappingRuleSchema).max(100),
@@ -24,7 +26,10 @@ app.get("/:integrationId", async (c) => {
   const entities = MAPPABLE_ENTITIES[integrationId]
   if (!entities) return c.json({ error: "integration has no field mapping" }, 404)
 
-  const blocks = await Promise.all(entities.map((entity) => entityBlock(integrationId, entity)))
+  const tenantId = c.get("tenant").id
+  const blocks = await Promise.all(
+    entities.map((entity) => entityBlock(tenantId, integrationId, entity)),
+  )
   return c.json({ integrationId, entities: blocks })
 })
 
@@ -35,6 +40,7 @@ app.put("/:integrationId/:entity", async (c) => {
   if (!entities || !entities.includes(entity)) {
     return c.json({ error: "unknown integration or entity" }, 404)
   }
+  const tenantId = c.get("tenant").id
 
   const raw = await safeJson(c.req.raw)
   const parsed = PutBodySchema.safeParse(raw)
@@ -43,7 +49,7 @@ app.put("/:integrationId/:entity", async (c) => {
   }
 
   const catalog = FIELD_CATALOG[entity]
-  const attempt = await tryDiscovery(entity)
+  const attempt = await tryDiscovery(tenantId, entity)
 
   // Ohne Discovery lassen sich nur Standard-Regeln verifizieren — Regeln mit
   // Attribut-/Custom-Referenzen brauchen die Live-Definitionen zwingend.
@@ -62,9 +68,17 @@ app.put("/:integrationId/:entity", async (c) => {
     return c.json({ error: "invalid mapping", details: validation.errors }, 400)
   }
 
-  await updateFieldMapping(integrationId, entity, { version: 1, rules: parsed.data.rules })
-  log.info("field mapping updated", { integrationId, entity, rules: parsed.data.rules.length })
-  return c.json(await entityBlock(integrationId, entity))
+  await updateFieldMapping(tenantId, integrationId, entity, {
+    version: 1,
+    rules: parsed.data.rules,
+  })
+  log.info("field mapping updated", {
+    tenant: tenantId,
+    integrationId,
+    entity,
+    rules: parsed.data.rules.length,
+  })
+  return c.json(await entityBlock(tenantId, integrationId, entity))
 })
 
 app.delete("/:integrationId/:entity", async (c) => {
@@ -74,22 +88,23 @@ app.delete("/:integrationId/:entity", async (c) => {
   if (!entities || !entities.includes(entity)) {
     return c.json({ error: "unknown integration or entity" }, 404)
   }
+  const tenantId = c.get("tenant").id
 
-  await updateFieldMapping(integrationId, entity, null)
-  log.info("field mapping reset to default", { integrationId, entity })
-  return c.json(await entityBlock(integrationId, entity))
+  await updateFieldMapping(tenantId, integrationId, entity, null)
+  log.info("field mapping reset to default", { tenant: tenantId, integrationId, entity })
+  return c.json(await entityBlock(tenantId, integrationId, entity))
 })
 
 export default app
 
-async function entityBlock(integrationId: string, entity: MappingEntity) {
+async function entityBlock(tenantId: string, integrationId: string, entity: MappingEntity) {
   const catalog = FIELD_CATALOG[entity]
-  const persisted = await getFieldMapping(integrationId, entity)
+  const persisted = await getFieldMapping(tenantId, integrationId, entity)
   const rules = persisted?.rules ?? catalog.defaultRules
 
   const discoveryErrors: string[] = []
   let discovery: Discovery = { attributes: [], enums: new Map(), customFields: [] }
-  const attempt = await tryDiscovery(entity)
+  const attempt = await tryDiscovery(tenantId, entity)
   if (attempt.ok) discovery = attempt.value
   else discoveryErrors.push(attempt.message)
 
@@ -123,13 +138,26 @@ async function entityBlock(integrationId: string, entity: MappingEntity) {
 }
 
 async function tryDiscovery(
+  tenantId: string,
   entity: MappingEntity,
 ): Promise<{ ok: true; value: Discovery } | { ok: false; message: string }> {
   try {
-    // Clockin-Client lazy: dimacon-lexoffice hat keine Clockin-Credentials
-    const value = await loadDiscovery(getDimaconClient(), getClockInClient, entity)
+    // Clockin-Client lazy: für lexofficeContact wird er nie aufgerufen —
+    // der Mandant braucht dafür keine Clockin-Credentials.
+    const clients = getClientsForTenant(tenantId)
+    const value = await loadDiscovery(await clients.dimacon(), () => clients.clockin(), entity)
     return { ok: true, value }
   } catch (err) {
+    if (err instanceof CredentialCryptoError) {
+      // Mit konkreter Abhilfe statt roher GCM-Meldung — der häufigste Fall
+      // ist ein gewechselter CREDENTIAL_KEYS-Ring.
+      return {
+        ok: false,
+        message:
+          "Zugangsdaten können nicht entschlüsselt werden (Schlüssel wurde gewechselt?) — " +
+          "Token in den Einstellungen neu speichern behebt das",
+      }
+    }
     return { ok: false, message: formatError(err) }
   }
 }

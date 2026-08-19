@@ -2,6 +2,11 @@
 
 > Status: Entwurf · Stand: 2026-08-11
 >
+> **Überholt (Stand 2026-08-19):** Der Persistenz-Teil dieses Konzepts
+> (settings.json auf einem Volume) ist durch die Multi-Mandanten-Umstellung
+> ersetzt — Konfiguration liegt tenant-gescoped in Postgres (Drizzle),
+> siehe README/CLAUDE.md. Die MCP-/Widget-Ideen bleiben unbewertet gültig.
+>
 > Ticket-Akzeptanzkriterien: (1) Architektur MCP-Server + Web-UI skizziert,
 > (2) Wiederverwendung von Widgets/Oberflächen bewertet, (3) Single Deployment
 > Unit vs. mehrere Deployments geprüft, (4) Sync-Jobs, Mapper-Konfiguration und

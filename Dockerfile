@@ -25,6 +25,9 @@ ENV PORT=3020
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/src/server ./src/server
 COPY --from=build /app/dist/client ./dist/client
+# Ops-Scripts (Tenant-Anlage via `fly ssh console`) müssen im Image liegen —
+# die Mandanten-Anlage hat bewusst keine HTTP-Fläche.
+COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/package.json ./package.json
 EXPOSE 3020
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:3020/healthz || exit 1

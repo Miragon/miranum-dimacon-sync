@@ -28,6 +28,21 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # `drizzle-kit check` validiert nur die Migrations-Snapshots unter-
+      # einander — Drift zwischen schema.ts und den Migrationen erkennt erst
+      # der generate+diff-Schritt darunter.
+      - name: Drizzle migration-history consistency
+        run: pnpm exec drizzle-kit check
+
+      - name: Drizzle schema/migration drift check
+        run: |
+          pnpm exec drizzle-kit generate
+          if [ -n "$(git status --porcelain src/server/db/migrations)" ]; then
+            echo "::error::schema.ts geändert ohne Migration — pnpm db:generate ausführen und committen"
+            git status --porcelain src/server/db/migrations
+            exit 1
+          fi
+
       - name: Lint
         run: pnpm lint
 

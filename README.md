@@ -7,13 +7,33 @@ Miranum App Template — React SPA + Hono backend mit den Miranum-Clients
 src/
 ├── client/     React-SPA (TanStack Router, Tailwind, shadcn)
 └── server/     Hono-Backend (proxy für die API-Clients)
-    ├── lib/    env reader + lazy client singletons + settings
-    ├── integrations/            Integrations-Registry (Mutex, Scheduler)
+    ├── db/     Drizzle-Schema + Migrationen + Repos (Postgres) + Legacy-Seed
+    ├── lib/    env reader + Tenant-Middleware + Crypto + Client-Factory
+    ├── integrations/            Integrations-Registry (Mutex, Scheduler — je Mandant)
     │   ├── shared/              gemeinsame Loader/Helper (Dimacon, Zeit)
     │   ├── dimacon-clockin/     Tagesplanung Dimacon → Clockin
     │   └── dimacon-lexoffice/   Kunden-Sync Dimacon → Lexware Office
-    └── routes/ /api/{clockin,dimacon,lexoffice,integrations,settings}/...
+    └── routes/ /api/{clockin,dimacon,lexoffice,integrations,settings,mappings,credentials,systems,me,tenants}/...
 ```
+
+**Multi-Mandanten-Modell:** Eine WorkOS-Organisation = ein Mandant. Der
+`org_id`-Claim des JWT ist der Tenant-Schlüssel; die `tenants`-Tabelle in
+Postgres ist die Zugangs-Allowlist (fail-closed — Anlage nur per Ops-Script,
+kein HTTP-Endpoint):
+
+```bash
+TENANT_WEBHOOK_SECRET=<secret> pnpm exec tsx scripts/create-tenant.ts --org-id org_XXXX --name "Kunde GmbH"
+```
+
+(Webhook-Secret via Env, nicht als CLI-Argument — argv landet in Shell-History
+und Prozessliste. Der `scripts/`-Ordner fährt im Docker-Image mit, damit die
+Anlage per `fly ssh console` funktioniert.)
+
+Alle Konfiguration liegt tenant-gescoped in Postgres: **API-Zugangsdaten**
+(AES-256-GCM-verschlüsselt; Dimacon unter `/settings`, Clockin/Lexware in den
+Integrations-Einstellungen `/sync/<id>/settings`), **Schedules**,
+**Feld-Zuordnungen** und die **Run-Historie** (`sync_runs`, letzte 50 je
+Mandant+Integration). Migrationen laufen automatisch beim Boot.
 
 Die API-Clients kommen als npm-Packages (`@miragon/client-{clockin,dimacon,lexoffice}`)
 aus [Miragon/miranum-clients](https://github.com/Miragon/miranum-clients).
@@ -27,8 +47,20 @@ auf Port 3000 und proxied `/api` zum Backend auf Port 3020.
 ```bash
 pnpm install
 cp env.example .env   # dann Werte eintragen
+pnpm stack:up         # lokales Postgres aus stack/docker-compose.yml (Host-Port 5400)
 pnpm dev              # client (3000) + server (3020) parallel
 ```
+
+Der Server migriert die DB beim Boot automatisch. Drizzle-Werkzeuge:
+`pnpm db:generate` (Migration aus Schema-Änderung), `pnpm db:studio`
+(DB-Browser).
+
+**⚠️ `CREDENTIAL_KEYS` in Dev stabil halten:** Der Key in der `.env` muss
+über Server-Neustarts hinweg derselbe bleiben. Wer den Server mit einem
+Inline-Zufallskey startet (`CREDENTIAL_KEYS="1=$(openssl rand -base64 32)"`),
+vergiftet die persistente Dev-DB: dort gespeicherte Tokens sind nach dem
+Neustart nicht mehr entschlüsselbar („GCM-Authentifizierung fehlgeschlagen")
+und müssen neu eingetragen werden.
 
 ## Environment
 
@@ -37,47 +69,55 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                  | Beschreibung                                            | Pflicht |
-| ------------------------- | ------------------------------------------------------- | ------- |
-| `PORT`                    | Server-Port (default: 3020)                             | nein    |
-| `CLOCKIN_API_TOKEN`       | ClockIn API Token                                       | ja\*    |
-| `CLOCKIN_BASE_URL`        | ClockIn override                                        | nein    |
-| `DIMACON_BASE_URL`        | Dimacon Base URL                                        | ja\*    |
-| `DIMACON_TENANT`          | Dimacon Tenant                                          | ja\*    |
-| `DIMACON_API_TOKEN`       | Dimacon API Token                                       | ja\*    |
-| `LEXWARE_OFFICE_API_KEY`  | Lexoffice API Key                                       | ja\*    |
-| `LEXWARE_OFFICE_BASE_URL` | Lexoffice override                                      | nein    |
-| `SYNC_WEBHOOK_SECRET`     | Shared-Secret für alle `/run`-Webhooks (leer = offen)   | nein    |
-| `SETTINGS_PATH`           | Pfad für Settings-JSON (default `./data/settings.json`) | nein    |
-| `SYNC_CRON`               | Erst-Seed Cron für `dimacon-clockin` (danach UI)        | nein    |
-| `SYNC_TZ`                 | Erst-Seed der Zeitzone (default `Europe/Berlin`)        | nein    |
-| `WORKOS_CLIENT_ID`        | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus.  | nein    |
-| `VITE_WORKOS_CLIENT_ID`   | Gleicher Wert für SPA-Bundle. Leer = Auth-UI aus.       | nein    |
-| `WORKOS_REQUIRED_ORG_ID`  | Org, deren `org_id` im Token akzeptiert wird            | nein    |
+| Variable                | Beschreibung                                                 | Pflicht |
+| ----------------------- | ------------------------------------------------------------ | ------- |
+| `PORT`                  | Server-Port (default: 3020)                                  | nein    |
+| `DATABASE_URL`          | Postgres-URL (Dev-Default: docker-compose-DB)                | prod    |
+| `CREDENTIAL_KEYS`       | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)   | prod    |
+| `WORKOS_CLIENT_ID`      | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev). | prod    |
+| `VITE_WORKOS_CLIENT_ID` | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.  | prod    |
 
-\* nur erforderlich wenn die jeweiligen `/api/<service>/...` Routes genutzt werden
-(lazy validation beim ersten Request).
+**Nur noch Seed-Input** (einmaliger Import beim allerersten Boot gegen eine
+leere DB — danach entfernen, siehe [`env.example`](./env.example)):
+`WORKOS_REQUIRED_ORG_ID`, `CLOCKIN_API_TOKEN`, `CLOCKIN_BASE_URL`,
+`DIMACON_BASE_URL`, `DIMACON_TENANT`, `DIMACON_API_TOKEN`,
+`LEXWARE_OFFICE_API_KEY`, `LEXWARE_OFFICE_BASE_URL`, `SETTINGS_PATH`,
+`SYNC_CRON`, `SYNC_TZ`, `SYNC_WEBHOOK_SECRET`, `SEED_TENANT_NAME`.
+Die Integrations-Zugangsdaten werden zur Laufzeit verschlüsselt aus der DB
+gelesen und je Mandant über die UI gepflegt (Dimacon: `/settings`,
+Zielsysteme: `/sync/<id>/settings`); jedes Mitglied einer freigeschalteten
+Org darf sie schreiben (bewusste Entscheidung — internes Ops-Tool).
 
-**Scheduler:** Jede Integration hat einen eigenen Cron (enabled, Ausdruck,
-Timezone), **persistent in `SETTINGS_PATH`** (JSON, keyed nach Integration-ID)
-und über die UI unter `/settings` editierbar. Geplante Läufe fahren den
-**kompletten** Schritt-Satz — beim `dimacon-clockin`-Cron also auch den
-Live-Mitarbeiter-Abgleich. `SYNC_CRON` / `SYNC_TZ` werden
-nur beim allerersten Start als Seed für `dimacon-clockin` verwendet; eine
-Settings-Datei in der alten `{ "sync": ... }`-Form wird beim Laden automatisch
-migriert. Für Fly: Volume an `/data` mounten und
-`SETTINGS_PATH=/data/settings.json` setzen, damit Settings Redeploys überleben.
+**Key-Rotation:** neuen Key vorn an `CREDENTIAL_KEYS` anstellen → Redeploy →
+`pnpm exec tsx src/server/db/rotate-credentials.ts` → prüfen, dass keine Zeile
+mehr am alten Key hängt (`WHERE secret NOT LIKE 'v1:<neue id>:%'` = 0) → alten
+Key entfernen. **Der Master-Key gehört zusätzlich in einen Passwort-Manager** —
+bei Verlust müssen alle Mandanten ihre Tokens neu eintragen.
+
+**Scheduler:** Jede Integration hat je Mandant einen eigenen Cron (enabled,
+Ausdruck, Timezone), persistent in Postgres (`schedule_settings`), editierbar
+im Zeitplan-Tab der Integrations-Einstellungen (`/sync/<id>/settings`). Geplante Läufe fahren den **kompletten**
+Schritt-Satz — beim `dimacon-clockin`-Cron also auch den
+Live-Mitarbeiter-Abgleich. Deaktivierte Mandanten und fehlende Zugangsdaten
+werden zur Feuerzeit geprüft (Lauf wird übersprungen, Warnung im Log).
 
 **Auth (WorkOS):** Wenn `WORKOS_CLIENT_ID` gesetzt ist, schützt eine
 JWT-Middleware alle `/api/*`-Routes (außer den `run`/`healthz`-Endpoints unter
-`/api/integrations/:id/...` und dem Legacy-Alias `/api/sync/...` — die
-`run`-Webhooks haben ihr eigenes Secret). Tokens werden gegen die WorkOS-JWKS verifiziert,
-zusätzlich wird `org_id === WORKOS_REQUIRED_ORG_ID` geprüft. Im Frontend bakt
-Vite `VITE_WORKOS_CLIENT_ID` ins Bundle und das `<AuthKitProvider>` macht
-Auth-Code-Flow mit PKCE. Im WorkOS-Dashboard müssen Redirect-URI **und**
-Allowed-Origin auf die App-Origin gesetzt sein (z.B. `http://localhost:3000`
-für Dev, `https://<flyapp>` für Prod). Sind die WorkOS-Vars leer, läuft die
-App ohne Login und Backend loggt eine Warnung — nur für Dev gedacht.
+`/api/integrations/:id/...` und dem Legacy-Alias `/api/sync/...`). Tokens
+werden gegen die WorkOS-JWKS verifiziert; danach löst `resolveTenant` den
+`org_id`-Claim gegen die `tenants`-Tabelle auf (unbekannte/inaktive Org ⇒ 403
+mit Code `NO_ORG`/`UNKNOWN_ORG`/`ORG_INACTIVE`). Die `run`-Webhooks sind
+Dual-Auth: ein **Mandanten-Webhook-Secret** (`x-sync-token` oder Bearer)
+identifiziert den Mandanten direkt, alternativ zählt ein gültiges AuthKit-JWT
+(UI-Pfad). Ohne identifizierbaren Mandanten ⇒ 401, fail-closed.
+Unauthentifiziertes `healthz` liefert nur noch Liveness; der volle Status
+braucht das Secret. Im Frontend bakt Vite `VITE_WORKOS_CLIENT_ID` ins Bundle
+und das `<AuthKitProvider>` macht Auth-Code-Flow mit PKCE; der
+Mandanten-Switcher im Header nutzt `switchToOrganization`. Im WorkOS-Dashboard
+müssen Redirect-URI **und** Allowed-Origin auf die App-Origin gesetzt sein
+(z.B. `http://localhost:3000` für Dev, `https://<flyapp>` für Prod). Sind die
+WorkOS-Vars leer, läuft die App ohne Login mit einem lokalen Dev-Mandanten —
+nur für Dev gedacht.
 
 ## Building For Production
 
@@ -98,156 +138,11 @@ pnpm test
 
 This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
 
-### Removing Tailwind CSS
-
-If you prefer not to use Tailwind CSS:
-
-1. Remove the demo pages in `src/routes/demo/`
-2. Replace the Tailwind import in `src/styles.css` with your own styles
-3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
-4. Uninstall the packages: `pnpm add @tailwindcss/vite tailwindcss --dev`
-
 ## Routing
 
-This project uses [TanStack Router](https://tanstack.com/router) with file-based routing. Routes are managed as files in `src/routes`.
-
-### Adding A Route
-
-To add a new route to your application just add a new file in the `./src/routes` directory.
-
-TanStack will automatically generate the content of the route file for you.
-
-Now that you have two routes you can use a `Link` component to navigate between them.
-
-### Adding Links
-
-To use SPA (Single Page Application) navigation you will need to import the `Link` component from `@tanstack/react-router`.
-
-```tsx
-import { Link } from "@tanstack/react-router"
-```
-
-Then anywhere in your JSX you can use it like so:
-
-```tsx
-<Link to="/about">About</Link>
-```
-
-This will create a link that will navigate to the `/about` route.
-
-More information on the `Link` component can be found in the [Link documentation](https://tanstack.com/router/v1/docs/framework/react/api/router/linkComponent).
-
-### Using A Layout
-
-In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you render `{children}` in the `shellComponent`.
-
-Here is an example layout that includes a header:
-
-```tsx
-import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
-
-export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "My App" },
-    ],
-  }),
-  shellComponent: ({ children }) => (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <header>
-          <nav>
-            <Link to="/">Home</Link>
-            <Link to="/about">About</Link>
-          </nav>
-        </header>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  ),
-})
-```
-
-More information on layouts can be found in the [Layouts documentation](https://tanstack.com/router/latest/docs/framework/react/guide/routing-concepts#layouts).
-
-## Server Functions
-
-TanStack Start provides server functions that allow you to write server-side code that seamlessly integrates with your client components.
-
-```tsx
-import { createServerFn } from "@tanstack/react-start"
-
-const getServerTime = createServerFn({
-  method: "GET",
-}).handler(async () => {
-  return new Date().toISOString()
-})
-
-// Use in a component
-function MyComponent() {
-  const [time, setTime] = useState("")
-
-  useEffect(() => {
-    getServerTime().then(setTime)
-  }, [])
-
-  return <div>Server time: {time}</div>
-}
-```
-
-## API Routes
-
-You can create API routes by using the `server` property in your route definitions:
-
-```tsx
-import { createFileRoute } from "@tanstack/react-router"
-import { json } from "@tanstack/react-start"
-
-export const Route = createFileRoute("/api/hello")({
-  server: {
-    handlers: {
-      GET: () => json({ message: "Hello, World!" }),
-    },
-  },
-})
-```
-
-## Data Fetching
-
-There are multiple ways to fetch data in your application. You can use TanStack Query to fetch data from a server. But you can also use the `loader` functionality built into TanStack Router to load the data for a route before it's rendered.
-
-For example:
-
-```tsx
-import { createFileRoute } from "@tanstack/react-router"
-
-export const Route = createFileRoute("/people")({
-  loader: async () => {
-    const response = await fetch("https://swapi.dev/api/people")
-    return response.json()
-  },
-  component: PeopleComponent,
-})
-
-function PeopleComponent() {
-  const data = Route.useLoaderData()
-  return (
-    <ul>
-      {data.results.map((person) => (
-        <li key={person.name}>{person.name}</li>
-      ))}
-    </ul>
-  )
-}
-```
-
-Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
+TanStack Router mit file-based Routing — Route-Dateien liegen unter
+`src/client/routes/` (Root-Layout `__root.tsx`, generierter Tree
+`src/client/routeTree.gen.ts`).
 
 # Integrationen
 
@@ -262,8 +157,8 @@ eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 | `dimacon-clockin`   | Kompletter Clockin-Sync, Schritte per `steps` zuschaltbar: (1) **bidirektionaler** Mitarbeiter-Stammdaten-Abgleich über den gesamten Bestand (Dimacon gewinnt, Live-Lauf legt Mitarbeiter in beiden Systemen an — vorher dry-run prüfen), (2) Tagesplanung: Termine laden, Kunden/Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit.** |
 | `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.                                                                                                                                         |
 
-**Endpoints** (run/healthz offen — run per `SYNC_WEBHOOK_SECRET` geschützt,
-Liste hinter Auth):
+**Endpoints** (run/healthz offen — `run` ist Dual-Auth: Mandanten-Webhook-
+Secret oder AuthKit-JWT, Liste hinter Auth):
 
 ```bash
 # Übersicht aller Integrationen (Auth)
@@ -282,9 +177,9 @@ curl -X POST http://localhost:3020/api/integrations/dimacon-lexoffice/run \
   -H "Content-Type: application/json" \
   -d '{ "dryRun": true }'
 
-# Webhook (wenn SYNC_WEBHOOK_SECRET gesetzt)
+# Webhook (per-Mandant-Secret — gesetzt bei der Anlage via scripts/create-tenant.ts)
 curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run \
-  -H "Authorization: Bearer $SYNC_WEBHOOK_SECRET"
+  -H "x-sync-token: $TENANT_WEBHOOK_SECRET"
 
 # Status einer Integration
 curl http://localhost:3020/api/integrations/dimacon-clockin/healthz
@@ -297,17 +192,22 @@ kompletten Schritt-Satz aus — inklusive des **Live-Mitarbeiter-Abgleichs**
 die Tagesplanung wollen, müssen `{ "steps": { "employees": false } }`
 mitschicken.
 
-Scheduling: pro Integration über die UI (`/settings`) — persistiert in
-`SETTINGS_PATH`, PUT auf `/api/settings/integrations/:id` restartet den
-jeweiligen Cron hot. Fachliche Spezifikation der Tagesplanung:
-`.context/attachments/SKILL.md`.
+Scheduling: pro (Mandant, Integration) im Zeitplan-Tab der
+Integrations-Einstellungen (`/sync/<id>/settings`, Zahnrad in der
+/sync-Tabelle). Der Editor ist Picker-basiert (Täglich mit Uhrzeit und
+Wochentagen, Intervall mit kuratierten Rhythmen, Experten-Modus fürs rohe
+Cron-Feld) und übersetzt client-seitig nach Cron — persistiert wird weiter
+der Cron-String in Postgres (`schedule_settings`), PUT auf
+`/api/settings/integrations/:id` restartet den jeweiligen Cron hot.
+Fachliche Spezifikation der Tagesplanung: `.context/attachments/SKILL.md`.
 
-**Feld-Zuordnung (Erweitert):** Unter `/sync/<id>/mapping` lässt sich per
-Drag & Drop konfigurieren, welche Dimacon-Felder (inkl. Custom-Attribute) in
-welche Zielfelder (inkl. Clockin-Custom-Felder) geschrieben werden — API:
-`/api/mappings/:id[/:entity]`, persistiert in `SETTINGS_PATH` unter
-`fieldMappings`. Ohne gespeicherte Zuordnung gelten Default-Regeln, die dem
-bisherigen Verhalten entsprechen; Match-Keys sind fixiert.
+**Feld-Zuordnung:** Im Tab „Feld-Zuordnung" der Integrations-Einstellungen
+(`/sync/<id>/settings?tab=mapping`) lässt sich per Drag & Drop
+konfigurieren, welche Dimacon-Felder (inkl. Custom-Attribute) in welche
+Zielfelder (inkl. Clockin-Custom-Felder) geschrieben werden — API:
+`/api/mappings/:id[/:entity]`, persistiert in Postgres (`field_mappings`).
+Ohne gespeicherte Zuordnung gelten Default-Regeln, die dem bisherigen
+Verhalten entsprechen; Match-Keys sind fixiert.
 
 Architektur-Bausteine (`src/server/integrations/`):
 
@@ -339,36 +239,69 @@ der Lexoffice-Client ist hand-geschrieben und nutzt Node's `Buffer` — daher
 Server-only. Generierung und Release passieren im miranum-clients-Repo; hier
 werden die Packages nur konsumiert.
 
-Eingebunden im Backend über `src/server/lib/clients.ts` (lazy singletons aus
-env-Variablen). Neue Endpoints werden in `src/server/routes/<service>.ts`
-ergänzt — Beispiele: `GET /api/clockin/projects`, `GET /api/dimacon/me`,
-`GET /api/lexoffice/profile`.
+Eingebunden im Backend über `src/server/lib/clients.ts` — eine per-Mandant-
+Factory (`getClientsForTenant`), die die verschlüsselten Zugangsdaten aus
+Postgres liest und Clients je (Mandant, System) cached. Neue Endpoints werden
+in `src/server/routes/<service>.ts` ergänzt — Beispiele:
+`GET /api/clockin/projects`, `GET /api/dimacon/me`, `GET /api/lexoffice/profile`
+(dienen der UI zugleich als „Verbindung testen").
 
 # Deployment
 
 Dockerfile baut ein `node:22-alpine`-Image, läuft `tsx src/server/index.ts`
-auf Port 3020. Health-Check unter `/healthz`. Secrets werden über `fly secrets`
-gesetzt:
+auf Port 3020. Health-Check unter `/healthz`. Beim Boot laufen die
+Drizzle-Migrationen (der Ordner `src/server/db/migrations` fährt im Image mit)
+und — gegen eine leere DB — der einmalige Legacy-Seed. Laufzeit-Secrets:
 
 ```bash
 fly secrets set \
-  CLOCKIN_API_TOKEN=… \
-  DIMACON_BASE_URL=… DIMACON_TENANT=… DIMACON_API_TOKEN=… \
-  LEXWARE_OFFICE_API_KEY=… \
-  WORKOS_CLIENT_ID=… \
-  WORKOS_REQUIRED_ORG_ID=… \
-  SYNC_WEBHOOK_SECRET=…
+  DATABASE_URL="postgres://…" \
+  CREDENTIAL_KEYS="1=$(openssl rand -base64 32)" \
+  WORKOS_CLIENT_ID=client_…
 ```
 
-**Produktion erzwingt Authentifizierung**: mit `NODE_ENV=production` startet
-der Server nur, wenn `WORKOS_CLIENT_ID`, `WORKOS_REQUIRED_ORG_ID` **und**
-`SYNC_WEBHOOK_SECRET` gesetzt sind (sonst klare Fehlermeldung beim Boot).
-Zusätzlich lehnen die offenen `run`-Webhooks in Produktion Anfragen mit 503
-ab, solange kein Webhook-Secret konfiguriert ist. Im Dev bleibt der offene
-Fallback (Warnung im Log) erhalten.
+**Image-Build + Ausrollen:** Ein Push auf `main` baut
+`.github/workflows/deploy.yml` die Images und pusht sie nach
+`registry.fly.io/miranum-dimacon-sync` (prod) bzw.
+`registry.fly.io/miranum-dimacon-sync-stage` (stage), getaggt `latest` +
+Commit-SHA. Einen automatischen `fly deploy`-Schritt gibt es bewusst nicht —
+ausgerollt wird manuell auf **eine** Machine:
+
+```bash
+fly deploy -a <app> -i registry.fly.io/<app>:<git-sha>
+```
+
+**Rollout-Reihenfolge (Stage zuerst, dann Prod):**
+
+1. Fly-Postgres anlegen, `DATABASE_URL` + `CREDENTIAL_KEYS` setzen
+   (**Key-Kopie in den Passwort-Manager!**). Bestehende Secrets + Volume
+   unangetastet lassen — sie sind der Seed-Input und der Rollback-Pfad.
+2. Neues Image ausrollen (`fly deploy -a … -i …`, s. o.). Der Boot-Seed importiert Tenant
+   (aus `WORKOS_REQUIRED_ORG_ID`), Env-Credentials (verschlüsselt),
+   settings.json-Schedules/Zuordnungen und den `SYNC_WEBHOOK_SECRET`-Hash.
+   Seed-Log prüfen (`legacy seed complete`).
+3. Verifizieren: Login (Chip „Mandant · …"), `/settings` (Dimacon) +
+   `/sync/<id>/settings` (Zielsysteme) — „hinterlegt am …" + 3× Verbindung
+   testen, dryRun, Webhook mit altem `x-sync-token`.
+4. Nach Bake-Fenster: `fly secrets unset CLOCKIN_API_TOKEN DIMACON_API_TOKEN
+DIMACON_BASE_URL DIMACON_TENANT LEXWARE_OFFICE_API_KEY
+WORKOS_REQUIRED_ORG_ID SYNC_CRON SYNC_TZ SYNC_WEBHOOK_SECRET` — der
+   Env-Cleanup ist ein **Korrektheits-Gate**: solange die Alt-Secrets liegen,
+   würde ein DB-Reset veraltete Tokens re-importieren. Danach Volume +
+   `SETTINGS_PATH` entfernen; ab hier ist kein Rollback auf Vor-Postgres-Builds
+   mehr möglich.
+
+**Produktions-Guard**: mit `NODE_ENV=production` startet der Server nur, wenn
+`WORKOS_CLIENT_ID`, `DATABASE_URL` **und** `CREDENTIAL_KEYS` gesetzt sind
+(sonst klare Fehlermeldung beim Boot). Die offenen `run`-Webhooks sind
+strukturell fail-closed: ohne per-Mandant-Secret-Treffer oder gültiges JWT
+immer 401. Im Dev bleibt der offene Fallback (Dev-Mandant, Warnung im Log)
+erhalten. **Single-Machine-Constraint bleibt bestehen** (in-process Cron +
+prozesslokaler Mutex) — nicht auf 2 Machines skalieren.
 
 **⚠️ `VITE_WORKOS_CLIENT_ID` wird zur Build-Zeit ins Bundle gebakt** — ein
-Fly-Secret kann Frontend-Auth NICHT aktivieren. Die CI übergibt den Wert als
+Fly-Secret kann Frontend-Auth NICHT aktivieren. Der Deploy-Workflow
+(`.github/workflows/deploy.yml`) übergibt den Wert als
 Docker-Build-Arg aus den GitHub-Repository-Variablen `WORKOS_CLIENT_ID_PROD`
 bzw. `WORKOS_CLIENT_ID_STAGE` (Public-Client-ID, kein Secret — pro Umgebung
 ein eigener WorkOS-Client). Lokal: `docker build --build-arg
@@ -381,13 +314,3 @@ WorkOS-Dashboard-Checkliste **pro Umgebung** (eigener Client für prod/stage):
 - Dieselbe Origin als Allowed Origin (CORS) eintragen.
 - Client-ID sowohl als Fly-Secret (`WORKOS_CLIENT_ID`, Backend/JWKS) als auch
   als GitHub-Variable (`WORKOS_CLIENT_ID_*`, Frontend-Build) hinterlegen.
-
-# Demo files
-
-Files prefixed with `demo` can be safely deleted. They are there to provide a starting point for you to play around with the features you've installed.
-
-# Learn More
-
-You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
-
-For TanStack Start specific documentation, visit [TanStack Start](https://tanstack.com/start).

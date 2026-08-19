@@ -4,7 +4,7 @@ import { env } from "./env.js"
 import { formatError } from "./errors.js"
 import { log } from "./log.js"
 
-interface WorkOSClaims extends JWTPayload {
+export interface WorkOSClaims extends JWTPayload {
   sub: string
   org_id?: string
   role?: string
@@ -52,9 +52,29 @@ export function isAuthConfigured(): boolean {
   return Boolean(env.workos.clientId())
 }
 
-export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
+/**
+ * Verifiziert ein AuthKit-Access-Token; undefined bei ungültig/abgelaufen.
+ * Auch vom Dual-Auth-Webhook-Handler genutzt, der Bearer-JWTs akzeptiert.
+ * Die Mandanten-Zuordnung (org_id → tenants-Zeile) passiert NICHT hier,
+ * sondern in lib/tenant.ts — Auth bleibt reine Token-Prüfung.
+ */
+export async function verifyAccessToken(token: string): Promise<WorkOSClaims | undefined> {
   const clientId = env.workos.clientId()
-  if (!clientId) return next()
+  if (!clientId) return undefined
+  try {
+    const { payload } = await jwtVerify(token, getJWKS(clientId), {
+      algorithms: ["RS256"],
+      issuer: expectedIssuer(clientId),
+    })
+    return payload as WorkOSClaims
+  } catch (err) {
+    log.warn("auth token invalid", { error: formatError(err) })
+    return undefined
+  }
+}
+
+export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
+  if (!isAuthConfigured()) return next()
 
   const auth = c.req.header("authorization")
   const match = auth?.match(/^Bearer\s+(.+)$/i)
@@ -62,21 +82,10 @@ export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
     return c.json({ error: "missing bearer token" }, 401)
   }
 
-  try {
-    const { payload } = await jwtVerify(match[1], getJWKS(clientId), {
-      algorithms: ["RS256"],
-      issuer: expectedIssuer(clientId),
-    })
-    const claims = payload as WorkOSClaims
-    const requiredOrg = env.workos.requiredOrgId()
-    if (requiredOrg && claims.org_id !== requiredOrg) {
-      log.warn("auth org mismatch", { got: claims.org_id, want: requiredOrg, sub: claims.sub })
-      return c.json({ error: "forbidden: wrong organization" }, 403)
-    }
-    c.set("user", claims)
-    return next()
-  } catch (err) {
-    log.warn("auth token invalid", { error: formatError(err) })
+  const claims = await verifyAccessToken(match[1])
+  if (!claims) {
     return c.json({ error: "invalid token" }, 401)
   }
+  c.set("user", claims)
+  return next()
 })

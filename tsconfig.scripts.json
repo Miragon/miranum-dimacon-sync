@@ -1,0 +1,26 @@
+{
+  "include": ["scripts/**/*.ts"],
+  "references": [{ "path": "./tsconfig.server.json" }],
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "dist/scripts-types",
+
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "emitDeclarationOnly": true
+  }
+}

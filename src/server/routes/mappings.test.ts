@@ -1,20 +1,18 @@
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { Hono } from "hono"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { setDbForTests, type Db } from "../db/client.js"
+import { fieldMappings, tenants } from "../db/schema.js"
+import { createTestDb } from "../db/test-db.js"
+import { resetClientCacheForTests } from "../lib/clients.js"
+import { log } from "../lib/log.js"
+import type { AppEnv, Tenant } from "../lib/tenant.js"
 import { FIELD_CATALOG } from "../integrations/shared/field-catalog.js"
+import mappings from "./mappings.js"
 
-// Die Routen laden Discovery live von Dimacon/Clockin — ohne Credentials
-// schlägt sie natürlich fehl (getDimaconClient wirft "Missing required env
-// var"). Genau dieses Verhalten testen wir hier: kein Mock der SDKs nötig.
-const CLIENT_ENV = [
-  "DIMACON_API_TOKEN",
-  "DIMACON_BASE_URL",
-  "DIMACON_TENANT",
-  "CLOCKIN_API_TOKEN",
-  "CLOCKIN_BASE_URL",
-] as const
+// Die Routen laden Discovery live von Dimacon/Clockin — ohne Credential-
+// Zeilen des Mandanten schlägt sie deterministisch und ohne Netz fehl
+// (CredentialsMissingError aus der Client-Factory). Genau dieses Verhalten
+// testen wir hier: kein Mock der SDKs nötig.
 
 interface EntityBlockJson {
   entity: string
@@ -30,33 +28,40 @@ const VALID_RULES = [
   { source: std("street"), target: std("destination_street") },
 ]
 
-let dir: string
-let app: Hono
+let db: Db
+let close: () => Promise<void>
+let tenant: Tenant
+let app: Hono<AppEnv>
 
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "mappings-test-"))
-  vi.stubEnv("SETTINGS_PATH", join(dir, "settings.json"))
-  // Garantiert unset, auch wenn die Shell des Entwicklers sie gesetzt hat —
-  // Discovery muss deterministisch scheitern, ohne Netz.
-  for (const name of CLIENT_ENV) vi.stubEnv(name, undefined)
-  vi.stubEnv("SYNC_CRON", undefined)
-  vi.stubEnv("SYNC_TZ", undefined)
-  vi.resetModules()
+beforeAll(async () => {
+  ;({ db, close } = await createTestDb())
+  setDbForTests(db)
+  ;[tenant] = await db
+    .insert(tenants)
+    .values({ workosOrgId: "org_mappings", displayName: "Mappings-Test" })
+    .returning()
 
-  const { default: mappings } = await import("./mappings.js")
-  const { log } = await import("../lib/log.js")
-  // Route + Settings loggen über den globalen Logger — stumm schalten
   log.info = () => {
     /* swallow */
   }
 
   app = new Hono()
+  // Stub-Middleware statt requireAuth/resolveTenant: Tests scopen direkt.
+  app.use("*", async (c, next) => {
+    c.set("tenant", tenant)
+    return next()
+  })
   app.route("/api/mappings", mappings)
 })
 
-afterEach(async () => {
-  vi.unstubAllEnvs()
-  await rm(dir, { recursive: true, force: true })
+afterAll(async () => {
+  setDbForTests(undefined)
+  await close()
+})
+
+beforeEach(async () => {
+  await db.delete(fieldMappings)
+  resetClientCacheForTests()
 })
 
 function putProject(rules: unknown) {
@@ -102,6 +107,7 @@ describe("mappings routes", () => {
     expect(block.isDefault).toBe(false)
     expect(block.rules).toEqual(VALID_RULES)
     expect(block.discoveryErrors.length).toBeGreaterThan(0)
+    expect(block.discoveryErrors[0]).toMatch(/Zugangsdaten für "dimacon"/)
 
     const fetched = await getProjectBlock()
     expect(fetched.isDefault).toBe(false)

@@ -1,28 +1,27 @@
 import { Cron } from "croner"
 import { Hono } from "hono"
-import {
-  getScheduleSettings,
-  ScheduleSettingsSchema,
-  updateScheduleSettings,
-} from "../lib/settings.js"
+import { getScheduleSettings, updateScheduleSettings } from "../db/repos/schedules.js"
 import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
+import { ScheduleSettingsSchema, type ScheduleSettings } from "../lib/schedule-schema.js"
+import type { AppEnv } from "../lib/tenant.js"
 import { getIntegration, integrations } from "../integrations/registry.js"
-import { getNextRun, isCronActive, startIntegrationCron } from "../integrations/scheduler.js"
-import type { ScheduleSettings } from "../lib/settings.js"
+import { getNextRun, isCronActive, startTenantIntegrationCron } from "../integrations/scheduler.js"
 
-const app = new Hono()
+const app = new Hono<AppEnv>()
 
 app.get("/integrations", async (c) => {
+  const tenant = c.get("tenant")
   const entries = await Promise.all(
     integrations.map(async (def) =>
-      scheduleEntry(def.id, def.name, await getScheduleSettings(def.id)),
+      scheduleEntry(tenant.id, def.id, def.name, await getScheduleSettings(tenant.id, def.id)),
     ),
   )
   return c.json(entries)
 })
 
 app.put("/integrations/:id", async (c) => {
+  const tenant = c.get("tenant")
   const id = c.req.param("id")
   const def = getIntegration(id)
   if (!def) return c.json({ error: "unknown integration" }, 404)
@@ -42,26 +41,27 @@ app.put("/integrations/:id", async (c) => {
     if (!v.ok) return c.json({ error: v.message }, 400)
   }
 
-  const saved = await updateScheduleSettings(id, input)
-  await startIntegrationCron(id)
+  const saved = await updateScheduleSettings(tenant.id, id, input)
+  await startTenantIntegrationCron(tenant.id, id)
   log.info("integration schedule updated", {
+    tenant: tenant.id,
     integration: id,
     enabled: saved.enabled,
     cron: saved.cron ?? null,
     tz: saved.timezone,
   })
-  return c.json(scheduleEntry(id, def.name, saved))
+  return c.json(scheduleEntry(tenant.id, id, def.name, saved))
 })
 
 export default app
 
-function scheduleEntry(id: string, name: string, settings: ScheduleSettings) {
+function scheduleEntry(tenantId: string, id: string, name: string, settings: ScheduleSettings) {
   return {
     id,
     name,
     ...settings,
-    active: isCronActive(id),
-    nextRun: getNextRun(id),
+    active: isCronActive(tenantId, id),
+    nextRun: getNextRun(tenantId, id),
     nextRuns: previewNextRuns(settings.cron, settings.timezone, 5),
   }
 }

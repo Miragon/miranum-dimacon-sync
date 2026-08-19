@@ -14,7 +14,7 @@ import { Route as ModulesRouteImport } from './routes/modules'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SyncIndexRouteImport } from './routes/sync.index'
 import { Route as SyncIntegrationIdRouteImport } from './routes/sync.$integrationId'
-import { Route as SyncIntegrationIdMappingRouteImport } from './routes/sync_.$integrationId.mapping'
+import { Route as SyncIntegrationIdSettingsRouteImport } from './routes/sync_.$integrationId.settings'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -41,10 +41,10 @@ const SyncIntegrationIdRoute = SyncIntegrationIdRouteImport.update({
   path: '/sync/$integrationId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SyncIntegrationIdMappingRoute =
-  SyncIntegrationIdMappingRouteImport.update({
-    id: '/sync_/$integrationId/mapping',
-    path: '/sync/$integrationId/mapping',
+const SyncIntegrationIdSettingsRoute =
+  SyncIntegrationIdSettingsRouteImport.update({
+    id: '/sync_/$integrationId/settings',
+    path: '/sync/$integrationId/settings',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -54,7 +54,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/sync/$integrationId': typeof SyncIntegrationIdRoute
   '/sync/': typeof SyncIndexRoute
-  '/sync/$integrationId/mapping': typeof SyncIntegrationIdMappingRoute
+  '/sync/$integrationId/settings': typeof SyncIntegrationIdSettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -62,7 +62,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/sync/$integrationId': typeof SyncIntegrationIdRoute
   '/sync': typeof SyncIndexRoute
-  '/sync/$integrationId/mapping': typeof SyncIntegrationIdMappingRoute
+  '/sync/$integrationId/settings': typeof SyncIntegrationIdSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -71,7 +71,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/sync/$integrationId': typeof SyncIntegrationIdRoute
   '/sync/': typeof SyncIndexRoute
-  '/sync_/$integrationId/mapping': typeof SyncIntegrationIdMappingRoute
+  '/sync_/$integrationId/settings': typeof SyncIntegrationIdSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -81,7 +81,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/sync/$integrationId'
     | '/sync/'
-    | '/sync/$integrationId/mapping'
+    | '/sync/$integrationId/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -89,7 +89,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/sync/$integrationId'
     | '/sync'
-    | '/sync/$integrationId/mapping'
+    | '/sync/$integrationId/settings'
   id:
     | '__root__'
     | '/'
@@ -97,7 +97,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/sync/$integrationId'
     | '/sync/'
-    | '/sync_/$integrationId/mapping'
+    | '/sync_/$integrationId/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -106,7 +106,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   SyncIntegrationIdRoute: typeof SyncIntegrationIdRoute
   SyncIndexRoute: typeof SyncIndexRoute
-  SyncIntegrationIdMappingRoute: typeof SyncIntegrationIdMappingRoute
+  SyncIntegrationIdSettingsRoute: typeof SyncIntegrationIdSettingsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -146,11 +146,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SyncIntegrationIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sync_/$integrationId/mapping': {
-      id: '/sync_/$integrationId/mapping'
-      path: '/sync/$integrationId/mapping'
-      fullPath: '/sync/$integrationId/mapping'
-      preLoaderRoute: typeof SyncIntegrationIdMappingRouteImport
+    '/sync_/$integrationId/settings': {
+      id: '/sync_/$integrationId/settings'
+      path: '/sync/$integrationId/settings'
+      fullPath: '/sync/$integrationId/settings'
+      preLoaderRoute: typeof SyncIntegrationIdSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -162,7 +162,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   SyncIntegrationIdRoute: SyncIntegrationIdRoute,
   SyncIndexRoute: SyncIndexRoute,
-  SyncIntegrationIdMappingRoute: SyncIntegrationIdMappingRoute,
+  SyncIntegrationIdSettingsRoute: SyncIntegrationIdSettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
