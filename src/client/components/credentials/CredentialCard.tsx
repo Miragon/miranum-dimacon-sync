@@ -43,6 +43,14 @@ export function CredentialCard({
     token.length > 0 ||
     system.fields.some((f) => (config[f.key] ?? "") !== (status.config[f.key] ?? ""))
 
+  // Testbar, sobald ein Secret verfügbar ist (Formular-Token oder bereits
+  // gespeichert) und die Pflichtfelder gefüllt sind — Trim wie serverseitig
+  // (nur-Whitespace-Token zählt als "gespeichertes behalten").
+  const requiredFilled = system.fields.every(
+    (f) => !f.required || (config[f.key] ?? "").trim().length > 0,
+  )
+  const canProbe = (status.configured || token.trim().length > 0) && requiredFilled
+
   const updatedAtLabel = status.updatedAt
     ? new Date(status.updatedAt).toLocaleString("de-DE", {
         dateStyle: "medium",
@@ -50,18 +58,24 @@ export function CredentialCard({
       })
     : null
 
+  // Identischer Body für PUT (Speichern) und POST …/test: Token nur wenn
+  // eingegeben — leer heißt serverseitig "gespeichertes Secret verwenden".
+  function buildBody(): Record<string, string> {
+    const body: Record<string, string> = { ...config }
+    if (token.length > 0) body.token = token
+    return body
+  }
+
   async function save() {
     setSaving(true)
     setError(null)
     setNotice(null)
     setProbeResult(null)
     try {
-      const body: Record<string, string> = { ...config }
-      if (token.length > 0) body.token = token
       const res = await apiFetch(`/api/credentials/${system.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(buildBody()),
       })
       const json = await readJson<CredentialStatus | { error: string }>(res)
       if (!res.ok) {
@@ -83,16 +97,37 @@ export function CredentialCard({
     }
   }
 
+  // Testet die aktuellen FORMULARWERTE (vor dem Speichern): gleicher Body wie
+  // save(); HTTP-Status = "konnte der Test laufen", `ok` = Verbindung stand.
   async function probe() {
     setProbing(true)
     setProbeResult(null)
     try {
-      const res = await apiFetch(system.probePath)
-      if (res.ok) {
-        setProbeResult({ ok: true, message: `Verbindung OK (HTTP ${res.status})` })
+      const res = await apiFetch(`/api/credentials/${system.id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildBody()),
+      })
+      const json = await readJson<{ ok?: boolean; message?: string; error?: string }>(res).catch(
+        () => ({}) as { ok?: boolean; message?: string; error?: string },
+      )
+      if (!res.ok) {
+        setProbeResult({
+          ok: false,
+          message:
+            json.error === "token_required"
+              ? `${system.tokenLabel} wird für den Test benötigt.`
+              : (json.error ?? `HTTP ${res.status}`),
+        })
+      } else if (json.ok) {
+        setProbeResult({
+          ok: true,
+          message: dirty
+            ? "Verbindung OK — Eingaben sind noch nicht gespeichert."
+            : "Verbindung OK",
+        })
       } else {
-        const json = await readJson<{ error?: string }>(res).catch(() => ({ error: undefined }))
-        setProbeResult({ ok: false, message: json.error ?? `HTTP ${res.status}` })
+        setProbeResult({ ok: false, message: json.message ?? "Verbindung fehlgeschlagen" })
       }
     } catch (err) {
       setProbeResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
@@ -165,7 +200,11 @@ export function CredentialCard({
             type="password"
             autoComplete="new-password"
             value={token}
-            onChange={(e) => setToken(e.target.value)}
+            onChange={(e) => {
+              setToken(e.target.value)
+              // Testergebnis gilt nur für die Werte, mit denen getestet wurde.
+              setProbeResult(null)
+            }}
             placeholder={
               status.configured
                 ? `•••••••• — hinterlegt${updatedAtLabel ? ` am ${updatedAtLabel}` : ""}`
@@ -188,7 +227,10 @@ export function CredentialCard({
               id={fieldId(f.key)}
               type="text"
               value={config[f.key] ?? ""}
-              onChange={(e) => setConfig((prev) => ({ ...prev, [f.key]: e.target.value }))}
+              onChange={(e) => {
+                setConfig((prev) => ({ ...prev, [f.key]: e.target.value }))
+                setProbeResult(null)
+              }}
               placeholder={f.placeholder}
               className="mt-2 font-mono"
               disabled={saving}
@@ -203,7 +245,7 @@ export function CredentialCard({
           <Button
             variant="outline"
             onClick={() => void probe()}
-            disabled={probing || saving || !status.configured}
+            disabled={probing || saving || !canProbe}
           >
             {probing ? "teste …" : "Verbindung testen"}
           </Button>

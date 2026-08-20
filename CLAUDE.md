@@ -68,7 +68,11 @@ Inline-Zufallskey starten — `CREDENTIAL_KEYS` kommt stabil aus `.env`,
 sonst werden in der persistenten Dev-DB gespeicherte Tokens unbrauchbar.
 UI: Dimacon unter `/settings` (gemeinsames Quellsystem), Clockin/Lexware auf
 der Einstellungsseite ihrer Integration `/sync/<id>/settings` (Token-Feld
-immer leer; leer lassen = behalten).
+immer leer; leer lassen = behalten). „Verbindung testen" POSTet die
+Formularwerte an `/api/credentials/:system/test` (Test VOR dem Speichern;
+leeres Token = gespeichertes Secret; Wegwerf-Client in
+`src/server/lib/connection-test.ts`) — Antwort ist 200 mit `ok:false` +
+Meldung bei Upstream-Fehlern, damit nichts im sanitisierten onError landet.
 Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
 
 ## Pages-Konvention

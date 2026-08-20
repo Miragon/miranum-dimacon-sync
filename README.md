@@ -244,7 +244,11 @@ Factory (`getClientsForTenant`), die die verschlüsselten Zugangsdaten aus
 Postgres liest und Clients je (Mandant, System) cached. Neue Endpoints werden
 in `src/server/routes/<service>.ts` ergänzt — Beispiele:
 `GET /api/clockin/projects`, `GET /api/dimacon/me`, `GET /api/lexoffice/profile`
-(dienen der UI zugleich als „Verbindung testen").
+(manuelle Verifikations-Endpoints gegen die GESPEICHERTEN Zugangsdaten).
+Das „Verbindung testen" der UI läuft über `POST /api/credentials/:system/test`
+und prüft die Formularwerte VOR dem Speichern: Wegwerf-Client via
+`src/server/lib/connection-test.ts`, leeres Token = gespeichertes Secret;
+persistiert nichts.
 
 # Deployment
 

@@ -5,8 +5,10 @@ import { log } from "../lib/log.js"
 
 /**
  * Gemeinsame Fehlerzuordnung der Probe-Routen (/api/{dimacon,clockin,
- * lexoffice}) — sie dienen der UI als „Verbindung testen". Fehlende
- * Credentials sind ein erwartbarer 503; Decrypt-Fehler bleiben ein
+ * lexoffice} — manuelle Verifikations-Endpoints gegen die GESPEICHERTEN
+ * Zugangsdaten; das „Verbindung testen" der UI läuft über
+ * POST /api/credentials/:system/test) sowie des Test-Endpoints selbst.
+ * Fehlende Credentials sind ein erwartbarer 503; Decrypt-Fehler bleiben ein
  * eigener 500 (nie als „nicht hinterlegt" maskieren). Alles andere
  * (Upstream-Fehler) fällt zum onError-Handler durch.
  */
