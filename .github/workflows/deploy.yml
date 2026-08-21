@@ -1,9 +1,18 @@
 name: Build and Deploy to Fly
 
+# Bewusst NUR manuell (Actions → "Build and Deploy to Fly" → Run workflow):
+# ein Merge auf main deployt nichts. Der Branch-Dropdown des Dispatches
+# bestimmt den gebauten Stand; `target` wählt die Umgebung (für beide:
+# zweimal auslösen).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Ziel-Umgebung"
+        type: choice
+        options: [prod, stage]
+        default: prod
+        required: true
 
 jobs:
   build-and-push:
@@ -13,17 +22,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Genau EIN Eintrag, aus dem Dispatch-Input abgeleitet — die
+        # matrix.*-Referenzen in den Steps bleiben dadurch unverändert.
         include:
-          - env: prod
-            app: miranum-dimacon-sync
-            org: miranum
-            token_secret: FLY_TOKEN_PROD
-            workos_client_id_var: WORKOS_CLIENT_ID_PROD
-          - env: stage
-            app: miranum-dimacon-sync-stage
-            org: miranum-stage
-            token_secret: FLY_TOKEN_STAGE
-            workos_client_id_var: WORKOS_CLIENT_ID_STAGE
+          - env: ${{ inputs.target }}
+            app: ${{ inputs.target == 'prod' && 'miranum-dimacon-sync' || 'miranum-dimacon-sync-stage' }}
+            org: ${{ inputs.target == 'prod' && 'miranum' || 'miranum-stage' }}
+            token_secret: ${{ inputs.target == 'prod' && 'FLY_TOKEN_PROD' || 'FLY_TOKEN_STAGE' }}
+            workos_client_id_var: ${{ inputs.target == 'prod' && 'WORKOS_CLIENT_ID_PROD' || 'WORKOS_CLIENT_ID_STAGE' }}
     name: build-and-push (${{ matrix.env }})
     steps:
       - name: Checkout

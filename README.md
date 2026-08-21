@@ -269,15 +269,18 @@ fly secrets set \
   WORKOS_API_KEY=sk_…
 ```
 
-**Image-Build + Ausrollen (CI):** Ein Push auf `main` (oder manueller
-`workflow_dispatch`) baut `.github/workflows/deploy.yml` die Images, pusht
-sie nach `registry.fly.io/miranum-dimacon-sync` (prod) bzw.
-`registry.fly.io/miranum-dimacon-sync-stage` (stage), getaggt `latest` +
-Commit-SHA, und **deployt sie anschließend** (`flyctl deploy` mit der
-eingecheckten `fly.toml`, `--ha=false` = genau **eine** Machine — in-process
-Cron + Mutex). Voraussetzung: die Laufzeit-Secrets der App sind gesetzt,
-sonst verweigert der Produktions-Guard den Start und der Health-Check lässt
-den Deploy fehlschlagen. Manueller Fallback bleibt möglich:
+**Image-Build + Ausrollen (CI, manuell ausgelöst):** Deployments laufen
+ausschließlich über GitHub Actions → „Build and Deploy to Fly" → _Run
+workflow_: Branch wählen (bestimmt den gebauten Stand) + `target` =
+`prod`/`stage` (für beide Umgebungen zweimal auslösen). Ein Merge auf `main`
+deployt **nichts**. Der Workflow baut das Image, pusht es nach
+`registry.fly.io/<app>` (getaggt `latest` + Commit-SHA) und deployt es
+anschließend (`flyctl deploy` mit der eingecheckten `fly.toml`,
+`--ha=false` = genau **eine** Machine — in-process Cron + Mutex).
+Voraussetzung: die Laufzeit-Secrets der App sind gesetzt, sonst verweigert
+der Produktions-Guard den Start und der Health-Check lässt den Deploy
+fehlschlagen. Auch der **allererste** Deploy einer App funktioniert über die
+Pipeline (sie erzeugt die erste Machine). Manueller Fallback bleibt möglich:
 
 ```bash
 fly deploy -a <app> -i registry.fly.io/<app>:<git-sha> --ha=false
