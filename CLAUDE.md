@@ -50,6 +50,10 @@ validiert nur die Snapshot-Historie).
 - Auth aus (Dev): echte DB-Zeile `org_dev` via `getOrCreateDevTenant()`.
 - API-Pfade bleiben tenant-frei — der Mandant kommt IMMER aus dem JWT bzw.
   Webhook-Secret, nie vom Client.
+- `/api/tenants` (Switcher-Liste) ist membership-gefiltert: WorkOS
+  User-Management-API via optionalem `WORKOS_API_KEY` (60-s-Cache in
+  `src/server/lib/workos.ts`). Fallback ohne Key/im Dev-Modus/bei
+  API-Fehlern: NUR der aktive Mandant — nie alle Mandanten, nie 5xx.
 - Credentials-Schreibrechte: jedes Mitglied einer freigeschalteten Org
   (dokumentierte Entscheidung, internes Ops-Tool).
 
@@ -68,7 +72,11 @@ Inline-Zufallskey starten — `CREDENTIAL_KEYS` kommt stabil aus `.env`,
 sonst werden in der persistenten Dev-DB gespeicherte Tokens unbrauchbar.
 UI: Dimacon unter `/settings` (gemeinsames Quellsystem), Clockin/Lexware auf
 der Einstellungsseite ihrer Integration `/sync/<id>/settings` (Token-Feld
-immer leer; leer lassen = behalten).
+immer leer; leer lassen = behalten). „Verbindung testen" POSTet die
+Formularwerte an `/api/credentials/:system/test` (Test VOR dem Speichern;
+leeres Token = gespeichertes Secret; Wegwerf-Client in
+`src/server/lib/connection-test.ts`) — Antwort ist 200 mit `ok:false` +
+Meldung bei Upstream-Fehlern, damit nichts im sanitisierten onError landet.
 Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
 
 ## Pages-Konvention
@@ -180,4 +188,5 @@ Docker-Build-Arg!) und
 mountet `<AuthKitProvider>` + `<AuthGate>` + `<TenantGate>` nur dann. Alle
 UI-Fetches gehen über `useApiFetch()` in `src/client/lib/api.ts` (Bearer-Header,
 401 → PKCE-Neustart). Mandanten-Switcher im `UserMenu` nutzt
-`switchToOrganization` + Hard-Reload.
+`switchToOrganization` + Hard-Reload; seine Liste kommt aus dem
+membership-gefilterten `/api/tenants` (s. Mandanten-Modell).

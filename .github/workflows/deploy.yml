@@ -1,9 +1,18 @@
-name: Build and Push to Fly Registry
+name: Build and Deploy to Fly
 
+# Bewusst NUR manuell (Actions → "Build and Deploy to Fly" → Run workflow):
+# ein Merge auf main deployt nichts. Der Branch-Dropdown des Dispatches
+# bestimmt den gebauten Stand; `target` wählt die Umgebung (für beide:
+# zweimal auslösen).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Ziel-Umgebung"
+        type: choice
+        options: [prod, stage]
+        default: prod
+        required: true
 
 jobs:
   build-and-push:
@@ -13,17 +22,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Genau EIN Eintrag, aus dem Dispatch-Input abgeleitet — die
+        # matrix.*-Referenzen in den Steps bleiben dadurch unverändert.
         include:
-          - env: prod
-            app: miranum-dimacon-sync
-            org: miranum
-            token_secret: FLY_TOKEN_PROD
-            workos_client_id_var: WORKOS_CLIENT_ID_PROD
-          - env: stage
-            app: miranum-dimacon-sync-stage
-            org: miranum-stage
-            token_secret: FLY_TOKEN_STAGE
-            workos_client_id_var: WORKOS_CLIENT_ID_STAGE
+          - env: ${{ inputs.target }}
+            app: ${{ inputs.target == 'prod' && 'miranum-dimacon-sync' || 'miranum-dimacon-sync-stage' }}
+            org: ${{ inputs.target == 'prod' && 'miranum' || 'miranum-stage' }}
+            token_secret: ${{ inputs.target == 'prod' && 'FLY_TOKEN_PROD' || 'FLY_TOKEN_STAGE' }}
+            workos_client_id_var: ${{ inputs.target == 'prod' && 'WORKOS_CLIENT_ID_PROD' || 'WORKOS_CLIENT_ID_STAGE' }}
     name: build-and-push (${{ matrix.env }})
     steps:
       - name: Checkout
@@ -56,14 +62,31 @@ jobs:
           context: .
           push: true
           # VITE_WORKOS_CLIENT_ID wird von Vite ins Bundle gebakt und MUSS
-          # deshalb als Build-Arg kommen (GitHub-Repo-Variable pro Umgebung,
-          # Public-Client-ID — kein Secret). Fehlt die Variable, baut das
-          # Image ohne Frontend-Auth und der Server-Startup-Guard verhindert
-          # den unauthentifizierten Betrieb in Produktion.
+          # deshalb als Build-Arg kommen. Die Client-ID liegt als
+          # GitHub-SECRET je Umgebung (WORKOS_CLIENT_ID_{PROD,STAGE}) —
+          # inhaltlich eine Public-Client-ID, aber als Secret gepflegt.
+          # Fehlt der Wert, baut das Image ohne Frontend-Auth und der
+          # Server-Startup-Guard verhindert den unauthentifizierten
+          # Betrieb in Produktion.
           build-args: |
-            VITE_WORKOS_CLIENT_ID=${{ vars[matrix.workos_client_id_var] }}
+            VITE_WORKOS_CLIENT_ID=${{ secrets[matrix.workos_client_id_var] }}
           tags: |
             registry.fly.io/${{ matrix.app }}:latest
             registry.fly.io/${{ matrix.app }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.env }}
           cache-to: type=gha,mode=max,scope=${{ matrix.env }}
+
+      - name: Deploy to Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        # Config aus fly.toml (Checkout), Image aus dem Push oben. --ha=false:
+        # genau EINE Machine — Scheduler/Mutex sind in-process, eine zweite
+        # Machine würde Crons doppelt feuern. Secrets (DATABASE_URL,
+        # CREDENTIAL_KEYS, WORKOS_CLIENT_ID, optional WORKOS_API_KEY) müssen
+        # vor dem ersten Deploy gesetzt sein, sonst verweigert der
+        # Produktions-Guard den Start und der Health-Check lässt den Deploy
+        # fehlschlagen.
+        run: |
+          flyctl deploy -a "${{ matrix.app }}" \
+            -i "registry.fly.io/${{ matrix.app }}:${{ github.sha }}" \
+            --ha=false --wait-timeout 5m

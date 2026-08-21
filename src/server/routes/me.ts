@@ -1,7 +1,8 @@
 import { Hono } from "hono"
 import { getOrCreateDevTenant, listActiveTenants } from "../db/repos/tenants.js"
 import { isAuthConfigured, type WorkOSClaims } from "../lib/auth.js"
-import { getCachedTenantByOrgId } from "../lib/tenant.js"
+import { getCachedTenantByOrgId, type AppEnv } from "../lib/tenant.js"
+import { listUserOrgIds } from "../lib/workos.js"
 
 interface MeEnv {
   Variables: { user?: WorkOSClaims }
@@ -53,10 +54,27 @@ export const me = new Hono<MeEnv>().get("/", async (c) => {
 /**
  * Mandanten-Liste für den Switcher. `orgId` ist die WorkOS-`org_…`-Id —
  * switchToOrganization() braucht sie; die interne uuid bleibt Server-Sache.
- * Bewusst nur id+Name (Namens-Disclosure über Mandanten hinweg ist für das
- * interne Tool akzeptiert und im Plan dokumentiert).
+ * Gefiltert nach den tatsächlichen Org-Mitgliedschaften des Callers (WorkOS
+ * User-Management-API via WORKOS_API_KEY, lib/workos.ts). Ohne Key, im
+ * Dev-Modus (kein user-Claim) oder bei API-Fehlern: nur der aktive Mandant —
+ * fail-closed gegenüber fremden Mandanten-Namen, nie 5xx (die Switcher-Liste
+ * ist für das Client-TenantGate optional).
  */
-export const tenantsRoute = new Hono().get("/", async (c) => {
+export const tenantsRoute = new Hono<AppEnv>().get("/", async (c) => {
+  // Von resolveTenant garantiert — Mount-Reihenfolge in app.ts ist load-bearing.
+  const own = c.get("tenant")
+  const ownEntry = { orgId: own.workosOrgId, name: own.displayName }
+
+  const userId = c.get("user")?.sub
+  const memberOrgIds = userId ? await listUserOrgIds(userId) : undefined
+  if (!memberOrgIds) return c.json([ownEntry])
+
   const all = await listActiveTenants()
-  return c.json(all.map((t) => ({ orgId: t.workosOrgId, name: t.displayName })))
+  return c.json(
+    all
+      // Eigener Mandant immer dabei — deckt Lag der Membership-API ab.
+      .filter((t) => memberOrgIds.has(t.workosOrgId) || t.workosOrgId === own.workosOrgId)
+      .map((t) => ({ orgId: t.workosOrgId, name: t.displayName }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  )
 })

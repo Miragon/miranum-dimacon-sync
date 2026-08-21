@@ -24,4 +24,9 @@ describe("env", () => {
     process.env.WORKOS_CLIENT_ID = ""
     expect(env.workos.clientId()).toBeUndefined()
   })
+
+  it("treats an empty WORKOS_API_KEY as unset", () => {
+    process.env.WORKOS_API_KEY = ""
+    expect(env.workos.apiKey()).toBeUndefined()
+  })
 })

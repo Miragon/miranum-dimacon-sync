@@ -1,0 +1,29 @@
+# Deploy-Konfiguration für prod UND stage — der App-Name kommt vom `-a`-Flag
+# des Deploys (deshalb bewusst kein `app`-Eintrag). Das Image baut CI und
+# übergibt es via `-i`; ein lokaler Fallback-Deploy funktioniert genauso
+# (siehe README, Abschnitt Deployment).
+primary_region = "fra"
+
+[http_service]
+  internal_port = 3020
+  force_https = true
+  # Der Scheduler (Cron je Mandant, Integrations-Mutex) läuft IN-PROCESS —
+  # die Machine darf nie schlafen gelegt werden, sonst feuern keine geplanten
+  # Syncs. Aus demselben Grund deployt CI mit `--ha=false`: eine zweite
+  # Machine würde Crons doppelt feuern (Mutex ist nur prozess-lokal).
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    # Boot fährt Drizzle-Migrationen unter pg_advisory_lock + ggf. Legacy-Seed.
+    grace_period = "60s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

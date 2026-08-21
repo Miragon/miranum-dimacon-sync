@@ -19,8 +19,6 @@ export interface SystemDef {
   id: CredentialSystemId
   name: string
   tokenLabel: string
-  /** Bestehender Probe-Endpoint — testet die GESPEICHERTEN Zugangsdaten. */
-  probePath: string
   fields: ConfigFieldDef[]
 }
 
@@ -29,7 +27,6 @@ export const CREDENTIAL_SYSTEMS: SystemDef[] = [
     id: "dimacon",
     name: "Dimacon",
     tokenLabel: "API-Token",
-    probePath: "/api/dimacon/me",
     fields: [
       { key: "baseUrl", label: "Base-URL", placeholder: "https://…", required: true },
       { key: "tenant", label: "Dimacon-Mandant", placeholder: "z. B. miragon", required: true },
@@ -39,7 +36,6 @@ export const CREDENTIAL_SYSTEMS: SystemDef[] = [
     id: "clockin",
     name: "ClockIn",
     tokenLabel: "API-Token",
-    probePath: "/api/clockin/projects",
     fields: [
       { key: "baseUrl", label: "Base-URL (optional)", placeholder: "https://…", required: false },
     ],
@@ -48,7 +44,6 @@ export const CREDENTIAL_SYSTEMS: SystemDef[] = [
     id: "lexoffice",
     name: "Lexware Office",
     tokenLabel: "API-Key",
-    probePath: "/api/lexoffice/profile",
     fields: [
       { key: "baseUrl", label: "Base-URL (optional)", placeholder: "https://…", required: false },
     ],
