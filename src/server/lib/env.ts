@@ -24,5 +24,7 @@ export const env = {
   },
   workos: {
     clientId: () => optional("WORKOS_CLIENT_ID"),
+    // Server-only (nie VITE_*): filtert die Switcher-Liste nach Org-Mitgliedschaft.
+    apiKey: () => optional("WORKOS_API_KEY"),
   },
 }

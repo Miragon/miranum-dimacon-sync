@@ -92,6 +92,17 @@ describe("mount order (Reihenfolge ist load-bearing)", () => {
     }
   })
 
+  it("limits /api/tenants to the dev tenant when auth is disabled", async () => {
+    vi.stubEnv("WORKOS_CLIENT_ID", "")
+    const app = createApp()
+    const res = await app.request("/api/tenants")
+    // Ohne user-Claim (Dev-Bypass) fällt die Route auf den aktiven Mandanten
+    // zurück — beweist zugleich, dass tenantsRoute HINTER resolveTenant sitzt
+    // (sonst wäre c.get("tenant") undefined und der Request ein 500).
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([{ orgId: "org_dev", name: "Entwicklung (lokal)" }])
+  })
+
   it("keeps the run webhooks outside the JWT middleware", async () => {
     const app = createApp()
     // Gültiges Mandanten-Secret → der Request läuft bis zum Credentials-Check
