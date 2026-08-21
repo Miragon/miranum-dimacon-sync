@@ -1,5 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { _resetWorkosCacheForTests, listUserOrgIds } from "./workos.js"
+import {
+  _resetWorkosCacheForTests,
+  listAllOrganizations,
+  listOrgFlagSlugs,
+  listUserOrgIds,
+} from "./workos.js"
 import { log } from "./log.js"
 
 const fetchMock = vi.fn()
@@ -105,5 +110,74 @@ describe("listUserOrgIds", () => {
     expect(await listUserOrgIds("user_1")).toBeUndefined()
     expect(await listUserOrgIds("user_1")).toEqual(new Set(["org_a"]))
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("Org-Sync-Fetcher (fail-loud)", () => {
+  it("paginiert die Org-Liste vollständig über den after-Cursor", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [{ id: "org_a", name: "Alpha" }],
+          list_metadata: { before: null, after: "cur_1" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [{ id: "org_b", name: "Beta" }],
+          list_metadata: { before: null, after: null },
+        }),
+      )
+
+    const orgs = await listAllOrganizations()
+
+    expect(orgs).toEqual([
+      { id: "org_a", name: "Alpha" },
+      { id: "org_b", name: "Beta" },
+    ])
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("after=cur_1")
+  })
+
+  it("wirft ohne WORKOS_API_KEY statt still undefined zu liefern", async () => {
+    vi.stubEnv("WORKOS_API_KEY", "")
+    await expect(listAllOrganizations()).rejects.toThrow(/WORKOS_API_KEY/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("wirft bei HTTP-Fehlern", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 500 }))
+    await expect(listAllOrganizations()).rejects.toThrow(/HTTP 500/)
+  })
+
+  it("wirft bei unerwartetem Response-Schema", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: "nope" }))
+    await expect(listAllOrganizations()).rejects.toThrow()
+  })
+
+  it("wirft beim Page-Cap statt still zu kappen", async () => {
+    // Frische Response je Aufruf — ein Body ist nur einmal lesbar.
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          data: [{ id: "org_x", name: "X" }],
+          list_metadata: { before: null, after: "immer-mehr" },
+        }),
+      ),
+    )
+    await expect(listAllOrganizations()).rejects.toThrow(/Seiten/)
+  })
+
+  it("listOrgFlagSlugs liefert die Slugs der Org und wirft bei Fehlern", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: [{ slug: "dimacon-sync" }, { slug: "anderes-feature" }],
+        list_metadata: { before: null, after: null },
+      }),
+    )
+    expect(await listOrgFlagSlugs("org_a")).toEqual(new Set(["dimacon-sync", "anderes-feature"]))
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/organizations/org_a/feature-flags")
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 404 }))
+    await expect(listOrgFlagSlugs("org_b")).rejects.toThrow(/HTTP 404/)
   })
 })

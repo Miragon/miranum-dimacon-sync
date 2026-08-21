@@ -74,3 +74,82 @@ export async function listUserOrgIds(userId: string): Promise<Set<string> | unde
 export function _resetWorkosCacheForTests(): void {
   cache.clear()
 }
+
+// ─── Org-Sync-Fetcher (tenant-sync.ts) ────────────────────────────────────
+// Bewusst FAIL-LOUD (werfen statt warn+undefined wie listUserOrgIds): der
+// Reconcile darf eine unvollständige/fehlgeschlagene Liste NIE als "Org ist
+// weg" lesen — das wäre der direkte Weg in die Massen-Deaktivierung.
+
+export interface WorkOSOrganization {
+  id: string
+  name: string
+}
+
+const OrganizationsPage = z.object({
+  data: z.array(z.object({ id: z.string(), name: z.string() })),
+  list_metadata: z.object({ after: z.string().nullish() }).nullish(),
+})
+
+const OrgFlagsPage = z.object({
+  data: z.array(z.object({ slug: z.string() })),
+  list_metadata: z.object({ after: z.string().nullish() }).nullish(),
+})
+
+const ORG_PAGE_CAP = 20
+
+function requireApiKey(): string {
+  const apiKey = env.workos.apiKey()
+  if (!apiKey) throw new Error("WORKOS_API_KEY ist nicht gesetzt")
+  return apiKey
+}
+
+async function fetchListPage(url: URL, apiKey: string): Promise<unknown> {
+  const res = await fetch(url, {
+    headers: { authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  })
+  if (!res.ok) throw new Error(`WorkOS ${url.pathname} HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Vollständige Org-Liste des Environments; wirft auch beim Page-Cap. */
+export async function listAllOrganizations(): Promise<WorkOSOrganization[]> {
+  const apiKey = requireApiKey()
+  const orgs: WorkOSOrganization[] = []
+  let after: string | undefined
+  for (let page = 0; ; page++) {
+    if (page >= ORG_PAGE_CAP) {
+      throw new Error(`WorkOS-Org-Liste über ${ORG_PAGE_CAP} Seiten — Abbruch (unvollständig)`)
+    }
+    const url = new URL("https://api.workos.com/organizations")
+    url.searchParams.set("limit", "100")
+    if (after) url.searchParams.set("after", after)
+    const body = OrganizationsPage.parse(await fetchListPage(url, apiKey))
+    orgs.push(...body.data)
+    after = body.list_metadata?.after ?? undefined
+    if (!after) break
+  }
+  return orgs
+}
+
+/** Aktivierte Feature-Flag-Slugs einer Org (GET /organizations/:id/feature-flags). */
+export async function listOrgFlagSlugs(orgId: string): Promise<Set<string>> {
+  const apiKey = requireApiKey()
+  const slugs = new Set<string>()
+  let after: string | undefined
+  for (let page = 0; ; page++) {
+    if (page >= ORG_PAGE_CAP) {
+      throw new Error(`WorkOS-Flag-Liste über ${ORG_PAGE_CAP} Seiten — Abbruch (unvollständig)`)
+    }
+    const url = new URL(
+      `https://api.workos.com/organizations/${encodeURIComponent(orgId)}/feature-flags`,
+    )
+    url.searchParams.set("limit", "100")
+    if (after) url.searchParams.set("after", after)
+    const body = OrgFlagsPage.parse(await fetchListPage(url, apiKey))
+    for (const flag of body.data) slugs.add(flag.slug)
+    after = body.list_metadata?.after ?? undefined
+    if (!after) break
+  }
+  return slugs
+}

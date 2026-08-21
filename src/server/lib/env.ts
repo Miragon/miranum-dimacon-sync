@@ -26,5 +26,8 @@ export const env = {
     clientId: () => optional("WORKOS_CLIENT_ID"),
     // Server-only (nie VITE_*): filtert die Switcher-Liste nach Org-Mitgliedschaft.
     apiKey: () => optional("WORKOS_API_KEY"),
+    // Expliziter Opt-in ("on") für den Org-Sync (tenant-sync.ts) — zusätzlich
+    // zum API-Key, damit Stage/Prod unabhängig schaltbar sind.
+    orgSync: () => optional("WORKOS_ORG_SYNC") === "on",
   },
 }

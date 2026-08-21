@@ -43,11 +43,29 @@ if (!orgId || !name || secretOnCli) {
 
 const existing = await getTenantByOrgId(orgId)
 if (existing) {
-  console.error(`Tenant für ${orgId} existiert bereits: ${existing.id} (${existing.displayName})`)
+  console.error(
+    `Tenant für ${orgId} existiert bereits: ${existing.id} (${existing.displayName}, ` +
+      `managed_by=${existing.managedBy}, active=${existing.active})`,
+  )
   process.exit(1)
 }
 
-const tenant = await createTenant({ workosOrgId: orgId, displayName: name })
+// Rennen gegen den Org-Sync (tenant-sync.ts) möglich: zwischen Check und
+// Insert kann der Sync die Zeile anlegen — dann freundlich melden statt
+// mit roher Unique-Violation zu sterben.
+let tenant
+try {
+  tenant = await createTenant({ workosOrgId: orgId, displayName: name })
+} catch (err) {
+  const raced = await getTenantByOrgId(orgId)
+  if (raced) {
+    console.error(
+      `Tenant für ${orgId} wurde parallel angelegt (managed_by=${raced.managedBy}) — nichts zu tun.`,
+    )
+    process.exit(1)
+  }
+  throw err
+}
 if (webhookSecret) await setWebhookSecret(tenant.id, webhookSecret)
 
 console.warn(

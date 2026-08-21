@@ -8,6 +8,13 @@
       "when": 1787042892620,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787309659054,
+      "tag": "0001_lyrical_preak",
+      "breakpoints": true
     }
   ]
 }
