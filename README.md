@@ -69,13 +69,14 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                | Beschreibung                                                 | Pflicht |
-| ----------------------- | ------------------------------------------------------------ | ------- |
-| `PORT`                  | Server-Port (default: 3020)                                  | nein    |
-| `DATABASE_URL`          | Postgres-URL (Dev-Default: docker-compose-DB)                | prod    |
-| `CREDENTIAL_KEYS`       | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)   | prod    |
-| `WORKOS_CLIENT_ID`      | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev). | prod    |
-| `VITE_WORKOS_CLIENT_ID` | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.  | prod    |
+| Variable                | Beschreibung                                                                                                          | Pflicht |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
+| `PORT`                  | Server-Port (default: 3020)                                                                                           | nein    |
+| `DATABASE_URL`          | Postgres-URL (Dev-Default: docker-compose-DB)                                                                         | prod    |
+| `CREDENTIAL_KEYS`       | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                            | prod    |
+| `WORKOS_CLIENT_ID`      | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                          | prod    |
+| `VITE_WORKOS_CLIENT_ID` | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                           | prod    |
+| `WORKOS_API_KEY`        | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant. | nein    |
 
 **Nur noch Seed-Input** (einmaliger Import beim allerersten Boot gegen eine
 leere DB — danach entfernen, siehe [`env.example`](./env.example)):
@@ -113,7 +114,10 @@ identifiziert den Mandanten direkt, alternativ zählt ein gültiges AuthKit-JWT
 Unauthentifiziertes `healthz` liefert nur noch Liveness; der volle Status
 braucht das Secret. Im Frontend bakt Vite `VITE_WORKOS_CLIENT_ID` ins Bundle
 und das `<AuthKitProvider>` macht Auth-Code-Flow mit PKCE; der
-Mandanten-Switcher im Header nutzt `switchToOrganization`. Im WorkOS-Dashboard
+Mandanten-Switcher im Header nutzt `switchToOrganization` und listet nur
+Mandanten, deren Org der User laut WorkOS-Membership-API tatsächlich angehört
+(`WORKOS_API_KEY`; ohne Key oder bei API-Fehlern nur den aktiven Mandanten —
+nie alle). Im WorkOS-Dashboard
 müssen Redirect-URI **und** Allowed-Origin auf die App-Origin gesetzt sein
 (z.B. `http://localhost:3000` für Dev, `https://<flyapp>` für Prod). Sind die
 WorkOS-Vars leer, läuft die App ohne Login mit einem lokalen Dev-Mandanten —
@@ -261,18 +265,22 @@ und — gegen eine leere DB — der einmalige Legacy-Seed. Laufzeit-Secrets:
 fly secrets set \
   DATABASE_URL="postgres://…" \
   CREDENTIAL_KEYS="1=$(openssl rand -base64 32)" \
-  WORKOS_CLIENT_ID=client_…
+  WORKOS_CLIENT_ID=client_… \
+  WORKOS_API_KEY=sk_…
 ```
 
-**Image-Build + Ausrollen:** Ein Push auf `main` baut
-`.github/workflows/deploy.yml` die Images und pusht sie nach
-`registry.fly.io/miranum-dimacon-sync` (prod) bzw.
+**Image-Build + Ausrollen (CI):** Ein Push auf `main` (oder manueller
+`workflow_dispatch`) baut `.github/workflows/deploy.yml` die Images, pusht
+sie nach `registry.fly.io/miranum-dimacon-sync` (prod) bzw.
 `registry.fly.io/miranum-dimacon-sync-stage` (stage), getaggt `latest` +
-Commit-SHA. Einen automatischen `fly deploy`-Schritt gibt es bewusst nicht —
-ausgerollt wird manuell auf **eine** Machine:
+Commit-SHA, und **deployt sie anschließend** (`flyctl deploy` mit der
+eingecheckten `fly.toml`, `--ha=false` = genau **eine** Machine — in-process
+Cron + Mutex). Voraussetzung: die Laufzeit-Secrets der App sind gesetzt,
+sonst verweigert der Produktions-Guard den Start und der Health-Check lässt
+den Deploy fehlschlagen. Manueller Fallback bleibt möglich:
 
 ```bash
-fly deploy -a <app> -i registry.fly.io/<app>:<git-sha>
+fly deploy -a <app> -i registry.fly.io/<app>:<git-sha> --ha=false
 ```
 
 **Rollout-Reihenfolge (Stage zuerst, dann Prod):**
@@ -306,9 +314,9 @@ prozesslokaler Mutex) — nicht auf 2 Machines skalieren.
 **⚠️ `VITE_WORKOS_CLIENT_ID` wird zur Build-Zeit ins Bundle gebakt** — ein
 Fly-Secret kann Frontend-Auth NICHT aktivieren. Der Deploy-Workflow
 (`.github/workflows/deploy.yml`) übergibt den Wert als
-Docker-Build-Arg aus den GitHub-Repository-Variablen `WORKOS_CLIENT_ID_PROD`
-bzw. `WORKOS_CLIENT_ID_STAGE` (Public-Client-ID, kein Secret — pro Umgebung
-ein eigener WorkOS-Client). Lokal: `docker build --build-arg
+Docker-Build-Arg aus den GitHub-**Secrets** `WORKOS_CLIENT_ID_PROD`
+bzw. `WORKOS_CLIENT_ID_STAGE` (inhaltlich eine Public-Client-ID; pro
+Umgebung ein eigener WorkOS-Client). Lokal: `docker build --build-arg
 VITE_WORKOS_CLIENT_ID=client_…`.
 
 WorkOS-Dashboard-Checkliste **pro Umgebung** (eigener Client für prod/stage):
@@ -317,4 +325,9 @@ WorkOS-Dashboard-Checkliste **pro Umgebung** (eigener Client für prod/stage):
   AuthKit nutzt standardmäßig `window.location.origin` als Redirect-Ziel.
 - Dieselbe Origin als Allowed Origin (CORS) eintragen.
 - Client-ID sowohl als Fly-Secret (`WORKOS_CLIENT_ID`, Backend/JWKS) als auch
-  als GitHub-Variable (`WORKOS_CLIENT_ID_*`, Frontend-Build) hinterlegen.
+  als GitHub-Secret (`WORKOS_CLIENT_ID_*`, Frontend-Build) hinterlegen.
+- Einen environment-scoped API-Key erzeugen (Dashboard → API Keys, `sk_…`)
+  und NUR als Fly-Secret setzen
+  (`fly secrets set -a miranum-dimacon-sync[-stage] WORKOS_API_KEY=sk_…`) —
+  nie als GitHub-Variable oder Build-Arg. Ohne den Key zeigt der
+  Mandanten-Switcher nur den aktiven Mandanten.
