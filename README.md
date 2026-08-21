@@ -29,6 +29,31 @@ TENANT_WEBHOOK_SECRET=<secret> pnpm exec tsx scripts/create-tenant.ts --org-id o
 und Prozessliste. Der `scripts/`-Ordner fährt im Docker-Image mit, damit die
 Anlage per `fly ssh console` funktioniert.)
 
+**Automatische Provisionierung (Org-Sync, optional):** Mit
+`WORKOS_API_KEY` + `WORKOS_ORG_SYNC=on` provisioniert die App WorkOS-Orgs
+selbst, denen das Feature-Flag **`dimacon-sync`** zugewiesen ist
+(WorkOS-Dashboard → Feature Flags → `dimacon-sync` → Org als Target; je
+Environment ein eigenes Flag-Targeting). PULL-only: ein Voll-Reconcile alle
+2 Minuten (`src/server/tenant-sync.ts`) — kein neuer HTTP-Endpoint, die
+Allowlist bleibt fail-closed. Semantik:
+
+- Flag setzen ⇒ Mandant erscheint in ≤ ~2,5 min (aktiv, `managed_by='workos-sync'`,
+  Name aus der Org; Umbenennungen werden nachgezogen).
+- Flag entfernen ⇒ Deaktivierung nach zwei **zeitlich getrennten** Läufen
+  ohne Flag (≈ ≤ 6 min; nie Löschung — Credentials/Zeitpläne überleben ein
+  Re-Onboarding).
+- Manuell angelegte Mandanten (`managed_by='manual'`) fasst der Sync NIE an;
+  ein Flag auf so einer Org ist wirkungslos (Warnung im Log).
+- **Not-Aus**: manuelles `active=false` per SQL wird vom Sync NICHT
+  rückgängig gemacht (er reaktiviert nur eigene Deaktivierungen).
+- Schutznetze: Abbruch bei unvollständiger/fremder Org-Liste (fängt u. a.
+  Stage/Prod-Key-Verwechslung); Circuit-Breaker — sind mehr als 2 (oder über
+  50 % der aktiven sync-Mandanten) Deaktivierungen fällig, wird der
+  **komplette Lauf abgebrochen (0 ausgeführt)** und bleibt abgebrochen, bis
+  jemand manuell prüft; Status in `app_meta['workos-org-sync']`;
+  Staleness-Alarm im Log nach 24 h ohne erfolgreichen Lauf. Empfehlung:
+  eigener WorkOS-API-Key nur für diese App (Rate-Limit-/Rotations-Isolation).
+
 Alle Konfiguration liegt tenant-gescoped in Postgres: **API-Zugangsdaten**
 (AES-256-GCM-verschlüsselt; Dimacon unter `/settings`, Clockin/Lexware in den
 Integrations-Einstellungen `/sync/<id>/settings`), **Schedules**,
@@ -69,14 +94,15 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                | Beschreibung                                                                                                          | Pflicht |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
-| `PORT`                  | Server-Port (default: 3020)                                                                                           | nein    |
-| `DATABASE_URL`          | Postgres-URL (Dev-Default: docker-compose-DB)                                                                         | prod    |
-| `CREDENTIAL_KEYS`       | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                            | prod    |
-| `WORKOS_CLIENT_ID`      | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                          | prod    |
-| `VITE_WORKOS_CLIENT_ID` | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                           | prod    |
-| `WORKOS_API_KEY`        | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant. | nein    |
+| Variable                | Beschreibung                                                                                                             | Pflicht |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `PORT`                  | Server-Port (default: 3020)                                                                                              | nein    |
+| `DATABASE_URL`          | Postgres-URL (Dev-Default: docker-compose-DB)                                                                            | prod    |
+| `CREDENTIAL_KEYS`       | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                               | prod    |
+| `WORKOS_CLIENT_ID`      | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                             | prod    |
+| `VITE_WORKOS_CLIENT_ID` | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                              | prod    |
+| `WORKOS_API_KEY`        | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.    | nein    |
+| `WORKOS_ORG_SYNC`       | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`). | nein    |
 
 **Nur noch Seed-Input** (einmaliger Import beim allerersten Boot gegen eine
 leere DB — danach entfernen, siehe [`env.example`](./env.example)):

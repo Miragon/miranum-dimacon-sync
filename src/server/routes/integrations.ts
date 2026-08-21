@@ -78,7 +78,11 @@ integrationsApiRoutes.get("/", async (c) => {
   return c.json(rows)
 })
 
-/** Für Status-Endpoints: Mandant nur bei gültigem Webhook-Secret (oder Dev). */
+/**
+ * Für Status-Endpoints: Mandant nur bei gültigem Webhook-Secret (oder Dev).
+ * Deaktivierte Mandanten liefern nur Liveness — findTenantBySecret filtert
+ * `active` bereits im SQL.
+ */
 export async function tenantForStatus(c: Context): Promise<Tenant | undefined> {
   const token = extractToken(c.req.header("authorization"), c.req.header("x-sync-token"))
   if (token) return findTenantBySecret(token)

@@ -24,6 +24,14 @@ export const tenants = pgTable(
     workosOrgId: text("workos_org_id").notNull(),
     displayName: text("display_name").notNull(),
     active: boolean("active").notNull().default(true),
+    // 'manual' | 'workos-sync' — der Org-Sync (tenant-sync.ts) fasst
+    // ausschließlich eigene Zeilen an; manuell angelegte Mandanten (inkl.
+    // org_dev) sind strukturell immun gegen Auto-Deaktivierung/-Rename.
+    managedBy: text("managed_by").notNull().default("manual"),
+    // Wer hat deaktiviert? Der Sync reaktiviert NUR 'workos-sync'-
+    // Deaktivierungen — ein manuelles active=false (Ops-Not-Aus) bleibt
+    // stehen, auch wenn das Feature-Flag der Org weiterhin gesetzt ist.
+    deactivatedBy: text("deactivated_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

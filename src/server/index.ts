@@ -10,6 +10,7 @@ import { env } from "./lib/env.js"
 import { formatError } from "./lib/errors.js"
 import { log } from "./lib/log.js"
 import { startScheduler, stopScheduler } from "./integrations/scheduler.js"
+import { startTenantSync, stopTenantSync } from "./tenant-sync.js"
 
 /**
  * Produktions-Guard: nie unauthentifiziert, nie ohne DB, nie ohne
@@ -57,6 +58,11 @@ startScheduler().catch((err) => {
   log.error("scheduler bootstrap failed", { error: formatError(err) })
 })
 
+// NACH Boot-Lock/Seed (Reihenfolge load-bearing: legt der Sync vor dem
+// Legacy-Seed Tenants an, wäre der Seed dauerhaft übersprungen) und
+// fire-and-forget — WorkOS-Verfügbarkeit ist keine Boot-Abhängigkeit.
+startTenantSync()
+
 const server = serve({ fetch: app.fetch, port: env.port }, ({ port }) => {
   console.warn(`server listening on http://localhost:${port}`)
 })
@@ -67,6 +73,7 @@ function shutdown(signal: string): void {
   shuttingDown = true
   log.info("shutting down", { signal })
   stopScheduler()
+  stopTenantSync()
   server.close(() => {
     void closeDb().finally(() => process.exit(0))
   })

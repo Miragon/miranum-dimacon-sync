@@ -44,7 +44,16 @@ validiert nur die Snapshot-Historie).
 - `org_id`-Claim des WorkOS-JWT → `tenants`-Zeile (`resolveTenant` in
   `src/server/lib/tenant.ts`, 30-s-Cache). Die Tabelle IST die
   Zugangs-Allowlist: **fail-closed, kein HTTP-Endpoint zur Tenant-Anlage** —
-  nur `scripts/create-tenant.ts` (bewusste Sicherheitsentscheidung).
+  nur `scripts/create-tenant.ts` (bewusste Sicherheitsentscheidung) oder der
+  optionale **Org-Sync** (`src/server/tenant-sync.ts`, `WORKOS_ORG_SYNC=on`):
+  PULL-only-Reconcile alle 2 min provisioniert Orgs mit Feature-Flag
+  `dimacon-sync`. Sync fasst NUR `managed_by='workos-sync'`-Zeilen an,
+  reaktiviert nur eigene Deaktivierungen (`deactivated_by`) — Ops-Not-Aus
+  (`active=false` per SQL) bleibt stehen; alle Sync-Mutationen sind CAS
+  (Guards in der WHERE-Klausel). Guards: Sanity-Check gegen fremde/
+  unvollständige Org-Listen, Circuit-Breaker (>2 bzw. >50 % fällige
+  Deaktivierungen ⇒ kompletter Lauf abgebrochen), 2 zeitlich getrennte
+  Bestätigungs-Läufe, Status in `app_meta['workos-org-sync']`.
 - Fehler-Codes der 403s: `NO_ORG` / `UNKNOWN_ORG` / `ORG_INACTIVE` — das
   Client-`TenantGate` matcht exakt darauf.
 - Auth aus (Dev): echte DB-Zeile `org_dev` via `getOrCreateDevTenant()`.

@@ -19,6 +19,8 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
     workosOrgId: "org_a",
     displayName: "A GmbH",
     active: true,
+    managedBy: "manual",
+    deactivatedBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
