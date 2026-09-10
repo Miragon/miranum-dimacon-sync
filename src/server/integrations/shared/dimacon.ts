@@ -78,7 +78,7 @@ export async function loadAppointments(
 export async function loadJobBundles(
   client: DimaconClient,
   jobIds: string[],
-  limit = createLimit(),
+  limit = createLimit("dimacon"),
 ): Promise<DimaconJobBundle[]> {
   return Promise.all(
     jobIds.map((jobId) =>
@@ -179,7 +179,7 @@ export async function loadAllCustomers(client: DimaconClient): Promise<DimaconCu
 export async function loadCustomersById(
   client: DimaconClient,
   customerIds: string[],
-  limit = createLimit(),
+  limit = createLimit("dimacon"),
 ): Promise<DimaconCustomerInfo[]> {
   return Promise.all(
     customerIds.map((customerId) =>

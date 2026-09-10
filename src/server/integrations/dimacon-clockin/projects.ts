@@ -1,6 +1,6 @@
 import { sdk as clockin } from "@miragon/client-clockin"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
-import { withRetry } from "../../lib/concurrency.js"
+import { NON_IDEMPOTENT_RETRY, withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
 import type { DimaconProjectInfo } from "./enrichment.js"
 import { projectSourceValues } from "../shared/field-catalog.js"
@@ -153,11 +153,15 @@ export class ProjectUpserter {
       }
     }
 
-    const created = (await withRetry(() =>
-      clockin.createProject({
-        client: this.client,
-        body: this.buildBody(date, project, customer, applied),
-      }),
+    const created = (await withRetry(
+      () =>
+        clockin.createProject({
+          client: this.client,
+          body: this.buildBody(date, project, customer, applied),
+        }),
+      // Anlage ist nicht idempotent (s. NON_IDEMPOTENT_RETRY): ein Retry nach
+      // serverseitig erfolgtem Insert legte ein zweites Projekt an.
+      NON_IDEMPOTENT_RETRY,
     )) as unknown as { data?: { id?: number } }
 
     const clockinId = created.data?.id

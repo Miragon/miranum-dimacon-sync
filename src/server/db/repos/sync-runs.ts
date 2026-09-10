@@ -79,7 +79,10 @@ export async function recordRun(record: RunRecord): Promise<void> {
     // Buffer.byteLength statt .length: UTF-16-Code-Units unterschätzen
     // Multi-Byte-Inhalte — das Cap soll echte Bytes begrenzen.
     if (result !== null && Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_RESULT_BYTES) {
-      result = { truncated: true }
+      // Die Lauf-Metrik überlebt die Kürzung: gerade die großen Läufe sind
+      // die interessanten, ihre Phasen-Timings dürfen nicht wegfallen.
+      const metrics = (record.result as { metrics?: unknown } | null | undefined)?.metrics
+      result = metrics === undefined ? { truncated: true } : { truncated: true, metrics }
     }
     await db.insert(syncRuns).values({
       tenantId: record.tenantId,

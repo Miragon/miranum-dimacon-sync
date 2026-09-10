@@ -30,7 +30,8 @@ export async function enrich(
   client: DimaconClient,
   jobIds: string[],
 ): Promise<EnrichedDimaconData> {
-  const limit = createLimit()
+  // Reine Dimacon-Reads ⇒ Parallelität dieses Systems (CONCURRENCY_DIMACON).
+  const limit = createLimit("dimacon")
 
   const jobsPromise = loadJobBundles(client, jobIds, limit)
 

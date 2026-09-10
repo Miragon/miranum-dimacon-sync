@@ -1,5 +1,6 @@
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
+import { withPhase } from "../../lib/metrics.js"
 import type { IntegrationRunContext } from "../types.js"
 import { loadAllCustomers } from "../shared/dimacon.js"
 import { loadMappingContext } from "../shared/mapping-context.js"
@@ -46,12 +47,14 @@ export async function runDimaconLexofficeSync(
   // aufgerufen — der Mandant braucht dafür keine Clockin-Credentials.
   let mapping: EntityMappingContext | undefined
   try {
-    const context = await loadMappingContext({
-      dimaconClient,
-      getClockinClient: () => ctx.clients.clockin(),
-      entities: ["lexofficeContact"],
-      getFieldMapping: ctx.getFieldMapping,
-    })
+    const context = await withPhase("mapping", () =>
+      loadMappingContext({
+        dimaconClient,
+        getClockinClient: () => ctx.clients.clockin(),
+        entities: ["lexofficeContact"],
+        getFieldMapping: ctx.getFieldMapping,
+      }),
+    )
     mapping = context.get("lexofficeContact")
   } catch (err) {
     const message = formatError(err)
@@ -76,7 +79,7 @@ export async function runDimaconLexofficeSync(
 
   let customers
   try {
-    customers = await loadAllCustomers(dimaconClient)
+    customers = await withPhase("customers", () => loadAllCustomers(dimaconClient))
   } catch (err) {
     const message = formatError(err)
     log.error("failed to load customers", { error: message })
@@ -108,7 +111,9 @@ export async function runDimaconLexofficeSync(
     return result(dryRun, steps, startedAt, rows, errors)
   }
 
-  const limit = createLimit()
+  // Jede Task fasst Lexware UND Dimacon an — maßgeblich ist das strengste
+  // beteiligte System (Lexware Office: 2 req/s laut Doku).
+  const limit = createLimit("lexoffice")
   const aligner = new CustomerAligner(
     dimaconClient,
     lexofficeClient,
@@ -120,23 +125,25 @@ export async function runDimaconLexofficeSync(
     { names: duplicateDimaconNames, numbers: duplicateDimaconNumbers },
   )
 
-  await Promise.all(
-    customers.map((customer) =>
-      limit(async () => {
-        try {
-          rows.push(await aligner.align(customer))
-        } catch (err) {
-          const message = formatError(err)
-          log.error("customer align failed", { dimaconCustomerId: customer.id, error: message })
-          errors.push({ scope: "customer", refId: customer.id, message })
-          rows.push({
-            dimaconCustomerId: customer.id,
-            name: customer.name,
-            status: "failed",
-            reason: message,
-          })
-        }
-      }),
+  await withPhase("align", () =>
+    Promise.all(
+      customers.map((customer) =>
+        limit(async () => {
+          try {
+            rows.push(await aligner.align(customer))
+          } catch (err) {
+            const message = formatError(err)
+            log.error("customer align failed", { dimaconCustomerId: customer.id, error: message })
+            errors.push({ scope: "customer", refId: customer.id, message })
+            rows.push({
+              dimaconCustomerId: customer.id,
+              name: customer.name,
+              status: "failed",
+              reason: message,
+            })
+          }
+        }),
+      ),
     ),
   )
 

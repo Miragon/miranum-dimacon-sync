@@ -8,7 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table"
-import { ResultSectionHead, Stat } from "./bits.js"
+import { MetricsSection, ResultSectionHead, Stat, type RunMetricsSnapshot } from "./bits.js"
 import { stepBadges } from "./step-badges.js"
 
 export interface ProjectSyncResult {
@@ -79,6 +79,8 @@ export interface SyncResult {
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
+  /** optional: ältere Läufe/Server liefern keine Metriken */
+  metrics?: RunMetricsSnapshot
 }
 
 const DIRECTION_LABELS: Record<EmployeeSyncRow["direction"], string> = {
@@ -132,6 +134,8 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
           )}
         </div>
       </section>
+
+      <MetricsSection metrics={result.metrics} />
 
       {result.employeeSync ? (
         <section className="mb-16">

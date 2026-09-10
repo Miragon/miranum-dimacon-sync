@@ -104,6 +104,42 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 | `VITE_WORKOS_API_HOSTNAME` | AuthKit-Custom-Domain (z. B. `auth.example.com`, build-time). Macht Session-/Refresh-Cookie First-Party. Leer = `api.workos.com`. | nein    |
 | `WORKOS_API_KEY`           | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.             | nein    |
 | `WORKOS_ORG_SYNC`          | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`).          | nein    |
+| `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`). Defaults: 10 / 5 / 2 Requests pro Sekunde.                     | nein    |
+| `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2.                                                                           | nein    |
+| `CONCURRENCY_<SYS>`        | Obergrenze paralleler Tasks je Lauf; maßgeblich ist das strengste beteiligte System. Defaults: 8 / 5 / 2.                         | nein    |
+
+### Rate-Limits & Laufzeit
+
+Jeder Lauf läuft in einem Metrik-Scope (`src/server/lib/metrics.ts`,
+AsyncLocalStorage): Dauer und Request-Zahl je Phase und Zielsystem landen im
+Log (`integration run metrics`) und als `metrics` im Ergebnis in
+`sync_runs.result` — sichtbar unter `/sync/<id>` und robust gegen die
+Größen-Kürzung großer Ergebnisse.
+
+Gedrosselt wird proaktiv: ein Token-Bucket **je (Mandant, System)**
+(`src/server/lib/rate-limit.ts`) hängt im Request-Interceptor der Clients
+(`src/server/lib/client-instrumentation.ts`), damit ein Mandant die anderen
+nicht ausbremst. Die Defaults sind bewusst konservativ (Lexware Office
+erlaubt laut Doku 2 Requests/Sekunde; die Limits von Dimacon und Clockin sind
+nicht dokumentiert) und über die Variablen oben übersteuerbar — die Metriken
+zeigen, ob mehr geht.
+
+Bei einem Fehler hängt der Error-Interceptor `status`, `statusText`,
+`retryAfterMs` und die (query-freie) URL an den geworfenen Fehler. Damit
+wartet `withRetry` genau den vom Server genannten `Retry-After`-Wert
+(gedeckelt auf 60 s) statt der früheren Pauschale von 20 s; ohne bzw. bei
+unbrauchbarem Header (`0`, negativ, Datum in der Vergangenheit) greift eine
+gestaffelte 5/10/20/30-s-Treppe mit Jitter. Ein 429 pausiert zusätzlich den
+ganzen Bucket dieses Systems.
+
+Zwei bewusste Ausnahmen von der Wiederholung, beide in
+`src/server/lib/concurrency.ts`: `NON_IDEMPOTENT_RETRY` an den `create*`-Aufrufen
+(ein 5xx kann NACH dem Insert kommen — der Retry legte eine Dublette an, also
+wird nur ein Rate-Limit wiederholt) und `NO_RATE_LIMIT_RETRY` an den
+Lexware-Lookups (der Lexware-Client wiederholt 429 selbst; ohne die Ausnahme
+werden aus einem logischen Aufruf ~20 HTTP-Calls). Weil diese client-internen
+Wiederholungen am Wrapper vorbeilaufen, zählt `requests.lexoffice` sie nicht
+mit — die Zahl ist die der logischen Aufrufe.
 
 **Nur noch Seed-Input** (einmaliger Import beim allerersten Boot gegen eine
 leere DB — danach entfernen, siehe [`env.example`](./env.example)):

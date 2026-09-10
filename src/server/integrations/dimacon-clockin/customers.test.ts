@@ -335,3 +335,62 @@ describe("CustomerSyncer (ohne Lexware)", () => {
     expect(mapping?.clockinId).toBe(42)
   })
 })
+
+describe("CustomerSyncer — Anlage ist nicht idempotent", () => {
+  /**
+   * LOAD-BEARING: der Error-Interceptor hängt inzwischen `status` an den
+   * Fehler, wodurch `isTransient` einen 5xx erkennt. Ohne
+   * NON_IDEMPOTENT_RETRY würde der POST bis zu 5-mal abgesetzt — bei einem
+   * 5xx NACH dem Insert stünden am Ende bis zu 5 Kunden in Clockin.
+   */
+  it("setzt den POST bei einem 5xx genau einmal ab", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    createCustomerMock.mockRejectedValue({ message: "Server Error", status: 500 })
+    const syncer = new CustomerSyncer(stubClient, silentLog, false)
+
+    await expect(syncer.resolve(customer)).rejects.toMatchObject({ status: 500 })
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("setzt den POST bei einem Verbindungsabbruch genau einmal ab", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    createCustomerMock.mockRejectedValue(
+      Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }),
+    )
+    const syncer = new CustomerSyncer(stubClient, silentLog, false)
+
+    await expect(syncer.resolve(customer)).rejects.toThrow("fetch failed")
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * Regressionsschutz für die Verdrahtung von NON_IDEMPOTENT_RETRY: Die
+ * Kunden-Anlage darf nach einem 5xx NICHT wiederholt werden — der Insert
+ * kann serverseitig bereits durchgelaufen sein und der Retry legt eine
+ * Dublette an. Ohne diesen Test bleibt ein Entfernen der Retry-Option stumm.
+ */
+describe("Retry-Verhalten der Kunden-Anlage", () => {
+  it("wiederholt createCustomer nach einem 5xx NICHT", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    createCustomerMock.mockRejectedValue(Object.assign(new Error("Server Error"), { status: 500 }))
+    const syncer = new CustomerSyncer(stubClient, silentLog, false)
+
+    await expect(syncer.resolve(customer)).rejects.toThrow()
+
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("wiederholt createCustomer bei einem Rate-Limit sehr wohl", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    createCustomerMock
+      .mockRejectedValueOnce(Object.assign(new Error("Too Many Attempts"), { status: 429 }))
+      .mockResolvedValue({ data: { id: 99 } })
+    const syncer = new CustomerSyncer(stubClient, silentLog, false)
+
+    const mapping = await syncer.resolve(customer)
+
+    expect(mapping?.clockinId).toBe(99)
+    expect(createCustomerMock).toHaveBeenCalledTimes(2)
+  }, 60_000)
+})

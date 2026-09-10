@@ -2,7 +2,7 @@ import { sdk as clockin } from "@miragon/client-clockin"
 import { sdk as dimacon } from "@miragon/client-dimacon"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
 import type { Client as DimaconClient } from "@miragon/client-dimacon"
-import { withRetry } from "../../../lib/concurrency.js"
+import { NON_IDEMPOTENT_RETRY, withRetry } from "../../../lib/concurrency.js"
 import type { Logger } from "../../../lib/log.js"
 import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
 import { employeeSourceValues } from "../../shared/field-catalog.js"
@@ -60,18 +60,22 @@ export class EmployeeSyncer {
     const applied = this.applyEmployeeMapping(e)
     // fillIfNonEmpty-Semantik: leere Werte fehlen im Body (Clockin validiert
     // z. B. phone_work als String — null wird abgelehnt).
-    const created = (await withRetry(() =>
-      clockin.createEmployee({
-        client: this.clockinClient,
-        body: {
-          ...applied.standardFields,
-          first_name: e.firstName,
-          last_name: e.lastName,
-          personnel_number: e.personnelNumber?.trim() || undefined,
-          email: e.email ?? null,
-          ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
-        } as EmployeeWriteBody,
-      }),
+    const created = (await withRetry(
+      () =>
+        clockin.createEmployee({
+          client: this.clockinClient,
+          body: {
+            ...applied.standardFields,
+            first_name: e.firstName,
+            last_name: e.lastName,
+            personnel_number: e.personnelNumber?.trim() || undefined,
+            email: e.email ?? null,
+            ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
+          } as EmployeeWriteBody,
+        }),
+      // Anlage ist nicht idempotent (s. NON_IDEMPOTENT_RETRY) — ein Retry
+      // nach erfolgtem Insert erzeugte einen zweiten Mitarbeiter.
+      NON_IDEMPOTENT_RETRY,
     )) as unknown as { data?: { id?: number } }
 
     return {
@@ -98,19 +102,22 @@ export class EmployeeSyncer {
       }
     }
 
-    const created = (await withRetry(() =>
-      dimacon.createNewEmployee({
-        client: this.dimaconClient,
-        body: {
-          firstName: c.firstName,
-          lastName: c.lastName,
-          role: "CRAFTSMAN",
-          personnelNumber: c.personnelNumber?.trim() || undefined,
-          phoneNumber: c.phoneWork,
-          color: DEFAULT_DIMACON_COLOR,
-          timeTrackingActive: true,
-        },
-      }),
+    const created = (await withRetry(
+      () =>
+        dimacon.createNewEmployee({
+          client: this.dimaconClient,
+          body: {
+            firstName: c.firstName,
+            lastName: c.lastName,
+            role: "CRAFTSMAN",
+            personnelNumber: c.personnelNumber?.trim() || undefined,
+            phoneNumber: c.phoneWork,
+            color: DEFAULT_DIMACON_COLOR,
+            timeTrackingActive: true,
+          },
+        }),
+      // s. o.: nicht idempotent.
+      NON_IDEMPOTENT_RETRY,
     )) as unknown as { id?: string }
 
     return {

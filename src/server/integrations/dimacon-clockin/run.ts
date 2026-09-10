@@ -2,6 +2,7 @@ import type { Client as DimaconClient } from "@miragon/client-dimacon"
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
 import type { Logger } from "../../lib/log.js"
+import { withPhase } from "../../lib/metrics.js"
 import type { IntegrationRunContext } from "../types.js"
 import { loadAllCustomers, loadAppointments } from "../shared/dimacon.js"
 import { FIELD_CATALOG } from "../shared/field-catalog.js"
@@ -44,12 +45,14 @@ export async function runDimaconClockinSync(
   // und entspricht exakt dem bisherigen Verhalten.
   let mappingContext: MappingContext
   try {
-    mappingContext = await loadMappingContext({
-      dimaconClient,
-      getClockinClient: () => clockinClient,
-      entities: ["project", "customer", "employee"],
-      getFieldMapping: ctx.getFieldMapping,
-    })
+    mappingContext = await withPhase("mapping", () =>
+      loadMappingContext({
+        dimaconClient,
+        getClockinClient: () => clockinClient,
+        entities: ["project", "customer", "employee"],
+        getFieldMapping: ctx.getFieldMapping,
+      }),
+    )
   } catch (err) {
     const message = formatError(err)
     // Safe-Mode: mit unklarer Zuordnung nichts schreiben — Auflösung,
@@ -84,13 +87,15 @@ export async function runDimaconClockinSync(
   let employeeSync: SyncResult["employeeSync"]
   let employeePairs: ReadonlyMap<string, number> = new Map()
   if (steps.employees) {
-    const outcome = await runEmployeeSync(
-      dimaconClient,
-      clockinClient,
-      employeeMapping,
-      { dryRun, createInDimacon: steps.employeeCreateInDimacon },
-      log,
-      onMappingWarning,
+    const outcome = await withPhase("employee-sync", () =>
+      runEmployeeSync(
+        dimaconClient,
+        clockinClient,
+        employeeMapping,
+        { dryRun, createInDimacon: steps.employeeCreateInDimacon },
+        log,
+        onMappingWarning,
+      ),
     )
     employeeSync = { counts: outcome.counts, rows: outcome.rows }
     employeePairs = outcome.pairs
@@ -103,7 +108,7 @@ export async function runDimaconClockinSync(
   // Phase 2: Tagesplanung
   let loaded
   try {
-    loaded = await loadAppointments(dimaconClient, date)
+    loaded = await withPhase("appointments", () => loadAppointments(dimaconClient, date))
   } catch (err) {
     const message = formatError(err)
     log.error("failed to load appointments", { error: message })
@@ -134,7 +139,7 @@ export async function runDimaconClockinSync(
 
   let enriched
   try {
-    enriched = await enrich(dimaconClient, loaded.jobIds)
+    enriched = await withPhase("enrich", () => enrich(dimaconClient, loaded.jobIds))
   } catch (err) {
     const message = formatError(err)
     log.error("enrichment failed", { error: message })
@@ -147,7 +152,9 @@ export async function runDimaconClockinSync(
   // taugt dafür NICHT: der gleichnamige Zwilling hat meist gerade keinen
   // Termin, wäre im Ausschnitt unsichtbar und der Fallback verknüpfte den
   // Kunden dauerhaft mit dem Clockin-Kunden des Zwillings.
-  const customerMatching = await loadCustomerMatching(dimaconClient, log, errors)
+  const customerMatching = await withPhase("customer-inventory", () =>
+    loadCustomerMatching(dimaconClient, log, errors),
+  )
 
   const onCustomerAmbiguous = (message: string) => {
     log.warn("ambiguous clockin customer", { message })
@@ -177,108 +184,120 @@ export async function runDimaconClockinSync(
     (clockinProjectId) => syncedClockinIds.add(clockinProjectId),
   )
 
-  const limit = createLimit()
+  // Die Projekt-Tasks schreiben nach Clockin (Dimacon ist zu diesem
+  // Zeitpunkt bereits geladen) — maßgeblich ist deshalb Clockin.
+  const limit = createLimit("clockin")
 
-  const projectTasks = [...enriched.jobs.values()].map((job) =>
-    limit(async () => {
-      const project = enriched.projects.get(job.projectId)
-      if (!project) {
-        const r: ProjectSyncResult = {
-          dimaconProjectId: job.projectId,
-          name: "(unknown)",
-          status: "skipped",
-          reason: "Projekt in Dimacon nicht gefunden",
+  // Die Tasks werden INNERHALB der Phase erzeugt: AsyncLocalStorage bindet
+  // den Kontext beim Anlegen des Callbacks — außerhalb erzeugte Tasks
+  // liefen an der Phasen-Zuordnung vorbei.
+  await withPhase("projects", () => {
+    const projectTasks = [...enriched.jobs.values()].map((job) =>
+      limit(async () => {
+        const project = enriched.projects.get(job.projectId)
+        if (!project) {
+          const r: ProjectSyncResult = {
+            dimaconProjectId: job.projectId,
+            name: "(unknown)",
+            status: "skipped",
+            reason: "Projekt in Dimacon nicht gefunden",
+          }
+          projects.push(r)
+          return
         }
-        projects.push(r)
-        return
-      }
 
-      const dimaconCustomer = enriched.customers.get(job.customerId)
-      if (!dimaconCustomer) {
-        projects.push({
-          dimaconProjectId: project.id,
-          name: project.name,
-          status: "skipped",
-          reason: "Kunde in Dimacon nicht gefunden",
-        })
-        return
-      }
-
-      let customerMapping: Awaited<ReturnType<typeof customerSyncer.resolve>> = null
-      try {
-        customerMapping = await customerSyncer.resolve(dimaconCustomer)
-      } catch (err) {
-        const message = formatError(err)
-        log.error("customer sync failed", { dimaconCustomerId: dimaconCustomer.id, error: message })
-        errors.push({ scope: "customer", refId: dimaconCustomer.id, message })
-        // NICHT abbrechen: der Upsert muss die Clockin-ID trotzdem auflösen,
-        // sonst archiviert die Archiv-Phase ein heute eingeplantes Projekt.
-      }
-
-      const desiredEmployeeIds: number[] = []
-      const dimaconEmployeeIds = steps.assignments
-        ? unique(
-            job.teamAssignments.filter((a) => a.date.startsWith(date)).map((a) => a.employeeId),
-          )
-        : []
-
-      for (const employeeId of dimaconEmployeeIds) {
-        const employee = enriched.employees.get(employeeId)
-        if (!employee) {
-          errors.push({
-            scope: "employee",
-            refId: employeeId,
-            message: "employee not in dimacon employee list",
+        const dimaconCustomer = enriched.customers.get(job.customerId)
+        if (!dimaconCustomer) {
+          projects.push({
+            dimaconProjectId: project.id,
+            name: project.name,
+            status: "skipped",
+            reason: "Kunde in Dimacon nicht gefunden",
           })
-          continue
+          return
         }
+
+        let customerMapping: Awaited<ReturnType<typeof customerSyncer.resolve>> = null
         try {
-          const mapping = await employeeMatcher.match(employee)
-          if (mapping) desiredEmployeeIds.push(mapping.clockinId)
-          else
+          customerMapping = await customerSyncer.resolve(dimaconCustomer)
+        } catch (err) {
+          const message = formatError(err)
+          log.error("customer sync failed", {
+            dimaconCustomerId: dimaconCustomer.id,
+            error: message,
+          })
+          errors.push({ scope: "customer", refId: dimaconCustomer.id, message })
+          // NICHT abbrechen: der Upsert muss die Clockin-ID trotzdem auflösen,
+          // sonst archiviert die Archiv-Phase ein heute eingeplantes Projekt.
+        }
+
+        const desiredEmployeeIds: number[] = []
+        const dimaconEmployeeIds = steps.assignments
+          ? unique(
+              job.teamAssignments.filter((a) => a.date.startsWith(date)).map((a) => a.employeeId),
+            )
+          : []
+
+        for (const employeeId of dimaconEmployeeIds) {
+          const employee = enriched.employees.get(employeeId)
+          if (!employee) {
             errors.push({
               scope: "employee",
               refId: employeeId,
-              message: `employee ${employee.firstName} ${employee.lastName} not matched in clockin`,
+              message: "employee not in dimacon employee list",
             })
+            continue
+          }
+          try {
+            const mapping = await employeeMatcher.match(employee)
+            if (mapping) desiredEmployeeIds.push(mapping.clockinId)
+            else
+              errors.push({
+                scope: "employee",
+                refId: employeeId,
+                message: `employee ${employee.firstName} ${employee.lastName} not matched in clockin`,
+              })
+          } catch (err) {
+            const message = formatError(err)
+            errors.push({ scope: "employee", refId: employeeId, message })
+          }
+        }
+
+        try {
+          const result = await upserter.upsert({
+            date,
+            project,
+            customer: customerMapping,
+            desiredEmployeeIds,
+          })
+          projects.push(result)
+          // Auch failed-Zeilen mit bekannter ID sind eingeplant — nie archivieren.
+          if (result.clockinProjectId !== undefined) {
+            syncedClockinIds.add(result.clockinProjectId)
+          }
         } catch (err) {
           const message = formatError(err)
-          errors.push({ scope: "employee", refId: employeeId, message })
+          log.error("project upsert failed", { dimaconProjectId: project.id, error: message })
+          errors.push({ scope: "project", refId: project.id, message })
+          projects.push({
+            dimaconProjectId: project.id,
+            name: project.name,
+            status: "failed",
+            reason: message,
+          })
         }
-      }
+      }),
+    )
 
-      try {
-        const result = await upserter.upsert({
-          date,
-          project,
-          customer: customerMapping,
-          desiredEmployeeIds,
-        })
-        projects.push(result)
-        // Auch failed-Zeilen mit bekannter ID sind eingeplant — nie archivieren.
-        if (result.clockinProjectId !== undefined) {
-          syncedClockinIds.add(result.clockinProjectId)
-        }
-      } catch (err) {
-        const message = formatError(err)
-        log.error("project upsert failed", { dimaconProjectId: project.id, error: message })
-        errors.push({ scope: "project", refId: project.id, message })
-        projects.push({
-          dimaconProjectId: project.id,
-          name: project.name,
-          status: "failed",
-          reason: message,
-        })
-      }
-    }),
-  )
-
-  await Promise.all(projectTasks)
+    return Promise.all(projectTasks)
+  })
 
   let archived: Awaited<ReturnType<typeof archiveUnplanned>> = []
   if (steps.archive) {
     try {
-      archived = await archiveUnplanned(clockinClient, syncedClockinIds, log, dryRun)
+      archived = await withPhase("archive", () =>
+        archiveUnplanned(clockinClient, syncedClockinIds, log, dryRun),
+      )
     } catch (err) {
       const message = formatError(err)
       log.error("archive phase failed", { error: message })

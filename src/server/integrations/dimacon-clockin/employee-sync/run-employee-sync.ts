@@ -179,7 +179,9 @@ export async function runEmployeeSync(
     })
   }
 
-  const limit = createLimit()
+  // Gemischte Tasks (Clockin- und Dimacon-Schreibzugriffe) — maßgeblich
+  // ist das strengere der beiden Systeme.
+  const limit = createLimit("clockin")
   const syncer = new EmployeeSyncer(
     dimaconClient,
     clockinClient,

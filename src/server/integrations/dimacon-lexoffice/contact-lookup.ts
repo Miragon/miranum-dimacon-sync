@@ -1,5 +1,5 @@
 import type { Client as LexofficeClient } from "@miragon/client-lexoffice"
-import { withRetry } from "../../lib/concurrency.js"
+import { NO_RATE_LIMIT_RETRY, withRetry } from "../../lib/concurrency.js"
 import { normalizeName } from "../shared/matching.js"
 
 export interface LexContact {
@@ -66,8 +66,11 @@ export class LexofficeContactLookup {
 
   /** Alle aktiven Kunden-Kontakte mit exakt dieser Kundennummer. */
   async byNumber(number: string): Promise<LexContact[]> {
-    const response = (await withRetry(() =>
-      this.client.get<LexContactsResponse>("/v1/contacts", { number, size: "250" }),
+    const response = (await withRetry(
+      () => this.client.get<LexContactsResponse>("/v1/contacts", { number, size: "250" }),
+      // Der Lexware-Client retryt 429 bereits selbst (bis zu 4 HTTP-Calls je
+      // Aufruf) — ohne NO_RATE_LIMIT_RETRY multipliziert sich das auf ~20.
+      NO_RATE_LIMIT_RETRY,
     )) as LexContactsResponse
     // Dem Filter wird nie vertraut: lokal gegen die Kundennummer verifizieren
     // (der Filter könnte auf die Lieferantennummer oder unscharf matchen).
@@ -90,12 +93,15 @@ export class LexofficeContactLookup {
     // der Default-Seitengröße 25 könnte der exakte Treffer auf Seite 2 liegen
     // und das Find-or-Create würde Duplikate anlegen. `customer=true` hält
     // reine Lieferanten schon serverseitig aus dieser Seite heraus.
-    const response = (await withRetry(() =>
-      this.client.get<LexContactsResponse>("/v1/contacts", {
-        name,
-        customer: "true",
-        size: "250",
-      }),
+    const response = (await withRetry(
+      () =>
+        this.client.get<LexContactsResponse>("/v1/contacts", {
+          name,
+          customer: "true",
+          size: "250",
+        }),
+      // s. byNumber: der 429-Retry gehört dem Lexware-Client allein.
+      NO_RATE_LIMIT_RETRY,
     )) as LexContactsResponse
     const wanted = normalizeName(name)
     // Dem Filter wird nie vertraut (analog byNumber): Rolle und Archiv-Status

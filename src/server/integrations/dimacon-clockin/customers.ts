@@ -1,6 +1,6 @@
 import { sdk as clockin } from "@miragon/client-clockin"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
-import { withRetry } from "../../lib/concurrency.js"
+import { NON_IDEMPOTENT_RETRY, withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
 import type { DimaconCustomerInfo } from "../shared/dimacon.js"
 import { customerSourceValues } from "../shared/field-catalog.js"
@@ -258,11 +258,15 @@ export class CustomerSyncer {
     }
 
     const body = this.buildCreateBody(customer, number)
-    const result = (await withRetry(() =>
-      clockin.createCustomer({
-        client: this.clockinClient,
-        body,
-      }),
+    const result = (await withRetry(
+      () =>
+        clockin.createCustomer({
+          client: this.clockinClient,
+          body,
+        }),
+      // Anlage ist nicht idempotent: ein 5xx NACH dem Insert würde beim
+      // Retry einen zweiten Kunden anlegen.
+      NON_IDEMPOTENT_RETRY,
     )) as unknown as { data?: { id?: number } }
 
     const id = result.data?.id

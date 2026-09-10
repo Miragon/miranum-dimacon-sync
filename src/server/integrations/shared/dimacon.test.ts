@@ -1,13 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const getAllEmployeesMock = vi.fn()
 const getAllUsersMock = vi.fn()
+const getCustomerByIdMock = vi.fn()
 
 vi.mock("@miragon/client-dimacon", () => ({
-  sdk: { getAllEmployees: getAllEmployeesMock, getAllUsers: getAllUsersMock },
+  sdk: {
+    getAllEmployees: getAllEmployeesMock,
+    getAllUsers: getAllUsersMock,
+    getCustomerById: getCustomerByIdMock,
+  },
 }))
 
-const { loadEmployeesWithEmail } = await import("./dimacon.js")
+const { loadCustomersById, loadEmployeesWithEmail } = await import("./dimacon.js")
 
 const stubClient = {} as never
 
@@ -95,5 +100,39 @@ describe("loadEmployeesWithEmail", () => {
 
     expect(employee.email).toBeUndefined()
     expect(employee.isArchived).toBe(true)
+  })
+})
+
+describe("Parallelität der Dimacon-Loader", () => {
+  afterEach(() => {
+    delete process.env.CONCURRENCY_DIMACON
+  })
+
+  /** Höchste Zahl gleichzeitig offener SDK-Aufrufe. */
+  async function peakInFlight(ids: string[]): Promise<number> {
+    let inFlight = 0
+    let peak = 0
+    getCustomerByIdMock.mockImplementation(async () => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise((r) => setTimeout(r, 0))
+      inFlight--
+      return { id: "c" }
+    })
+    await loadCustomersById(stubClient, ids)
+    return peak
+  }
+
+  const ids = Array.from({ length: 30 }, (_, i) => `c-${i}`)
+
+  it("nutzt den Dimacon-Default statt der globalen 3", async () => {
+    // Regressionsschutz gegen `createLimit()` ohne System — sonst wäre
+    // CONCURRENCY_DIMACON (README, env.example) wirkungslose Konfiguration.
+    expect(await peakInFlight(ids)).toBe(8)
+  })
+
+  it("folgt dem Env-Override CONCURRENCY_DIMACON", async () => {
+    process.env.CONCURRENCY_DIMACON = "2"
+    expect(await peakInFlight(ids)).toBe(2)
   })
 })

@@ -154,3 +154,43 @@ describe("LexofficeContactLookup.byName", () => {
     expect(await lookup.byName("Muster GmbH")).toEqual([])
   })
 })
+
+describe("LexofficeContactLookup — Rate-Limit", () => {
+  /**
+   * Der Lexware-Client wiederholt einen 429 bereits selbst (MAX_RETRIES = 3
+   * ⇒ bis zu 4 HTTP-Calls) und wirft dann `Lexoffice API 429: …` — ohne
+   * `status`-Feld und ohne garantierte Throttle-Phrase im Body. Ohne
+   * NO_RATE_LIMIT_RETRY legte unser withRetry 5 Versuche obendrauf: ~20
+   * HTTP-Calls und Minuten Wartezeit je logischem Lookup.
+   */
+  const throttled = () => ({
+    get: vi.fn().mockRejectedValue(new Error('Lexoffice API 429: {"message":"blockiert"}')),
+  })
+
+  it("wiederholt einen 429 in byNumber nicht selbst", async () => {
+    const client = throttled()
+    const lookup = new LexofficeContactLookup(client as never)
+
+    await expect(lookup.byNumber("1001")).rejects.toThrow("429")
+    expect(client.get).toHaveBeenCalledTimes(1)
+  })
+
+  it("wiederholt einen 429 in byName nicht selbst", async () => {
+    const client = throttled()
+    const lookup = new LexofficeContactLookup(client as never)
+
+    await expect(lookup.byName("Muster GmbH")).rejects.toThrow("429")
+    expect(client.get).toHaveBeenCalledTimes(1)
+  })
+
+  it("wiederholt einen Verbindungsabbruch weiterhin (Lookups sind idempotent)", async () => {
+    const get = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }))
+      .mockResolvedValue({ content: [] })
+    const lookup = new LexofficeContactLookup({ get } as never)
+
+    expect(await lookup.byNumber("1001")).toEqual([])
+    expect(get).toHaveBeenCalledTimes(2)
+  })
+})

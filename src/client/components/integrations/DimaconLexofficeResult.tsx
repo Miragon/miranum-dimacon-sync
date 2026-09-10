@@ -8,7 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table"
-import { ResultSectionHead, Stat } from "./bits.js"
+import { MetricsSection, ResultSectionHead, Stat, type RunMetricsSnapshot } from "./bits.js"
 
 export interface CustomerAlignRow {
   dimaconCustomerId: string
@@ -32,6 +32,8 @@ export interface CustomerSyncResult {
   steps?: { createContacts: boolean; alignNumbers: boolean }
   customers: CustomerAlignRow[]
   errors: CustomerSyncError[]
+  /** optional: ältere Läufe/Server liefern keine Metriken */
+  metrics?: RunMetricsSnapshot
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -81,6 +83,8 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
           )}
         </div>
       </section>
+
+      <MetricsSection metrics={result.metrics} />
 
       {result.customers.length > 0 ? (
         <section className="mb-16">
