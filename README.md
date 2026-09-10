@@ -124,11 +124,18 @@ bei Verlust müssen alle Mandanten ihre Tokens neu eintragen.
 
 **Scheduler:** Jede Integration hat je Mandant einen eigenen Cron (enabled,
 Ausdruck, Timezone), persistent in Postgres (`schedule_settings`), editierbar
-im Zeitplan-Tab der Integrations-Einstellungen (`/sync/<id>/settings`). Geplante Läufe fahren den **kompletten**
-Schritt-Satz — beim `dimacon-clockin`-Cron also auch den
+im Zeitplan-Tab der Integrations-Einstellungen (`/sync/<id>/settings`).
+Geplante Läufe fahren den **gespeicherten Umfang** aus
+`schedule_settings.run_defaults` (Tab „Umfang", `?tab=umfang`) — leer heißt
+weiterhin „alle Schritte, live", beim `dimacon-clockin`-Cron also inklusive
 Live-Mitarbeiter-Abgleich (ohne die per Default abgeschaltete Anlage in
-Dimacon). Deaktivierte Mandanten und fehlende Zugangsdaten
-werden zur Feuerzeit geprüft (Lauf wird übersprungen, Warnung im Log).
+Dimacon). Das **Datum wird nie persistiert** (geplante Läufe sind immer
+„heute"), der Umfang wird zur Feuerzeit gelesen (kein Cron-Restart nötig).
+Sind gespeicherte Defaults ungültig (z. B. nach einer Schema-Änderung), wird
+der Lauf **fail-closed übersprungen** statt mit vollem Umfang zu feuern —
+`scheduled run skipped: invalid stored run defaults` im Log. Deaktivierte
+Mandanten und fehlende Zugangsdaten werden zur Feuerzeit geprüft (Lauf wird
+übersprungen, Warnung im Log).
 
 **Auth (WorkOS):** Wenn `WORKOS_CLIENT_ID` gesetzt ist, schützt eine
 JWT-Middleware alle `/api/*`-Routes (außer den `run`/`healthz`-Endpoints unter
@@ -217,10 +224,18 @@ eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 Secret oder AuthKit-JWT, Liste hinter Auth):
 
 ```bash
-# Übersicht aller Integrationen (Auth)
+# Übersicht aller Integrationen (Auth, inkl. gespeichertem Umfang)
 curl http://localhost:3020/api/integrations
 
-# On-Demand-Lauf (kein Body = heute, dryRun=false)
+# Run-Historie einer Integration (Auth, tenant-gescopt, ?limit=1..50)
+curl http://localhost:3020/api/integrations/dimacon-clockin/runs
+
+# Gespeicherten Umfang setzen (Auth) — gilt für Cron, UI und Webhook
+curl -X PUT http://localhost:3020/api/settings/integrations/dimacon-clockin/run-defaults \
+  -H "Content-Type: application/json" \
+  -d '{ "runDefaults": { "dryRun": false, "steps": { "employees": false } } }'
+
+# On-Demand-Lauf (kein Body = heute + gespeicherter Umfang)
 curl -X POST http://localhost:3020/api/integrations/dimacon-clockin/run
 
 # Mit Datum + dryRun (nur dimacon-clockin kennt `date`)
@@ -242,14 +257,16 @@ curl http://localhost:3020/api/integrations/dimacon-clockin/healthz
 ```
 
 `POST /api/sync/run` + `GET /api/sync/healthz` bleiben als **Legacy-Alias** für
-`dimacon-clockin` erhalten. **Achtung**: ein Aufruf ohne Body führt den
-kompletten Schritt-Satz aus — inklusive des **Live-Mitarbeiter-Abgleichs**
-(legt in Clockin fehlende Mitarbeiter dort an). Bestehende Webhooks/Crons, die
-nur die Tagesplanung wollen, müssen `{ "steps": { "employees": false } }`
-mitschicken. Die Anlage in **Dimacon** läuft dabei nicht mehr mit: sie ist seit
-Issue #17 per Default aus und muss mit
-`{ "steps": { "employeeCreateInDimacon": true } }` ausdrücklich angefordert
-werden.
+`dimacon-clockin` erhalten. **Achtung**: ein Aufruf ohne Body fährt den
+**gespeicherten Umfang** des Mandanten; ist keiner gesetzt, ist das wie bisher
+der komplette Schritt-Satz inklusive **Live-Mitarbeiter-Abgleich** (legt in
+Clockin fehlende Mitarbeiter dort an). Ein mitgeschickter Body überschreibt den
+gespeicherten Umfang feldweise (`steps` wird eine Ebene tief gemerged, gilt nur
+für diesen Lauf) — nur Tagesplanung also weiterhin mit
+`{ "steps": { "employees": false } }`, dauerhaft besser über den Umfang-Tab.
+Die Anlage in **Dimacon** läuft nicht mit: sie ist seit Issue #17 per Default
+aus und muss mit `{ "steps": { "employeeCreateInDimacon": true } }` bzw. im
+Umfang-Tab ausdrücklich angefordert werden.
 
 Scheduling: pro (Mandant, Integration) im Zeitplan-Tab der
 Integrations-Einstellungen (`/sync/<id>/settings`, Zahnrad in der
@@ -259,6 +276,19 @@ Cron-Feld) und übersetzt client-seitig nach Cron — persistiert wird weiter
 der Cron-String in Postgres (`schedule_settings`), PUT auf
 `/api/settings/integrations/:id` restartet den jeweiligen Cron hot.
 Fachliche Spezifikation der Tagesplanung: `.context/attachments/SKILL.md`.
+
+**Umfang (Run-Defaults):** Im Tab „Umfang" der Integrations-Einstellungen
+(`/sync/<id>/settings?tab=umfang`) wird festgelegt, welche Schritte laufen und
+ob dauerhaft `dryRun` gilt — persistiert als `schedule_settings.run_defaults`
+(jsonb, je Mandant + Integration), serverseitig gegen das `inputSchema` der
+Integration validiert und normalisiert gespeichert. Der Wert gilt für **alle**
+Auslöser (Cron, manuelles Formular, Webhook); das manuelle Formular ist damit
+vorbelegt, Abweichungen dort gelten nur für den einzelnen Lauf. Ein Datum wird
+nie gespeichert. Weil normalisiert (expandiert) gespeichert wird, wirken
+spätere Änderungen an den Schema-Defaults nicht mehr auf bereits
+konfigurierte Mandanten. `GET /api/integrations/:id/runs` liefert die letzten
+Läufe (Auslöser, Modus, Umfang, Status) — dieselbe Tabelle steht unter
+`/sync/<id>` unter dem Ergebnis.
 
 **Feld-Zuordnung:** Im Tab „Feld-Zuordnung" der Integrations-Einstellungen
 (`/sync/<id>/settings?tab=mapping`) lässt sich per Drag & Drop

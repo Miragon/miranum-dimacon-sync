@@ -1,39 +1,42 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { CredentialCard } from "#/components/credentials/CredentialCard"
+import { RunDefaultsCard } from "#/components/integrations/RunDefaultsCard"
 import { ScheduleCard, type ScheduleEntry } from "#/components/integrations/ScheduleCard"
 import { MappingPanel } from "#/components/mapping/MappingPanel"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { readJson, useApiFetch } from "#/lib/api"
 import { CREDENTIAL_SYSTEMS, EMPTY_STATUS, type CredentialStatus } from "#/lib/credentials"
 import type { IntegrationInfo } from "#/lib/integrations"
+import { RUN_SCOPE_SPECS } from "#/lib/run-scope"
 
-export type SettingsTab = "zeitplan" | "zugangsdaten" | "mapping"
+export type SettingsTab = "zeitplan" | "umfang" | "zugangsdaten" | "mapping"
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   zeitplan: "Zeitplan",
+  umfang: "Umfang",
   zugangsdaten: "Zugangsdaten",
   mapping: "Feld-Zuordnung",
 }
+
+const TAB_VALUES: SettingsTab[] = ["zeitplan", "umfang", "zugangsdaten", "mapping"]
 
 export const Route = createFileRoute("/sync_/$integrationId/settings")({
   // Tab lebt in der URL (?tab=…) — Reload/Deep-Link behalten die Auswahl.
   // Optional getypt, damit Links ohne search-Prop gültig bleiben; das
   // Default (zeitplan) zieht die Komponente.
   validateSearch: (search: Record<string, unknown>): { tab?: SettingsTab } => ({
-    tab:
-      search.tab === "zugangsdaten" || search.tab === "mapping" || search.tab === "zeitplan"
-        ? (search.tab as SettingsTab)
-        : undefined,
+    tab: TAB_VALUES.includes(search.tab as SettingsTab) ? (search.tab as SettingsTab) : undefined,
   }),
   component: IntegrationSettingsPage,
 })
 
 /**
  * Einstellungen EINER Integration, erreichbar über das Zahnrad in der
- * /sync-Übersicht: Tabs für Zeitplan, integrationsspezifische Zugangsdaten
- * (ohne Dimacon — das gemeinsame Quellsystem liegt zentral unter /settings)
- * und die eingebettete Feld-Zuordnung.
+ * /sync-Übersicht: Tabs für Zeitplan, Umfang (persistenter Sync-Umfang für
+ * ALLE Auslöser), integrationsspezifische Zugangsdaten (ohne Dimacon — das
+ * gemeinsame Quellsystem liegt zentral unter /settings) und die eingebettete
+ * Feld-Zuordnung.
  */
 function IntegrationSettingsPage() {
   const { integrationId } = Route.useParams()
@@ -111,10 +114,15 @@ function IntegrationSettingsPage() {
     (s) => s.id !== "dimacon" && info.systems.includes(s.id),
   )
 
-  const tabs: SettingsTab[] = info.mappable
-    ? ["zeitplan", "zugangsdaten", "mapping"]
-    : ["zeitplan", "zugangsdaten"]
-  // mapping-Tab per URL bei nicht-mappbarer Integration → auf Zeitplan zurück.
+  // Umfang-Tab nur für Integrationen mit konfigurierbarem Umfang
+  // (Konvention wie mappable): kein leerer Tab für fremde Inputs.
+  const tabs: SettingsTab[] = [
+    "zeitplan",
+    ...(info.id in RUN_SCOPE_SPECS ? (["umfang"] as SettingsTab[]) : []),
+    "zugangsdaten",
+    ...(info.mappable ? (["mapping"] as SettingsTab[]) : []),
+  ]
+  // Nicht verfügbarer Tab per URL → auf Zeitplan zurück.
   const activeTab: SettingsTab = tab && tabs.includes(tab) ? tab : "zeitplan"
 
   return (
@@ -123,7 +131,7 @@ function IntegrationSettingsPage() {
         <span className="mn-mono">/sync/{info.id}/settings · einstellungen</span>
         <h1 className="text-h-1 text-ink mt-4">Einstellungen</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[540px]">
-          Zeitplan, Zugangsdaten und Feld-Zuordnung für{" "}
+          Zeitplan, Umfang, Zugangsdaten und Feld-Zuordnung für{" "}
           <strong className="text-ink">{info.name}</strong>.
         </p>
         <p className="mt-4">
@@ -165,6 +173,24 @@ function IntegrationSettingsPage() {
         ) : (
           <p className="text-ink-3 font-mono text-xs tracking-[0.18em] uppercase">
             zeitplan konnte nicht geladen werden
+          </p>
+        )
+      ) : null}
+
+      {activeTab === "umfang" ? (
+        // Gleiche Wache wie beim Zeitplan — und hier besonders wichtig: ohne
+        // geladenen Umfang würde der Editor die Schema-Defaults („alles an,
+        // live") als gespeicherten Stand anzeigen und beim Speichern einen
+        // bewusst reduzierten Umfang überschreiben.
+        schedule ? (
+          <RunDefaultsCard
+            integrationId={info.id}
+            runDefaults={schedule.runDefaults}
+            onSaved={setSchedule}
+          />
+        ) : (
+          <p className="text-ink-3 font-mono text-xs tracking-[0.18em] uppercase">
+            umfang konnte nicht geladen werden
           </p>
         )
       ) : null}

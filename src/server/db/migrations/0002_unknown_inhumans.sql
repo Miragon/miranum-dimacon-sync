@@ -1,0 +1,1 @@
+ALTER TABLE "schedule_settings" ADD COLUMN "run_defaults" jsonb DEFAULT '{}'::jsonb NOT NULL;

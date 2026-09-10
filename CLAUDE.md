@@ -94,14 +94,19 @@ Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
 - `/modules` — Die 3 angebundenen Systeme mit Konfigurations-Status des
   aktiven Mandanten aus `GET /api/systems`
 - `/sync` — Integrations-Übersicht (Tabelle aller Integrationen mit Status)
-- `/sync/$integrationId` — Detail: Run-Form (Datum, dryRun) + Result-View;
+- `/sync/$integrationId` — Detail: Run-Form (Datum, dryRun, Schritte —
+  vorbelegt aus dem gespeicherten Umfang) + Result-View + Run-Historie;
   unbekannte Integrationen bekommen einen JSON-Fallback-Renderer
 - `/settings` — zentral: Dimacon-Zugangsdaten + Linkliste zu den
   Integrations-Einstellungen
 - `/sync/$integrationId/settings` — je Integration, erreichbar über das
   Zahnrad in der /sync-Tabelle (einziger Nav-Einstieg): Tab-Menü
-  Zeitplan | Zugangsdaten (Zielsystem) | Feld-Zuordnung (eingebetteter
-  Editor); aktiver Tab als Search-Param `?tab=…`. Der Zeitplan-Editor ist
+  Zeitplan | Umfang | Zugangsdaten (Zielsystem) | Feld-Zuordnung
+  (eingebetteter Editor); aktiver Tab als Search-Param `?tab=…`. Der
+  Umfang-Tab erscheint nur für Integrationen mit Eintrag in
+  `RUN_SCOPE_SPECS` (`src/client/lib/run-scope.ts` — Single Source of Truth
+  für Step-Labels, Warnhinweise und Step-Defaults im Client).
+  Der Zeitplan-Editor ist
   Picker-basiert (Täglich mit Uhrzeit + Mo–So-Chips | Intervall aus
   kuratierten Teilern von 60/24 | Experte = rohes Cron-Feld) und übersetzt
   client-seitig nach Cron (`src/client/lib/schedule-cron.ts`); nicht
@@ -129,7 +134,9 @@ registriert in `integrations/registry.ts`. `run(ctx, input)` bekommt den
 Factory, `ctx.getFieldMapping`, `ctx.log`) — Integrations-Code kennt weder DB
 noch Env-Vars; Tests bauen ctx von Hand. Damit automatisch: Mutex je
 (Mandant, Integration) (`runIntegration` → 409), Cron-Slots je Mandant,
-Run-Historie (`sync_runs`, letzte 50 je Mandant+Integration, keine UI bisher),
+Run-Historie (`sync_runs`, letzte 50 je Mandant+Integration; `GET
+/api/integrations/:id/runs` liegt auf dem AUTHENTIFIZIERTEN Router und speist
+die Tabelle unter `/sync/<id>` mit Auslöser/Modus/Umfang),
 Routen `/api/integrations/:id/{run,healthz}` + Eintrag in `/sync`/`/settings`.
 `requiredCredentials` (System-IDs) steuert den „konfiguriert"-Status je
 Mandant (kein Crash — Run liefert 503 mit `missing`). Der
@@ -151,7 +158,18 @@ optional, ohne Registrierung greifen Defaults:
 
 Scheduler-Settings: `schedule_settings` (PK tenant+integration). PUT auf
 `/api/settings/integrations/:id` validiert + restartet den Cron des Mandanten
-hot. Feld-Zuordnungen: `field_mappings` (PK tenant+integration+entity),
+hot. **Run-Umfang**: `schedule_settings.run_defaults` (jsonb) hält je
+(Mandant, Integration) den persistenten Umfang; PUT auf
+`/api/settings/integrations/:id/run-defaults` validiert generisch gegen
+`def.inputSchema` und speichert normalisiert — **kein Cron-Restart**, der
+Scheduler liest zur Feuerzeit. Regeln (alle in
+`src/server/integrations/run-input.ts`): `date` wird NIE persistiert (Cron =
+immer heute); der Request-Body wird ÜBER die Defaults gemerged (top-level
+gewinnt, `steps` eine Ebene tief) — Abweichungen gelten nur für den einen
+Lauf; ungültige gespeicherte Defaults sind **fail-closed** (Cron überspringt
+mit `log.error`, ausgelöste Läufe bekommen 400) statt auf die Schema-Defaults
+(= alles an, live) zurückzufallen. `updateScheduleSettings` fasst
+`run_defaults` bewusst nicht an und umgekehrt. Feld-Zuordnungen: `field_mappings` (PK tenant+integration+entity),
 editierbar im Feld-Zuordnungs-Tab der Integrations-Einstellungen
 (`/sync/<id>/settings?tab=mapping`) via `/api/mappings/:id[/:entity]`.
 Katalog/Engine in `src/server/integrations/shared/field-{catalog,mapping}.ts`;

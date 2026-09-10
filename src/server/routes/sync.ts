@@ -9,9 +9,11 @@ import { handleIntegrationRun, tenantForStatus } from "./integrations.js"
  * (`POST /api/sync/run` mit dem Mandanten-Webhook-Secret) und Status-Checks
  * (`GET /api/sync/healthz`) erreichen weiter dieselbe Integration — der Seed
  * importiert das alte SYNC_WEBHOOK_SECRET als Secret des ersten Mandanten,
- * bestehende Caller laufen also unverändert. ACHTUNG: ohne Body läuft der
- * komplette Schritt-Satz inklusive Live-Mitarbeiter-Abgleich; nur
- * Tagesplanung = `{ "steps": { "employees": false } }`.
+ * bestehende Caller laufen also unverändert. ACHTUNG: ohne Body gilt der
+ * gespeicherte Umfang aus `/sync/<id>/settings?tab=umfang` (leer = alle
+ * Schritte inklusive Live-Mitarbeiter-Abgleich, wie bisher); ein
+ * mitgeschickter Body überschreibt ihn feldweise (`steps` eine Ebene tief),
+ * nur Tagesplanung = `{ "steps": { "employees": false } }`.
  * Neue Consumer nutzen `/api/integrations/dimacon-clockin/...`.
  */
 const LEGACY_ID = "dimacon-clockin"

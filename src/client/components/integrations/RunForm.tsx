@@ -1,13 +1,17 @@
+import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import type { ComponentType } from "react"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
+import { readScope, RUN_SCOPE_SPECS } from "#/lib/run-scope"
 
 export interface RunFormProps {
   running: boolean
   disabled: boolean
   onRun: (input: unknown) => void
+  /** Gespeicherter Umfang des Mandanten — belegt Modus + Schritte vor. */
+  defaults?: Record<string, unknown>
 }
 
 /**
@@ -67,49 +71,59 @@ function CheckBox({
   )
 }
 
-function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
-  const [date, setDate] = useState<string>(todayISO())
-  const [dryRun, setDryRun] = useState<boolean>(true)
-  const [employees, setEmployees] = useState<boolean>(true)
-  const [customers, setCustomers] = useState<boolean>(true)
-  const [projects, setProjects] = useState<boolean>(true)
-  const [assignments, setAssignments] = useState<boolean>(true)
-  const [archive, setArchive] = useState<boolean>(true)
-  // Anlage Clockin → Dimacon ist bewusst per Default aus (Issue #17)
-  const [createInDimacon, setCreateInDimacon] = useState<boolean>(false)
+function DimaconClockinRunForm(props: RunFormProps) {
+  return <ScopeRunForm {...props} integrationId="dimacon-clockin" withDate />
+}
 
-  // Alle zutreffenden Hinweise anzeigen — die Mitarbeiter-Warnung darf nie
-  // von anderen Schritt-Kombinationen verdrängt werden (Massen-Writes!).
-  const hints = [
-    employees &&
-      "Der Mitarbeiter-Abgleich läuft über den gesamten Bestand beider Systeme — ein Live-Lauf legt in Clockin fehlende Mitarbeiter dort an.",
-    employees &&
-      createInDimacon &&
-      "Legt Clockin-Mitarbeiter in Dimacon an: nur mit Personalnummer, ohne Team (danach in Dimacon zuweisen); mehrdeutige und namensähnliche Kandidaten werden gemeldet statt angelegt.",
-    !projects &&
-      "Es werden keine Projekte angelegt oder aktualisiert — nur Abgleich/Zuordnung/Archivierung.",
-    !customers && projects && "Neue Projekte ohne vorhandenen Clockin-Kunden werden übersprungen.",
-  ].filter((h): h is string => Boolean(h))
+function DimaconLexofficeRunForm(props: RunFormProps) {
+  return <ScopeRunForm {...props} integrationId="dimacon-lexoffice" />
+}
+
+/**
+ * Formular für alle Integrationen mit konfigurierbarem Umfang
+ * (RUN_SCOPE_SPECS): Modus + Schritte kommen aus dem gespeicherten Umfang,
+ * Abweichungen gelten nur für diesen Lauf. Das Datum wird NIE vorbelegt —
+ * ein manueller Lauf ist immer „heute", solange nichts anderes gewählt ist.
+ */
+function ScopeRunForm({
+  integrationId,
+  withDate,
+  running,
+  disabled,
+  onRun,
+  defaults,
+}: RunFormProps & { integrationId: string; withDate?: boolean }) {
+  const spec = RUN_SCOPE_SPECS[integrationId]
+  // Lazy: der gespeicherte Umfang ist die Startbelegung, danach gehört der
+  // Zustand dem Formular (Abweichungen gelten nur für diesen Lauf).
+  const [initial] = useState(() => readScope(integrationId, defaults, { dryRunFallback: true }))
+  const [date, setDate] = useState<string>(todayISO())
+  const [dryRun, setDryRun] = useState<boolean>(initial.dryRun)
+  const [steps, setSteps] = useState<Record<string, boolean>>(initial.steps)
+
+  const hints = spec.hints(steps)
 
   return (
     <div className="border-rule space-y-6 border p-6">
       <div className="flex flex-wrap items-end gap-6">
-        <div className="w-[180px]">
-          <Label htmlFor="run-date">Datum</Label>
-          <Input
-            id="run-date"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="mt-2"
-            disabled={running}
-          />
-        </div>
+        {withDate ? (
+          <div className="w-[180px]">
+            <Label htmlFor="run-date">Datum</Label>
+            <Input
+              id="run-date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="mt-2"
+              disabled={running}
+            />
+          </div>
+        ) : null}
         <div>
           <Label>Modus</Label>
           <div className="mt-2">
             <CheckBox
-              id="run-dry"
+              id={`${integrationId}-dry`}
               label="dry-run (nur loggen)"
               checked={dryRun}
               onChange={setDryRun}
@@ -119,20 +133,7 @@ function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
         </div>
         <div className="ml-auto">
           <Button
-            onClick={() =>
-              onRun({
-                date,
-                dryRun,
-                steps: {
-                  employees,
-                  customers,
-                  projects,
-                  assignments,
-                  archive,
-                  employeeCreateInDimacon: createInDimacon,
-                },
-              })
-            }
+            onClick={() => onRun({ ...(withDate ? { date } : {}), dryRun, steps })}
             disabled={running || disabled}
             variant={dryRun ? "default" : "accent"}
           >
@@ -143,48 +144,16 @@ function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
       <div>
         <Label>Schritte</Label>
         <div className="mt-2 flex flex-wrap gap-3">
-          <CheckBox
-            id="step-employees"
-            label="Mitarbeiter-Abgleich (⇄ Stammdaten)"
-            checked={employees}
-            onChange={setEmployees}
-            disabled={running}
-          />
-          <CheckBox
-            id="step-employee-create-dimacon"
-            label="Mitarbeiter in Dimacon anlegen"
-            checked={createInDimacon}
-            onChange={setCreateInDimacon}
-            disabled={running || !employees}
-          />
-          <CheckBox
-            id="step-customers"
-            label="Kunden anlegen"
-            checked={customers}
-            onChange={setCustomers}
-            disabled={running}
-          />
-          <CheckBox
-            id="step-projects"
-            label="Projekte anlegen/aktualisieren"
-            checked={projects}
-            onChange={setProjects}
-            disabled={running}
-          />
-          <CheckBox
-            id="step-assignments"
-            label="Mitarbeiter-Zuordnung"
-            checked={assignments}
-            onChange={setAssignments}
-            disabled={running}
-          />
-          <CheckBox
-            id="step-archive"
-            label="Archivierung"
-            checked={archive}
-            onChange={setArchive}
-            disabled={running}
-          />
+          {spec.steps.map((step) => (
+            <CheckBox
+              key={step.key}
+              id={`${integrationId}-step-${step.key}`}
+              label={step.label}
+              checked={Boolean(steps[step.key])}
+              onChange={(v) => setSteps((prev) => ({ ...prev, [step.key]: v }))}
+              disabled={running || (step.requires ? !steps[step.requires] : false)}
+            />
+          ))}
         </div>
         {hints.length > 0 ? (
           <div className="mt-3 max-w-[520px] space-y-1">
@@ -195,74 +164,27 @@ function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
             ))}
           </div>
         ) : null}
-      </div>
-    </div>
-  )
-}
-
-function DimaconLexofficeRunForm({ running, disabled, onRun }: RunFormProps) {
-  const [dryRun, setDryRun] = useState<boolean>(true)
-  const [createContacts, setCreateContacts] = useState<boolean>(true)
-  const [alignNumbers, setAlignNumbers] = useState<boolean>(true)
-
-  const hint = !createContacts
-    ? "Nur Abgleich — es werden keine Lexware-Kontakte angelegt."
-    : "Läuft über den gesamten Dimacon-Kundenbestand — ein Live-Lauf legt fehlende Lexware-Kontakte an."
-
-  return (
-    <div className="border-rule space-y-6 border p-6">
-      <div className="flex flex-wrap items-end gap-6">
-        <div>
-          <Label>Modus</Label>
-          <div className="mt-2">
-            <CheckBox
-              id="lex-dry"
-              label="dry-run (nur loggen)"
-              checked={dryRun}
-              onChange={setDryRun}
-              disabled={running}
-            />
-          </div>
-        </div>
-        <div className="ml-auto">
-          <Button
-            onClick={() => onRun({ dryRun, steps: { createContacts, alignNumbers } })}
-            disabled={running || disabled}
-            variant={dryRun ? "default" : "accent"}
+        <p className="text-ink-3 mt-3 font-mono text-[0.7rem] leading-relaxed">
+          Vorbelegt aus dem gespeicherten Umfang — Abweichungen gelten nur für diesen Lauf.{" "}
+          <Link
+            to="/sync/$integrationId/settings"
+            params={{ integrationId }}
+            search={{ tab: "umfang" }}
+            className="text-ink-2 hover:text-ink underline underline-offset-4"
           >
-            {running ? "läuft …" : dryRun ? "Dry-Run starten" : "Run starten"}
-          </Button>
-        </div>
-      </div>
-      <div>
-        <Label>Schritte</Label>
-        <div className="mt-2 flex flex-wrap gap-3">
-          <CheckBox
-            id="lex-step-contacts"
-            label="Lexware-Kontakte anlegen"
-            checked={createContacts}
-            onChange={setCreateContacts}
-            disabled={running}
-          />
-          <CheckBox
-            id="lex-step-align"
-            label="Kundennummern angleichen"
-            checked={alignNumbers}
-            onChange={setAlignNumbers}
-            disabled={running}
-          />
-        </div>
-        <p className="text-ink-3 mt-3 max-w-[520px] font-mono text-[0.7rem] leading-relaxed">
-          {hint}
+            umfang dauerhaft ändern →
+          </Link>
         </p>
       </div>
     </div>
   )
 }
 
-function DateDryRunForm({ running, disabled, onRun }: RunFormProps) {
+function DateDryRunForm({ running, disabled, onRun, defaults }: RunFormProps) {
   const [date, setDate] = useState<string>(todayISO())
-  const [dryRun, setDryRun] = useState<boolean>(true)
+  const [dryRun, setDryRun] = useState<boolean>(
+    typeof defaults?.dryRun === "boolean" ? defaults.dryRun : true,
+  )
 
   return (
     <div className="border-rule flex flex-wrap items-end gap-6 border p-6">

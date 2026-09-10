@@ -24,6 +24,48 @@ export interface RunRecord {
   finishedAt: Date
 }
 
+/** Zeile der Run-Historie — bewusst OHNE `result` (jsonb-Größe). */
+export interface RunSummary {
+  id: string
+  trigger: RunTrigger
+  status: "running" | "success" | "error"
+  dryRun: boolean
+  input: unknown
+  error: string | null
+  startedAt: Date
+  durationMs: number | null
+}
+
+/** Obergrenze der Historie-Abfrage — passt zur Retention (KEEP_RUNS). */
+const MAX_LIST_LIMIT = 50
+
+/**
+ * Run-Historie eines (Mandant, Integration)-Slots, neueste zuerst.
+ * LOAD-BEARING: tenant-gescopt — Läufe sind Mandantendaten.
+ */
+export async function listRuns(
+  tenantId: string,
+  integrationId: string,
+  limit = 20,
+): Promise<RunSummary[]> {
+  const rows = await getDb()
+    .select({
+      id: syncRuns.id,
+      trigger: syncRuns.trigger,
+      status: syncRuns.status,
+      dryRun: syncRuns.dryRun,
+      input: syncRuns.input,
+      error: syncRuns.error,
+      startedAt: syncRuns.startedAt,
+      durationMs: syncRuns.durationMs,
+    })
+    .from(syncRuns)
+    .where(and(eq(syncRuns.tenantId, tenantId), eq(syncRuns.integrationId, integrationId)))
+    .orderBy(sql`${syncRuns.startedAt} DESC`)
+    .limit(Math.min(Math.max(1, limit), MAX_LIST_LIMIT))
+  return rows
+}
+
 /**
  * Persistiert einen abgeschlossenen Lauf + Retention (letzte 50 je
  * (Mandant, Integration) — beide DELETE-Klauseln tenant-gescopt, sonst

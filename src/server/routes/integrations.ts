@@ -5,13 +5,15 @@ import { AUTH_UNAVAILABLE_MESSAGE, isAuthConfigured, verifyAccessToken } from ".
 import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import { getCachedTenantByOrgId, type AppEnv } from "../lib/tenant.js"
+import { getRunDefaults } from "../db/repos/schedules.js"
 import { getOrCreateDevTenant, type Tenant } from "../db/repos/tenants.js"
 import { findTenantBySecret, touchLastUsed } from "../db/repos/webhook-secrets.js"
-import type { RunTrigger } from "../db/repos/sync-runs.js"
+import { listRuns, type RunTrigger } from "../db/repos/sync-runs.js"
 import { buildRunContext } from "../integrations/context.js"
 import { isRunning, SyncBusyError } from "../integrations/mutex.js"
 import { MAPPABLE_ENTITIES } from "../integrations/shared/field-catalog.js"
 import { getIntegration, integrations, runIntegration } from "../integrations/registry.js"
+import { resolveRunInput } from "../integrations/run-input.js"
 import { getNextRun, isCronActive } from "../integrations/scheduler.js"
 import { isConfigured, missingCredentials } from "../integrations/types.js"
 import type { IntegrationDefinition } from "../integrations/types.js"
@@ -74,10 +76,25 @@ integrationsApiRoutes.get("/", async (c) => {
         nextRun: getNextRun(tenant.id, def.id),
         // Single Source of Truth für den „Erweitert"-Link im Client
         mappable: def.id in MAPPABLE_ENTITIES,
+        // Gespeicherter Run-Umfang — belegt das manuelle Formular vor.
+        runDefaults: await getRunDefaults(tenant.id, def.id),
       }
     }),
   )
   return c.json(rows)
+})
+
+/**
+ * Run-Historie einer Integration (neueste zuerst). Bewusst auf dem
+ * AUTHENTIFIZIERTEN Router: Läufe sind Mandantendaten — `listRuns` selektiert
+ * zusätzlich tenant-gescopt.
+ */
+integrationsApiRoutes.get("/:id/runs", async (c) => {
+  const def = getIntegration(c.req.param("id"))
+  if (!def) return c.json({ error: "unknown integration" }, 404)
+  const raw = Number(c.req.query("limit"))
+  const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.trunc(raw), 50) : 20
+  return c.json(await listRuns(c.get("tenant").id, def.id, limit))
 })
 
 /**
@@ -154,14 +171,17 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
     return c.json({ error: "integration not configured", missing }, 503)
   }
 
-  const raw = await safeJson(c.req.raw)
-  const parsed = def.inputSchema.safeParse(raw)
-  if (!parsed.success) {
-    return c.json({ error: "invalid input", details: parsed.error.flatten() }, 400)
+  // Request-Body ÜBER den gespeicherten Umfang legen: ohne Body gilt der
+  // gespeicherte Umfang (leer = alles an, wie bisher), Abweichungen im Body
+  // gelten nur für diesen Lauf. Reihenfolge (Auth → active →
+  // missingCredentials → Input) bleibt unverändert.
+  const resolved = await resolveRunInput(def, tenant.id, await safeJson(c.req.raw))
+  if (!resolved.ok) {
+    return c.json({ error: resolved.error, details: resolved.details }, 400)
   }
 
   try {
-    const result = await runIntegration(def, buildRunContext(def, tenant, trigger), parsed.data)
+    const result = await runIntegration(def, buildRunContext(def, tenant, trigger), resolved.input)
     return c.json(result)
   } catch (err) {
     if (err instanceof SyncBusyError) {
