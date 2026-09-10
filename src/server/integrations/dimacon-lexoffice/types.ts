@@ -20,7 +20,20 @@ export const CustomerSyncInputSchema = z.object({
 
 export type CustomerSyncInput = z.infer<typeof CustomerSyncInputSchema>
 
-export type CustomerAlignStatus = "created" | "aligned" | "unchanged" | "skipped" | "failed"
+/**
+ * `ambiguous` (mehrere gleichwertige Kandidaten) und `conflict` (die
+ * Nummernstufe ist unbrauchbar — Nummer trifft einen fremden Kontakt oder die
+ * Nummernsuche ist ausgefallen) sind garantiert schreibfrei: weder
+ * Kontakt-Anlage noch Rückschreiben der Kundennummer nach Dimacon.
+ */
+export type CustomerAlignStatus =
+  | "created"
+  | "aligned"
+  | "unchanged"
+  | "ambiguous"
+  | "conflict"
+  | "skipped"
+  | "failed"
 
 export interface CustomerAlignRow {
   dimaconCustomerId: string

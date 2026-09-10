@@ -143,7 +143,8 @@ export const FIELD_CATALOG: Record<MappingEntity, EntityCatalog> = {
       { field: "note", label: "Notiz", dataType: "text" },
     ],
     lockedPairs: [
-      // company.name ist der De-facto-Match-Key des Find-or-Create per Name —
+      // company.name ist die zweite Stufe der Kunden-Auflösung (hinter der
+      // Kundennummer) und damit weiter ein Match-Key des Find-or-Create —
       // remappbar würde jeder Lauf unauffindbare Duplikate erzeugen.
       { sourceLabel: "Name", targetField: "company.name", note: "match-key" },
       { sourceLabel: "immer Kundenrolle", targetField: "roles.customer", note: "system" },

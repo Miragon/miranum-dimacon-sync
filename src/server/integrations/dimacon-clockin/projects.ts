@@ -30,7 +30,10 @@ type ProjectWriteBody = NonNullable<Parameters<typeof clockin.createProject>[0]>
 export interface UpsertInput {
   date: string
   project: DimaconProjectInfo
-  /** null, wenn der Kunden-Schritt deaktiviert ist und der Kunde in Clockin fehlt */
+  /**
+   * null, wenn der Kunde in Clockin nicht aufgelöst wurde — Kunden-Schritt
+   * deaktiviert, Suche fehlgeschlagen oder mehrdeutige Kandidaten.
+   */
   customer: CustomerMapping | null
   desiredEmployeeIds: number[]
 }
@@ -242,7 +245,7 @@ export class ProjectUpserter {
 
     const changed = canWriteFields || needsBareUnarchive || toAdd.length > 0 || toRemove.length > 0
     const reason = skippedFieldUpdate
-      ? "Feld-Update übersprungen: Kunde nicht aufgelöst (Kunden-Schritt deaktiviert)"
+      ? "Feld-Update übersprungen: Kunde in Clockin nicht aufgelöst"
       : undefined
 
     if (this.dryRun) {

@@ -32,7 +32,11 @@ const clockinClientStub = { kind: "clockin" }
 const dimaconClientStub = { kind: "dimacon" }
 
 const loadAppointmentsMock = vi.fn()
-vi.mock("../shared/dimacon.js", () => ({ loadAppointments: loadAppointmentsMock }))
+const loadAllCustomersMock = vi.fn()
+vi.mock("../shared/dimacon.js", () => ({
+  loadAppointments: loadAppointmentsMock,
+  loadAllCustomers: loadAllCustomersMock,
+}))
 
 const enrichMock = vi.fn()
 vi.mock("./enrichment.js", () => ({ enrich: enrichMock }))
@@ -123,6 +127,10 @@ beforeEach(() => {
   vi.resetAllMocks()
 
   loadAppointmentsMock.mockResolvedValue(loadedAppointments())
+  // Gesamtbestand = der eine Tageskunde: keine Namens-Duplikate
+  loadAllCustomersMock.mockResolvedValue([
+    { id: "cust-1", customerNumber: "D-100", name: "Muster GmbH" },
+  ])
   enrichMock.mockResolvedValue(enrichedData())
   // Leerer Kontext → run.ts fällt auf die Default-Zuordnung zurück
   loadMappingContextMock.mockResolvedValue(new Map())
@@ -208,6 +216,84 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     // ... und die Archiv-Phase bekommt sie als geschützt gemeldet
     expect(archiveUnplannedMock).toHaveBeenCalledTimes(1)
     expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
+  })
+
+  it("still protects the resolved project id when the customer match is ambiguous", async () => {
+    // Zwei unscharfe Treffer ohne exakten Match ⇒ weder verknüpfen noch anlegen.
+    searchForCustomersMock.mockResolvedValue({
+      data: [
+        { id: 8, company: "Muster Bau GmbH", identifier: "D-1000" },
+        { id: 9, company: "Muster Nord GmbH", identifier: "D-1001" },
+      ],
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "customer",
+        message: expect.stringContaining("2 Clockin-Kandidaten"),
+      }),
+    )
+    expect(createCustomerMock).not.toHaveBeenCalled()
+    // Der Upsert löst die Clockin-ID trotz offener Kunden-Zuordnung auf ...
+    expect(result.projects).toHaveLength(1)
+    expect(result.projects[0].clockinProjectId).toBe(CLOCKIN_PROJECT_ID)
+    // ... und die Archiv-Phase bekommt sie als geschützt gemeldet
+    expect(archiveUnplannedMock).toHaveBeenCalledTimes(1)
+    expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
+  })
+
+  it("detects duplicate customer names in the full dimacon inventory, not just the day slice", async () => {
+    // Zwilling 1001 hat heute KEINEN Termin — im Tagesausschnitt wäre die
+    // Namensdublette unsichtbar und der Namens-Fallback verknüpfte den
+    // heutigen Kunden 1002 dauerhaft mit dem Clockin-Kunden des Zwillings.
+    loadAllCustomersMock.mockResolvedValue([
+      { id: "cust-1", customerNumber: "1002", name: "Erdbau Friedberg GmbH" },
+      { id: "cust-9", customerNumber: "1001", name: "Erdbau Friedberg GmbH" },
+    ])
+    enrichMock.mockResolvedValue({
+      ...enrichedData(),
+      customers: new Map([
+        ["cust-1", { id: "cust-1", customerNumber: "1002", name: "Erdbau Friedberg GmbH" }],
+      ]),
+    })
+    searchForCustomersMock.mockImplementation(async (req: unknown) => {
+      const needle = (req as { body: { scopes: { parameters: string[] }[] } }).body.scopes[0]
+        .parameters[0]
+      // Nur der Zwilling steht in Clockin — die Nummernsuche 1002 geht leer aus
+      return needle === "Erdbau Friedberg GmbH"
+        ? { data: [{ id: 7, company: "Erdbau Friedberg GmbH", identifier: "1001" }] }
+        : { data: [] }
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    // Namens-Fallback gesperrt ⇒ nur die Nummernsuche, danach eigener Kunde
+    expect(searchForCustomersMock).toHaveBeenCalledTimes(1)
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+    expect(createCustomerMock.mock.calls[0][0]).toMatchObject({
+      body: { company: "Erdbau Friedberg GmbH", identifier: "1002" },
+    })
+    expect(result.errors).toEqual([])
+  })
+
+  it("disables the name fallback when the dimacon customer inventory fails to load", async () => {
+    // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
+    loadAllCustomersMock.mockRejectedValue(new Error("boom 400"))
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "customer",
+        message: expect.stringContaining("Namens-Fallback"),
+      }),
+    )
+    // Fail-closed: kein zweiter (Namens-)Lookup, stattdessen eigener Kunde
+    expect(searchForCustomersMock).toHaveBeenCalledTimes(1)
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
   })
 
   it("skips the archive phase entirely when steps.archive is disabled", async () => {

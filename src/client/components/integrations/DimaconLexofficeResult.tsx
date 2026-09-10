@@ -15,7 +15,7 @@ export interface CustomerAlignRow {
   name: string
   lexwareContactId?: string
   lexwareNumber?: string
-  status: "created" | "aligned" | "unchanged" | "skipped" | "failed"
+  status: "created" | "aligned" | "unchanged" | "ambiguous" | "conflict" | "skipped" | "failed"
   reason?: string
 }
 
@@ -62,7 +62,17 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
                   </MnStatusBadge>
                 ))
             : null}
-          {(["created", "aligned", "unchanged", "skipped", "failed"] as const).map((s) =>
+          {(
+            [
+              "created",
+              "aligned",
+              "unchanged",
+              "ambiguous",
+              "conflict",
+              "skipped",
+              "failed",
+            ] as const
+          ).map((s) =>
             counts[s] > 0 ? (
               <MnStatusBadge key={s} variant={badgeVariant(s)}>
                 {s} · {counts[s]}
@@ -124,7 +134,8 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
 
 function badgeVariant(status: CustomerAlignRow["status"]): "default" | "ok" | "warn" {
   if (status === "created" || status === "aligned") return "ok"
-  if (status === "failed" || status === "skipped") return "warn"
+  // ambiguous/conflict: bewusst nichts geschrieben — braucht eine Entscheidung
+  if (status !== "unchanged") return "warn"
   return "default"
 }
 
@@ -133,6 +144,8 @@ function countByStatus(rows: CustomerAlignRow[]): Record<CustomerAlignRow["statu
     created: 0,
     aligned: 0,
     unchanged: 0,
+    ambiguous: 0,
+    conflict: 0,
     skipped: 0,
     failed: 0,
   }

@@ -1,14 +1,18 @@
+import type { Client as DimaconClient } from "@miragon/client-dimacon"
 import { createLimit } from "../../lib/concurrency.js"
 import { formatError } from "../../lib/errors.js"
+import type { Logger } from "../../lib/log.js"
 import type { IntegrationRunContext } from "../types.js"
-import { loadAppointments } from "../shared/dimacon.js"
+import { loadAllCustomers, loadAppointments } from "../shared/dimacon.js"
 import { FIELD_CATALOG } from "../shared/field-catalog.js"
 import { EMPTY_DISCOVERY } from "../shared/field-mapping.js"
 import { loadMappingContext } from "../shared/mapping-context.js"
 import type { EntityMappingContext, MappingContext } from "../shared/mapping-context.js"
+import { duplicateKeys, normalizeName } from "../shared/matching.js"
 import { todayInBerlin } from "../shared/time.js"
 import { archiveUnplanned } from "./archive.js"
 import { CustomerSyncer } from "./customers.js"
+import type { CustomerMatchingContext } from "./customers.js"
 import { runEmployeeSync } from "./employee-sync/run-employee-sync.js"
 import { EmployeeMatcher } from "./employees.js"
 import { enrich } from "./enrichment.js"
@@ -138,6 +142,18 @@ export async function runDimaconClockinSync(
     return result(date, dryRun, steps, startedAt, loaded.counts, employeeSync, projects, [], errors)
   }
 
+  // Gesamtbestand der Dimacon-Kunden für den Namens-Fallback (ein Aufruf,
+  // wie ihn der dimacon-lexoffice-Lauf ohnehin macht). Der Tagesausschnitt
+  // taugt dafür NICHT: der gleichnamige Zwilling hat meist gerade keinen
+  // Termin, wäre im Ausschnitt unsichtbar und der Fallback verknüpfte den
+  // Kunden dauerhaft mit dem Clockin-Kunden des Zwillings.
+  const customerMatching = await loadCustomerMatching(dimaconClient, log, errors)
+
+  const onCustomerAmbiguous = (message: string) => {
+    log.warn("ambiguous clockin customer", { message })
+    errors.push({ scope: "customer", message })
+  }
+
   const employeeMatcher = new EmployeeMatcher(clockinClient, log, employeePairs)
   const customerSyncer = new CustomerSyncer(
     clockinClient,
@@ -146,6 +162,8 @@ export async function runDimaconClockinSync(
     steps.customers,
     customerMapping_,
     onMappingWarning,
+    customerMatching,
+    onCustomerAmbiguous,
   )
   const upserter = new ProjectUpserter(
     clockinClient,
@@ -312,6 +330,42 @@ function result(
     projects,
     archived,
     errors,
+  }
+}
+
+/**
+ * Lädt den Dimacon-Kundenbestand und leitet daraus die Absicherung des
+ * Namens-Fallbacks ab. Fail-closed bei Ladefehler: ohne Gesamtbestand ist der
+ * Fallback nicht absicherbar und entfällt (`inventoryLoaded: false`) — der
+ * Lauf legt dann eher einen sichtbaren Clockin-Kunden zu viel an, als still
+ * auf den falschen zu buchen.
+ */
+async function loadCustomerMatching(
+  dimaconClient: DimaconClient,
+  log: Logger,
+  errors: SyncError[],
+): Promise<CustomerMatchingContext> {
+  try {
+    const all = await loadAllCustomers(dimaconClient)
+    const knownCustomerNumbers = new Set(
+      all.map((c) => normalizeName(c.customerNumber)).filter((n) => n !== ""),
+    )
+    const duplicateNames = duplicateKeys(all, (c) => c.name)
+    log.info("dimacon customer inventory loaded", {
+      customers: all.length,
+      duplicateNames: duplicateNames.size,
+    })
+    return { duplicateNames, knownCustomerNumbers, inventoryLoaded: true }
+  } catch (err) {
+    const message = formatError(err)
+    log.error("failed to load dimacon customer inventory — name fallback disabled", {
+      error: message,
+    })
+    errors.push({
+      scope: "customer",
+      message: `Dimacon-Kundenbestand konnte nicht geladen werden — Namens-Fallback für diesen Lauf deaktiviert (${message})`,
+    })
+    return { duplicateNames: new Set(), knownCustomerNumbers: new Set(), inventoryLoaded: false }
   }
 }
 

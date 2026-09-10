@@ -4,6 +4,7 @@ import type { IntegrationRunContext } from "../types.js"
 import { loadAllCustomers } from "../shared/dimacon.js"
 import { loadMappingContext } from "../shared/mapping-context.js"
 import type { EntityMappingContext } from "../shared/mapping-context.js"
+import { duplicateKeys } from "../shared/matching.js"
 import { CustomerAligner } from "./aligner.js"
 import { DEFAULT_LEXOFFICE_STEPS } from "./types.js"
 import type {
@@ -83,7 +84,24 @@ export async function runDimaconLexofficeSync(
     return result(dryRun, steps, startedAt, rows, errors)
   }
 
-  log.info("customers loaded", { customers: customers.length })
+  // Gleichnamige bzw. gleichnummerierte Dimacon-Kunden VORAB erkennen: für
+  // sie ist der jeweilige Schlüssel wertlos. Ohne diesen Vorab-Check würden
+  // zwei gleichnamige Kunden parallel (p-limit) denselben Kontakt greifen
+  // oder zwei Kontakte anlegen.
+  const duplicateDimaconNames = duplicateKeys(customers, (c) => c.name)
+  const duplicateDimaconNumbers = duplicateKeys(customers, (c) => c.customerNumber)
+
+  log.info("customers loaded", {
+    customers: customers.length,
+    duplicateNames: duplicateDimaconNames.size,
+    duplicateNumbers: duplicateDimaconNumbers.size,
+  })
+  if (duplicateDimaconNames.size > 0 || duplicateDimaconNumbers.size > 0) {
+    log.warn("gleichnamige bzw. gleichnummerierte dimacon-kunden", {
+      names: duplicateDimaconNames.size,
+      numbers: duplicateDimaconNumbers.size,
+    })
+  }
 
   if (customers.length === 0) {
     log.info("no customers in dimacon — nothing to sync")
@@ -99,6 +117,7 @@ export async function runDimaconLexofficeSync(
     steps,
     mapping,
     onMappingWarning,
+    { names: duplicateDimaconNames, numbers: duplicateDimaconNumbers },
   )
 
   await Promise.all(
