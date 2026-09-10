@@ -14,6 +14,10 @@ FROM base AS build
 # Laufzeit kann Auth im Frontend NICHT aktivieren, nur dieses Build-Arg.
 ARG VITE_WORKOS_CLIENT_ID=""
 ENV VITE_WORKOS_CLIENT_ID=${VITE_WORKOS_CLIENT_ID}
+# Optionale AuthKit-Custom-Domain (First-Party-Cookies). Leer = heutiges
+# Verhalten (api.workos.com) — ebenfalls nur build-time setzbar.
+ARG VITE_WORKOS_API_HOSTNAME=""
+ENV VITE_WORKOS_API_HOSTNAME=${VITE_WORKOS_API_HOSTNAME}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build

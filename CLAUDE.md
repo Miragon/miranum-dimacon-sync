@@ -210,3 +210,34 @@ UI-Fetches gehen über `useApiFetch()` in `src/client/lib/api.ts` (Bearer-Header
 401 → PKCE-Neustart). Mandanten-Switcher im `UserMenu` nutzt
 `switchToOrganization` + Hard-Reload; seine Liste kommt aus dem
 membership-gefilterten `/api/tenants` (s. Mandanten-Modell).
+**Session-Robustheit (load-bearing):** `useApiFetch()` liefert den von
+`createApiFetch()` gebauten Fetch — bei 401 EIN deduplizierter
+Force-Refresh (Single-Flight, sonst überschreiben sich die PKCE-Verifier)
+plus genau ein Retry. Ein 401 löst KEINEN Redirect mehr aus, sondern den
+`sessionExpired`-Zustand des AuthGate (Overlay, Redirect erst auf Klick,
+Formular-State überlebt). Die **Identität von `apiFetch` muss stabil
+bleiben** — Consumer hängen sie in `useEffect`-Deps, also darf
+`sessionExpired` nie in die `useMemo`-Deps von `auth`/`apiFetch`.
+Ebenfalls load-bearing: `isSessionTerminal()` trennt „Session weg" von
+„gerade kein Netz" — nur `AuthKitError`-Ableitungen (`LoginRequiredError`)
+gelten als endgültig, ein roher `TypeError` aus dem fetch bzw. der
+`LockError` des Tab-Locks wird als transienter deutscher Fehler geworfen
+(Pendant zu `TOKEN_INVALID_CODES` serverseitig; `err.name` taugt NICHT als
+Kriterium, authkit setzt es nicht). Und `pendingRefresh = null` im `finally`
+gibt den Single-Flight-Slot wieder frei — ohne das liefert jeder spätere
+Zyklus derselben (sitzungslangen) Instanz das alte Ergebnis. Das Overlay hat
+neben „Neu anmelden" ein „Erneut versuchen" (stiller `forceRefresh`), weil
+`onRefreshFailure` in authkit auch bei transienten WorkOS-429/5xx feuert —
+ohne diesen Rückweg sperrt ein Blip die UI bis zum Full-Page-Redirect.
+Dazu: `signIn({ state: { returnTo } })` + `onRedirectCallback` →
+`router.history.replace` (nach `setTimeout(…, 0)`, sonst überschreibt das
+SDK die Route), `returnTo` gegen Open Redirects validiert
+(`lib/return-to.ts`), `onRefreshFailure` über die Modul-Bridge
+`lib/session-expiry.ts` (der Provider hängt außerhalb des Routers),
+`visibilitychange`-Refresh als Ersatz für das nicht durchgereichte
+`onBeforeAutoRefresh`, optionales `VITE_WORKOS_API_HOSTNAME`
+(AuthKit-Custom-Domain ⇒ First-Party-Cookies; leer = heutiges Verhalten).
+Serverseitig: `verifyAccessToken` liefert `valid | invalid | unavailable` —
+JWKS-/Netzfehler ⇒ 503 `AUTH_UNAVAILABLE`, nie 401; `clockTolerance: 30`;
+401 tragen `code` + `WWW-Authenticate`; die Run-Route antwortet bei gültigem
+JWT mit unbekannter/fehlender Org 403 (`UNKNOWN_ORG`/`NO_ORG`) statt 401.

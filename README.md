@@ -94,15 +94,16 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                | Beschreibung                                                                                                             | Pflicht |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------- |
-| `PORT`                  | Server-Port (default: 3020)                                                                                              | nein    |
-| `DATABASE_URL`          | Postgres-URL (Dev-Default: docker-compose-DB)                                                                            | prod    |
-| `CREDENTIAL_KEYS`       | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                               | prod    |
-| `WORKOS_CLIENT_ID`      | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                             | prod    |
-| `VITE_WORKOS_CLIENT_ID` | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                              | prod    |
-| `WORKOS_API_KEY`        | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.    | nein    |
-| `WORKOS_ORG_SYNC`       | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`). | nein    |
+| Variable                   | Beschreibung                                                                                                                      | Pflicht |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `PORT`                     | Server-Port (default: 3020)                                                                                                       | nein    |
+| `DATABASE_URL`             | Postgres-URL (Dev-Default: docker-compose-DB)                                                                                     | prod    |
+| `CREDENTIAL_KEYS`          | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                                        | prod    |
+| `WORKOS_CLIENT_ID`         | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                                      | prod    |
+| `VITE_WORKOS_CLIENT_ID`    | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                                       | prod    |
+| `VITE_WORKOS_API_HOSTNAME` | AuthKit-Custom-Domain (z. B. `auth.example.com`, build-time). Macht Session-/Refresh-Cookie First-Party. Leer = `api.workos.com`. | nein    |
+| `WORKOS_API_KEY`           | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.             | nein    |
+| `WORKOS_ORG_SYNC`          | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`).          | nein    |
 
 **Nur noch Seed-Input** (einmaliger Import beim allerersten Boot gegen eine
 leere DB — danach entfernen, siehe [`env.example`](./env.example)):
@@ -149,6 +150,30 @@ müssen Redirect-URI **und** Allowed-Origin auf die App-Origin gesetzt sein
 (z.B. `http://localhost:3000` für Dev, `https://<flyapp>` für Prod). Sind die
 WorkOS-Vars leer, läuft die App ohne Login mit einem lokalen Dev-Mandanten —
 nur für Dev gedacht.
+
+**Session-Robustheit:** Ein 401 wirft niemanden mehr ungefragt in den
+Login-Redirect. `useApiFetch()` (`src/client/lib/api.ts`) holt bei 401 genau
+einmal ein frisches Token (`getAccessToken({ forceRefresh: true })`) und
+wiederholt den Request; parallele 401 teilen sich diesen Refresh
+(Single-Flight — sonst überschreiben sich die PKCE-Code-Verifier im
+sessionStorage). Erst wenn auch das scheitert, erscheint ein
+„Sitzung abgelaufen"-Overlay mit Button; der Redirect passiert auf Klick, und
+offene Formulareingaben bleiben erhalten, weil das Overlay nichts unmountet.
+Ein Netzfehler ist dabei kein Sitzungsende: nur authkit-eigene Fehler
+(`LoginRequiredError`) öffnen das Overlay, ein WLAN-Aussetzer erzeugt ein
+normales Fehlerbanner. Und weil authkit auch bei einem transienten
+WorkOS-429/5xx `onRefreshFailure` feuert, bietet das Overlay „Erneut
+versuchen" an — ein stiller erzwungener Refresh, der die App ohne Redirect
+und ohne Datenverlust wieder freigibt.
+`signIn({ state: { returnTo } })` + `onRedirectCallback` bringen den Nutzer
+danach auf seine Ursprungsroute zurück (`returnTo` wird gegen Open Redirects
+validiert, s. `src/client/lib/return-to.ts`). Serverseitig trennt
+`verifyAccessToken` transiente Fehler von ungültigen Tokens: JWKS-Timeout oder
+Netzfehler ⇒ **503** `AUTH_UNAVAILABLE` (kein sinnloser Re-Login), ungültig ⇒
+401 mit `code` (`TOKEN_MISSING`/`TOKEN_EXPIRED`/`TOKEN_INVALID`) plus
+`WWW-Authenticate`; `jwtVerify` läuft mit `clockTolerance: 30` gegen Uhr-Drift
+nach Standby. Auch `/api/integrations/:id/run` antwortet bei gültigem JWT mit
+unbekannter/inaktiver Org mit **403** + Code statt 401.
 
 ## Building For Production
 
@@ -357,11 +382,26 @@ bzw. `WORKOS_CLIENT_ID_STAGE` (inhaltlich eine Public-Client-ID; pro
 Umgebung ein eigener WorkOS-Client). Lokal: `docker build --build-arg
 VITE_WORKOS_CLIENT_ID=client_…`.
 
+Dasselbe gilt für die optionale `VITE_WORKOS_API_HOSTNAME` — sie kommt als
+GitHub-**Variable** (`vars`, kein Secret: ein Hostname ist nicht geheim)
+`WORKOS_API_HOSTNAME_PROD` bzw. `WORKOS_API_HOSTNAME_STAGE` ins Build-Arg.
+Nicht gesetzt = leerer String = heutiges Verhalten. Ein falscher Hostname
+(Custom-Domain im Dashboard noch nicht verifiziert) legt die Anmeldung lahm
+und ist nur per Rebuild korrigierbar — Rollout deshalb getrennt vom Merge.
+
 WorkOS-Dashboard-Checkliste **pro Umgebung** (eigener Client für prod/stage):
 
 - Redirect-URI = exakt die App-Origin (z. B. `https://miranum-dimacon-sync.fly.dev`) —
   AuthKit nutzt standardmäßig `window.location.origin` als Redirect-Ziel.
 - Dieselbe Origin als Allowed Origin (CORS) eintragen.
+- **AuthKit-Custom-Domain** (z. B. `auth.<eigene-domain>`) einrichten, sobald
+  die App unter einer eigenen Domain läuft: ohne sie liegt das Session-Cookie
+  bei `api.workos.com` und ist aus Sicht der App Cross-Site — jeder Reload
+  läuft dann still über die Hosted-Login-Seite und der Refresh ist in
+  Safari/Firefox/Inkognito fragil. Mit Custom-Domain den Hostnamen als
+  `VITE_WORKOS_API_HOSTNAME` bauen und Redirect-URI/Allowed-Origin auch dort
+  pflegen. Auf `*.fly.dev` ist das nicht lösbar (fly.dev steht auf der Public
+  Suffix List).
 - Client-ID sowohl als Fly-Secret (`WORKOS_CLIENT_ID`, Backend/JWKS) als auch
   als GitHub-Secret (`WORKOS_CLIENT_ID_*`, Frontend-Build) hinterlegen.
 - Einen environment-scoped API-Key erzeugen (Dashboard → API Keys, `sk_…`)

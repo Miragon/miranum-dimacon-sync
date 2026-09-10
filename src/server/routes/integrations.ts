@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { CredentialCryptoError } from "../lib/crypto.js"
-import { isAuthConfigured, verifyAccessToken } from "../lib/auth.js"
+import { AUTH_UNAVAILABLE_MESSAGE, isAuthConfigured, verifyAccessToken } from "../lib/auth.js"
 import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import { getCachedTenantByOrgId, type AppEnv } from "../lib/tenant.js"
@@ -22,7 +22,9 @@ import type { IntegrationDefinition } from "../integrations/types.js"
  * identifiziert den Mandanten direkt; alternativ zählt ein gültiges
  * AuthKit-JWT (der UI-Pfad — vorher scheiterte der am Secret-Vergleich).
  * Fail-closed: ohne identifizierbaren Mandanten 401, kein impliziter
- * Default-Mandant.
+ * Default-Mandant. Bei GÜLTIGEM JWT mit unbekannter/fehlender Org ist es
+ * dagegen ein 403 mit Code (NO_ORG/UNKNOWN_ORG/ORG_INACTIVE) — ein
+ * Re-Login würde daran nichts ändern.
  */
 export const integrationsOpenRoutes = new Hono()
 
@@ -109,12 +111,28 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
       // Kein Secret-Treffer, aber ein Bearer-Header: AuthKit-JWT prüfen —
       // der UI-Pfad. x-sync-token ist dagegen explizit ein Webhook-Secret,
       // für das es keinen JWT-Fallback gibt.
-      const claims = await verifyAccessToken(bearer)
-      const orgId = claims?.org_id
-      if (orgId) {
+      const result = await verifyAccessToken(bearer)
+      if (result.status === "unavailable") {
+        // JWKS-Ausfall darf keinen Re-Login provozieren.
+        return c.json({ error: AUTH_UNAVAILABLE_MESSAGE, code: "AUTH_UNAVAILABLE" }, 503)
+      }
+      if (result.status === "valid") {
+        // Ab hier ist der Aufrufer identifiziert — fachlich dieselben
+        // 403-Fälle wie in resolveTenant, damit der Client im TenantGate
+        // landet statt im Login-Flow.
+        const orgId = result.claims.org_id
+        if (!orgId) {
+          return c.json({ error: "forbidden: no organization in token", code: "NO_ORG" }, 403)
+        }
         tenant = await getCachedTenantByOrgId(orgId)
+        if (!tenant) {
+          log.warn("tenant unknown", { orgId })
+          return c.json({ error: "forbidden: unknown organization", code: "UNKNOWN_ORG" }, 403)
+        }
         trigger = "manual"
       }
+      // `invalid` fällt durch auf das 401 unten — fail-closed für Caller
+      // ohne Secret-Treffer.
     }
   } else if (!isAuthConfigured() && process.env.NODE_ENV !== "production") {
     // Dev ohne Auth bleibt offen (heutige Haltung) — Prod ist durch den

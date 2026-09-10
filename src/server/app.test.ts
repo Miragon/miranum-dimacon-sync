@@ -88,7 +88,10 @@ describe("mount order (Reihenfolge ist load-bearing)", () => {
     ]) {
       const res = await app.request(path)
       expect(res.status, path).toBe(401)
-      expect(await res.json()).toEqual({ error: "missing bearer token" })
+      expect(await res.json()).toMatchObject({
+        error: "missing bearer token",
+        code: "TOKEN_MISSING",
+      })
     }
   })
 

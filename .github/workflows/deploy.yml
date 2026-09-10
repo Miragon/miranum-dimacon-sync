@@ -30,6 +30,7 @@ jobs:
             org: ${{ inputs.target == 'prod' && 'miranum' || 'miranum-stage' }}
             token_secret: ${{ inputs.target == 'prod' && 'FLY_TOKEN_PROD' || 'FLY_TOKEN_STAGE' }}
             workos_client_id_var: ${{ inputs.target == 'prod' && 'WORKOS_CLIENT_ID_PROD' || 'WORKOS_CLIENT_ID_STAGE' }}
+            workos_api_hostname_var: ${{ inputs.target == 'prod' && 'WORKOS_API_HOSTNAME_PROD' || 'WORKOS_API_HOSTNAME_STAGE' }}
     name: build-and-push (${{ matrix.env }})
     steps:
       - name: Checkout
@@ -68,8 +69,14 @@ jobs:
           # Fehlt der Wert, baut das Image ohne Frontend-Auth und der
           # Server-Startup-Guard verhindert den unauthentifizierten
           # Betrieb in Produktion.
+          #
+          # VITE_WORKOS_API_HOSTNAME (optionale AuthKit-Custom-Domain) kommt
+          # bewusst aus GitHub-**vars**, nicht aus Secrets: ein Hostname ist
+          # kein Geheimnis, und eine nicht gesetzte Variable ergibt einen
+          # leeren String = heutiges Verhalten (api.workos.com).
           build-args: |
             VITE_WORKOS_CLIENT_ID=${{ secrets[matrix.workos_client_id_var] }}
+            VITE_WORKOS_API_HOSTNAME=${{ vars[matrix.workos_api_hostname_var] }}
           tags: |
             registry.fly.io/${{ matrix.app }}:latest
             registry.fly.io/${{ matrix.app }}:${{ github.sha }}
