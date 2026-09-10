@@ -115,6 +115,8 @@ export interface DimaconEmployeeFull {
   phoneNumber?: string
   team?: string
   additionalInformation?: string
+  /** Wird nur geladen, damit das Voll-Replace-PUT es zurückspiegeln kann. */
+  profilePicture?: string
   role: DimaconEmployeeRole
   color: string
   timeTrackingActive: boolean
@@ -146,6 +148,7 @@ export async function loadEmployeesWithEmail(
       phoneNumber?: string
       team?: string
       additionalInformation?: string
+      profilePicture?: string
       role: DimaconEmployeeRole
       color: string
       timeTrackingActive: boolean
@@ -159,6 +162,7 @@ export async function loadEmployeesWithEmail(
     phoneNumber: e.phoneNumber,
     team: e.team,
     additionalInformation: e.additionalInformation,
+    profilePicture: e.profilePicture,
     role: e.role,
     color: e.color,
     timeTrackingActive: e.timeTrackingActive,

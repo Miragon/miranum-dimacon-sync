@@ -93,7 +93,8 @@ export class EmployeeSyncer {
         clockinId: c.id,
         name,
         status: "created",
-        reason: "[dryRun] Rolle CRAFTSMAN (Default)",
+        reason:
+          "[dryRun] Rolle CRAFTSMAN (Default), ohne Team — in Dimacon manuell einem Team zuweisen",
       }
     }
 
@@ -118,7 +119,7 @@ export class EmployeeSyncer {
       clockinId: c.id,
       name,
       status: "created",
-      reason: "Rolle CRAFTSMAN (Default)",
+      reason: "Rolle CRAFTSMAN (Default), ohne Team — in Dimacon manuell einem Team zuweisen",
     }
   }
 
@@ -192,20 +193,41 @@ export class EmployeeSyncer {
         dimacon.updateEmployee({
           client: this.dimaconClient,
           path: { employeeId: d.id },
-          body: {
-            role: d.role,
-            firstName: d.firstName,
-            lastName: d.lastName,
+          body: dimaconEmployeeUpdateBody(d, {
             personnelNumber: diff.backfillPersonnelNumber,
-            phoneNumber: d.phoneNumber,
-            color: d.color,
-            timeTrackingActive: d.timeTrackingActive,
-          },
+          }),
         }),
       )
     }
 
     return { ...base, status: "updated", reason: describeDiff(diff, mappedDiff) }
+  }
+}
+
+/**
+ * Dimacon-PUT ist ein Voll-Replace: bestehende Werte MÜSSEN zurückgespiegelt
+ * werden, sonst werden sie gelöscht (Issue #17 — Mitarbeiter verloren beim
+ * Personalnummer-Backfill ihr Team). Deshalb spiegelt der Body ALLE geladenen
+ * Felder zurück und die Änderung kommt als `overrides` obendrauf.
+ * `undefined`-Werte bleiben bewusst weg statt auf `null` normalisiert zu
+ * werden — unter Merge-Semantik strikt sicherer, unter Replace identisch.
+ */
+function dimaconEmployeeUpdateBody(
+  d: DimaconEmployeeFull,
+  overrides: { personnelNumber?: string } = {},
+): NonNullable<Parameters<typeof dimacon.updateEmployee>[0]>["body"] {
+  return {
+    role: d.role,
+    firstName: d.firstName,
+    lastName: d.lastName,
+    personnelNumber: d.personnelNumber,
+    phoneNumber: d.phoneNumber,
+    team: d.team,
+    profilePicture: d.profilePicture,
+    color: d.color,
+    timeTrackingActive: d.timeTrackingActive,
+    additionalInformation: d.additionalInformation,
+    ...overrides,
   }
 }
 

@@ -125,7 +125,8 @@ bei Verlust müssen alle Mandanten ihre Tokens neu eintragen.
 Ausdruck, Timezone), persistent in Postgres (`schedule_settings`), editierbar
 im Zeitplan-Tab der Integrations-Einstellungen (`/sync/<id>/settings`). Geplante Läufe fahren den **kompletten**
 Schritt-Satz — beim `dimacon-clockin`-Cron also auch den
-Live-Mitarbeiter-Abgleich. Deaktivierte Mandanten und fehlende Zugangsdaten
+Live-Mitarbeiter-Abgleich (ohne die per Default abgeschaltete Anlage in
+Dimacon). Deaktivierte Mandanten und fehlende Zugangsdaten
 werden zur Feuerzeit geprüft (Lauf wird übersprungen, Warnung im Log).
 
 **Auth (WorkOS):** Wenn `WORKOS_CLIENT_ID` gesetzt ist, schützt eine
@@ -182,10 +183,10 @@ angebundenen Systeme (Dimacon, Clockin, Lexware Office). Registriert in
 Mutex (max. ein Lauf gleichzeitig, sonst HTTP 409), eigenen Cron-Slot,
 eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
 
-| Integration         | Ablauf                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dimacon-clockin`   | Kompletter Clockin-Sync, Schritte per `steps` zuschaltbar: (1) **bidirektionaler** Mitarbeiter-Stammdaten-Abgleich über den gesamten Bestand (Dimacon gewinnt, Live-Lauf legt Mitarbeiter in beiden Systemen an — vorher dry-run prüfen), (2) Tagesplanung: Termine laden, Kunden/Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit.** |
-| `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.                                                                                                                                         |
+| Integration         | Ablauf                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dimacon-clockin`   | Kompletter Clockin-Sync, Schritte per `steps` zuschaltbar: (1) **bidirektionaler** Mitarbeiter-Stammdaten-Abgleich über den gesamten Bestand (Dimacon gewinnt, Live-Lauf legt in Clockin fehlende Mitarbeiter dort an — vorher dry-run prüfen). Die Gegenrichtung **Clockin → Dimacon ist per Default AUS** und braucht `{"steps":{"employeeCreateInDimacon":true}}`; sie legt dann nur Mitarbeiter mit Personalnummer an, ohne ausgelaufene Verträge, ohne mehrdeutige/dublette und ohne namensähnliche Kandidaten — alles andere wird als `skipped`-Zeile mit Begründung gemeldet. Fail-Safe: wurde die Clockin-Mitarbeiterliste unvollständig geladen, legt der Lauf in **keiner** Richtung Mitarbeiter an. (2) Tagesplanung: Termine laden, Kunden/Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. **Ohne Lexware-Abhängigkeit.** |
+| `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Endpoints** (run/healthz offen — `run` ist Dual-Auth: Mandanten-Webhook-
 Secret oder AuthKit-JWT, Liste hinter Auth):
@@ -216,11 +217,14 @@ curl http://localhost:3020/api/integrations/dimacon-clockin/healthz
 ```
 
 `POST /api/sync/run` + `GET /api/sync/healthz` bleiben als **Legacy-Alias** für
-`dimacon-clockin` erhalten. **Achtung**: ein Aufruf ohne Body führt jetzt den
+`dimacon-clockin` erhalten. **Achtung**: ein Aufruf ohne Body führt den
 kompletten Schritt-Satz aus — inklusive des **Live-Mitarbeiter-Abgleichs**
-(legt Mitarbeiter in beiden Systemen an). Bestehende Webhooks/Crons, die nur
-die Tagesplanung wollen, müssen `{ "steps": { "employees": false } }`
-mitschicken.
+(legt in Clockin fehlende Mitarbeiter dort an). Bestehende Webhooks/Crons, die
+nur die Tagesplanung wollen, müssen `{ "steps": { "employees": false } }`
+mitschicken. Die Anlage in **Dimacon** läuft dabei nicht mehr mit: sie ist seit
+Issue #17 per Default aus und muss mit
+`{ "steps": { "employeeCreateInDimacon": true } }` ausdrücklich angefordert
+werden.
 
 Scheduling: pro (Mandant, Integration) im Zeitplan-Tab der
 Integrations-Einstellungen (`/sync/<id>/settings`, Zahnrad in der
@@ -245,13 +249,18 @@ Architektur-Bausteine (`src/server/integrations/`):
 - `mutex.ts` — pro Integration max. ein Lauf (HTTP 409)
 - `scheduler.ts` — ein `croner`-Cron pro Integration, hot-restartbar
 - `shared/dimacon.ts` — gemeinsame Loader (Termine, Jobs, Kunden; parallel via `p-limit`)
+- `shared/clockin-pages.ts` — Paginierung der Clockin-Listen (`page`-Query ab
+  Seite 2) samt Abbruchwächtern; meldet eine unvollständige Liste als
+  `complete:false` mit Grund, statt still zu kürzen
 - `shared/field-{catalog,mapping}.ts` + `mapping-context.ts` — Feld-Zuordnungs-Framework
   (Katalog, pure Engine, Discovery von Custom-Attributen/-Feldern)
 - `dimacon-clockin/` — Orchestrator (fail-soft pro Projekt), Employee-Matching
   (Nachname → Vorname → E-Mail), Kunden-Upsert, Projekt-Upsert mit
   Mitarbeiter-Diff (attach/detach), Archivierung; `employee-sync/` darin ist
   der bidirektionale Stammdaten-Abgleich (Matching Personalnummer → E-Mail →
-  Name, Dimacon gewinnt, Personalnummer-Backfill) als erster Schritt
+  Name, Dimacon gewinnt, Personalnummer-Backfill mit Voll-Replace-Body) als
+  erster Schritt; `employee-sync/creation-policy.ts` entscheidet den
+  Relevanzfilter der Anlage Clockin → Dimacon
 - `dimacon-lexoffice/` — Lexware-Kontakt find-or-create + Kundennummern-Alignment
 
 Tests laufen mit `pnpm test`.

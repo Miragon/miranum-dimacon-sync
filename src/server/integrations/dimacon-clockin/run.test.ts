@@ -161,12 +161,25 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
     loadMappingContextMock.mockRejectedValue(new Error("boom 400"))
 
-    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+    // Alle Schalter bewusst AN — nur so beweist das gemeldete steps-Objekt,
+    // dass der Safe-Mode sie überschreibt (und nicht bloß die Defaults gelten).
+    const result = await runDimaconClockinSync(testCtx(), {
+      date: DATE,
+      steps: {
+        employees: true,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: true,
+        employeeCreateInDimacon: true,
+      },
+    })
 
     // Safe-Mode: Schreibschritte deaktiviert, Fehler dokumentiert
     expect(result.steps.projects).toBe(false)
     expect(result.steps.customers).toBe(false)
     expect(result.steps.employees).toBe(false)
+    expect(result.steps.employeeCreateInDimacon).toBe(false)
     expect(result.errors.some((e) => e.scope === "mapping")).toBe(true)
     expect(runEmployeeSyncMock).not.toHaveBeenCalled()
     expect(result.employeeSync).toBeUndefined()
@@ -206,6 +219,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
         projects: true,
         assignments: true,
         archive: false,
+        employeeCreateInDimacon: false,
       },
     })
 
@@ -264,6 +278,27 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     expect(result.errors).toContainEqual(expect.objectContaining({ scope: "appointments" }))
   })
 
+  it("keeps the dimacon creation switch off unless the input asks for it", async () => {
+    await runDimaconClockinSync(testCtx(), { date: DATE })
+    expect(runEmployeeSyncMock.mock.calls[0][3]).toEqual({ dryRun: false, createInDimacon: false })
+
+    runEmployeeSyncMock.mockClear()
+
+    await runDimaconClockinSync(testCtx(), {
+      date: DATE,
+      dryRun: true,
+      steps: {
+        employees: true,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: true,
+        employeeCreateInDimacon: true,
+      },
+    })
+    expect(runEmployeeSyncMock.mock.calls[0][3]).toEqual({ dryRun: true, createInDimacon: true })
+  })
+
   it("skips the employee master sync when steps.employees is disabled", async () => {
     const result = await runDimaconClockinSync(testCtx(), {
       date: DATE,
@@ -273,6 +308,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
         projects: true,
         assignments: true,
         archive: true,
+        employeeCreateInDimacon: false,
       },
     })
 

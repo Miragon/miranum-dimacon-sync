@@ -4,6 +4,7 @@ import { EMPTY_DISCOVERY } from "../shared/field-mapping.js"
 import type { EntityMappingContext } from "../shared/mapping-context.js"
 import { startDateForClockin } from "../shared/time.js"
 import type { DimaconProjectInfo } from "./enrichment.js"
+import { DEFAULT_STEPS } from "./types.js"
 import type { CustomerMapping, SyncSteps } from "./types.js"
 
 const searchForProjectsMock = vi.fn()
@@ -58,14 +59,6 @@ const mapping: EntityMappingContext = {
   discovery: EMPTY_DISCOVERY,
   isCustomized: false,
   hasCustomTargets: false,
-}
-
-const DEFAULT_STEPS: SyncSteps = {
-  employees: true,
-  customers: true,
-  projects: true,
-  assignments: true,
-  archive: true,
 }
 
 /** Clockin-Row, die exakt dem gemappten Soll-Zustand entspricht (→ unchanged) */

@@ -57,7 +57,13 @@ export async function runDimaconClockinSync(
       scope: "mapping",
       message: `Feld-Zuordnung konnte nicht geladen werden — Schreibschritte (Mitarbeiter/Kunden/Projekte) für diesen Lauf deaktiviert (${message})`,
     })
-    steps = { ...steps, employees: false, projects: false, customers: false }
+    steps = {
+      ...steps,
+      employees: false,
+      employeeCreateInDimacon: false,
+      projects: false,
+      customers: false,
+    }
     mappingContext = new Map()
   }
   const projectMapping = mappingContext.get("project") ?? defaultContext("project")
@@ -78,7 +84,7 @@ export async function runDimaconClockinSync(
       dimaconClient,
       clockinClient,
       employeeMapping,
-      dryRun,
+      { dryRun, createInDimacon: steps.employeeCreateInDimacon },
       log,
       onMappingWarning,
     )

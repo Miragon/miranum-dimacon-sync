@@ -75,12 +75,17 @@ function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
   const [projects, setProjects] = useState<boolean>(true)
   const [assignments, setAssignments] = useState<boolean>(true)
   const [archive, setArchive] = useState<boolean>(true)
+  // Anlage Clockin → Dimacon ist bewusst per Default aus (Issue #17)
+  const [createInDimacon, setCreateInDimacon] = useState<boolean>(false)
 
   // Alle zutreffenden Hinweise anzeigen — die Mitarbeiter-Warnung darf nie
   // von anderen Schritt-Kombinationen verdrängt werden (Massen-Writes!).
   const hints = [
     employees &&
-      "Der Mitarbeiter-Abgleich läuft über den gesamten Bestand beider Systeme — ein Live-Lauf legt fehlende Mitarbeiter in Clockin und Dimacon an.",
+      "Der Mitarbeiter-Abgleich läuft über den gesamten Bestand beider Systeme — ein Live-Lauf legt in Clockin fehlende Mitarbeiter dort an.",
+    employees &&
+      createInDimacon &&
+      "Legt Clockin-Mitarbeiter in Dimacon an: nur mit Personalnummer, ohne Team (danach in Dimacon zuweisen); mehrdeutige und namensähnliche Kandidaten werden gemeldet statt angelegt.",
     !projects &&
       "Es werden keine Projekte angelegt oder aktualisiert — nur Abgleich/Zuordnung/Archivierung.",
     !customers && projects && "Neue Projekte ohne vorhandenen Clockin-Kunden werden übersprungen.",
@@ -118,7 +123,14 @@ function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
               onRun({
                 date,
                 dryRun,
-                steps: { employees, customers, projects, assignments, archive },
+                steps: {
+                  employees,
+                  customers,
+                  projects,
+                  assignments,
+                  archive,
+                  employeeCreateInDimacon: createInDimacon,
+                },
               })
             }
             disabled={running || disabled}
@@ -137,6 +149,13 @@ function DimaconClockinRunForm({ running, disabled, onRun }: RunFormProps) {
             checked={employees}
             onChange={setEmployees}
             disabled={running}
+          />
+          <CheckBox
+            id="step-employee-create-dimacon"
+            label="Mitarbeiter in Dimacon anlegen"
+            checked={createInDimacon}
+            onChange={setCreateInDimacon}
+            disabled={running || !employees}
           />
           <CheckBox
             id="step-customers"

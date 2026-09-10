@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "#/components/ui/table"
 import { ResultSectionHead, Stat } from "./bits.js"
+import { stepBadges } from "./step-badges.js"
 
 export interface ProjectSyncResult {
   dimaconProjectId: string
@@ -68,6 +69,8 @@ export interface SyncResult {
     projects: boolean
     assignments: boolean
     archive: boolean
+    /** optional: ältere persistierte Ergebnisse kennen den Schalter nicht */
+    employeeCreateInDimacon?: boolean
   }
   employeeSync?: {
     counts: { dimacon: number; clockin: number; matched: number }
@@ -76,14 +79,6 @@ export interface SyncResult {
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
-}
-
-const STEP_LABELS: Record<string, string> = {
-  employees: "mitarbeiter-abgleich",
-  customers: "kunden",
-  projects: "projekte",
-  assignments: "zuordnung",
-  archive: "archivierung",
 }
 
 const DIRECTION_LABELS: Record<EmployeeSyncRow["direction"], string> = {
@@ -123,15 +118,11 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
           </p>
         ) : null}
         <div className="mt-4 flex flex-wrap gap-2">
-          {result.steps
-            ? Object.entries(result.steps)
-                .filter(([, on]) => !on)
-                .map(([step]) => (
-                  <MnStatusBadge key={step} variant="warn">
-                    {STEP_LABELS[step] ?? step} aus
-                  </MnStatusBadge>
-                ))
-            : null}
+          {stepBadges(result.steps).map((badge) => (
+            <MnStatusBadge key={badge.key} variant={badge.variant}>
+              {badge.label}
+            </MnStatusBadge>
+          ))}
           {(["created", "updated", "unchanged", "skipped", "failed"] as const).map((s) =>
             counts[s] > 0 ? (
               <MnStatusBadge key={s} variant={badgeVariant(s)}>

@@ -31,6 +31,12 @@ export interface ClockinEmployeeInfo {
   personnelNumber?: string
   email?: string
   phoneWork?: string
+  /**
+   * `contract_ending` aus Clockin — dient AUSSCHLIESSLICH als Relevanz-
+   * kriterium der Anlage in Dimacon (ausgelaufene Verträge werden nicht
+   * angelegt), nie als Sync-Feld.
+   */
+  contractEnding?: string
   /** Roh-Ressource für den Mapping-Diff — nur zur Laufzeit befüllt */
   raw?: Record<string, unknown>
   customFieldValues?: { custom_field_id?: number; value?: string | null }[]

@@ -7,6 +7,11 @@ import type { EmployeeSyncCounts, EmployeeSyncRow } from "./employee-sync/types.
  * `assignments` die Mitarbeiter-Zuordnung auf Projekte. Teilobjekte wie
  * `{archive:false}` werden durch die inneren Defaults vervollständigt;
  * fehlt `steps` ganz (auch beim Scheduler-`parse({})`), läuft alles.
+ *
+ * Ausnahme: `employeeCreateInDimacon` schaltet NUR die Anlage-Richtung
+ * Clockin → Dimacon und ist bewusst per Default AUS (Issue #17 — der Sync hat
+ * ungefiltert teamlose Mitarbeiter in Dimacon angelegt). Der Schalter greift
+ * nur zusätzlich zu `employees`.
  */
 export const SyncStepsSchema = z.object({
   employees: z.boolean().default(true),
@@ -14,6 +19,7 @@ export const SyncStepsSchema = z.object({
   projects: z.boolean().default(true),
   assignments: z.boolean().default(true),
   archive: z.boolean().default(true),
+  employeeCreateInDimacon: z.boolean().default(false),
 })
 
 export type SyncSteps = z.infer<typeof SyncStepsSchema>
@@ -24,6 +30,7 @@ export const DEFAULT_STEPS: SyncSteps = {
   projects: true,
   assignments: true,
   archive: true,
+  employeeCreateInDimacon: false,
 }
 
 export const SyncRunInputSchema = z.object({

@@ -158,10 +158,21 @@ Katalog/Engine in `src/server/integrations/shared/field-{catalog,mapping}.ts`;
 ohne persistierte Zuordnung gelten die Default-Regeln und es gibt keine
 Discovery-API-Calls. Match-Keys (project.number, customer.identifier,
 employee-Namen/PN) sind fixiert und nie remappbar. Der dimacon-clockin-Sync
-akzeptiert `steps: { employees, customers, projects, assignments, archive }`
-im Run-Input (Default: alles an); die Archiv-Phase schützt nur Projekte, die
-der Lauf auflöst, deshalb läuft die Projekt-Auflösung auch bei deaktivierten
-Schritten.
+akzeptiert `steps: { employees, customers, projects, assignments, archive,
+employeeCreateInDimacon }` im Run-Input (Default: alles an —
+**`employeeCreateInDimacon` ist die Ausnahme und per Default AUS**, Issue #17);
+die Archiv-Phase schützt nur Projekte, die der Lauf auflöst, deshalb läuft die
+Projekt-Auflösung auch bei deaktivierten Schritten.
+
+Zwei load-bearing Regeln des Mitarbeiter-Abgleichs: Dimacon-PUTs sind
+Voll-Replace — jeder Update-Body spiegelt ALLE geladenen Felder zurück
+(`dimaconEmployeeUpdateBody` in `employee-sync/syncer.ts`, sonst verlieren
+Mitarbeiter beim Personalnummer-Backfill ihr Team). Und die Anlage ist
+fail-closed: wurde der Clockin-Bestand unvollständig geladen
+(`shared/clockin-pages.ts` paginiert und meldet Abbruchgründe), legt der Lauf
+in KEINER Richtung Mitarbeiter an; nicht angelegte Kandidaten erscheinen mit
+deutscher Begründung als `skipped`-Zeile im Ergebnis
+(`employee-sync/creation-policy.ts`).
 
 Die alte settings.json wird nur noch vom **einmaligen Legacy-Seed** gelesen
 (`src/server/lib/legacy-settings.ts` parst beide Alt-Formen; Seed-Guard =
