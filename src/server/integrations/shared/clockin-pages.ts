@@ -39,6 +39,12 @@ export interface LoadAllClockinPagesOptions<T> {
   log?: Logger
   /** Für die Log-Zeile, z. B. "clockin employees" */
   label?: string
+  /**
+   * Bereits geladene erste Seite. Aufrufer, die `meta` vorab brauchen (z. B.
+   * um den Vollabruf gar nicht erst zu starten), sparen damit den doppelten
+   * Request auf Seite 1.
+   */
+  first?: ClockinPage<T>
 }
 
 /**
@@ -75,7 +81,7 @@ export async function loadAllClockinPages<T>(
     return added
   }
 
-  const first = await fetchPage(undefined)
+  const first = options.first ?? (await fetchPage(undefined))
   append(first)
   let pages = 1
 
@@ -114,4 +120,18 @@ export async function loadAllClockinPages<T>(
   }
 
   return { rows, complete: true, pages }
+}
+
+/**
+ * Der Laravel-Query-Parameter `page` fehlt in den generierten SDK-Typen, die
+ * API wertet ihn aber aus (`meta.current_page`/`last_page`). Der Cast ist
+ * bewusst an genau dieser Stelle gebündelt — die Abbruchwächter in
+ * `loadAllClockinPages` sind der Fail-Safe, falls die API ihn doch ignoriert.
+ *
+ * Seite 1 geht bewusst OHNE Query raus (`undefined`), damit Bestände mit nur
+ * einer Seite kein 422-Risiko durch einen unbekannten Parameter tragen.
+ */
+export function clockinPageQuery<Q>(page: number | undefined): Q | undefined {
+  if (page === undefined) return undefined
+  return { page } as unknown as Q
 }

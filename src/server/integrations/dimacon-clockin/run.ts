@@ -4,22 +4,35 @@ import { formatError } from "../../lib/errors.js"
 import type { Logger } from "../../lib/log.js"
 import { withPhase } from "../../lib/metrics.js"
 import type { IntegrationRunContext } from "../types.js"
-import { loadAllCustomers, loadAppointments } from "../shared/dimacon.js"
+import { loadAllCustomers, loadAppointments, loadEmployeesWithEmail } from "../shared/dimacon.js"
+import type { DimaconCustomerInfo, DimaconEmployeeFull } from "../shared/dimacon.js"
 import { FIELD_CATALOG } from "../shared/field-catalog.js"
 import { EMPTY_DISCOVERY } from "../shared/field-mapping.js"
 import { loadMappingContext } from "../shared/mapping-context.js"
 import type { EntityMappingContext, MappingContext } from "../shared/mapping-context.js"
 import { duplicateKeys, normalizeName } from "../shared/matching.js"
-import { todayInBerlin } from "../shared/time.js"
-import { archiveUnplanned } from "./archive.js"
+import { addDays, todayInBerlin } from "../shared/time.js"
+import { archiveHorizonDays, archiveUnplanned } from "./archive.js"
+import { loadClockinCustomerIndex } from "./customer-index.js"
+import type { ClockinCustomerIndex } from "./customer-index.js"
 import { CustomerSyncer } from "./customers.js"
 import type { CustomerMatchingContext } from "./customers.js"
 import { runEmployeeSync } from "./employee-sync/run-employee-sync.js"
+import type { EmployeeSyncOutcome } from "./employee-sync/run-employee-sync.js"
 import { EmployeeMatcher } from "./employees.js"
 import { enrich } from "./enrichment.js"
+import { loadClockinProjectsByNumber } from "./project-lookup.js"
+import type { ClockinProjectLookup } from "./project-lookup.js"
 import { ProjectUpserter } from "./projects.js"
 import { DEFAULT_STEPS } from "./types.js"
-import type { ProjectSyncResult, SyncError, SyncResult, SyncRunInput, SyncSteps } from "./types.js"
+import type {
+  ProjectSyncResult,
+  SyncError,
+  SyncLookupInfo,
+  SyncResult,
+  SyncRunInput,
+  SyncSteps,
+} from "./types.js"
 
 export async function runDimaconClockinSync(
   ctx: IntegrationRunContext,
@@ -81,28 +94,68 @@ export async function runDimaconClockinSync(
     errors.push({ scope: "mapping", message })
   }
 
-  // Phase 1: Mitarbeiter-Stammdaten-Abgleich — vor der Tagesplanung, damit
-  // frisch angelegte Clockin-Mitarbeiter sofort zuordenbar sind. Läuft auch
-  // an Tagen ohne Termine (nicht datumsgebunden).
+  // Dimacon-Mitarbeiter EINMAL für beide Phasen (Stammdaten-Abgleich und
+  // Tagesplanung brauchen dieselbe Liste). Ein Ladefehler ist hier kein
+  // Abbruch: beide Phasen laufen dann wie bisher mit ihrem eigenen Abruf
+  // und melden den Fehler in ihrem eigenen Kontext.
+  const dimaconEmployeesPromise: Promise<DimaconEmployeeFull[] | undefined> = withPhase(
+    "dimacon-employees",
+    () => loadEmployeesWithEmail(dimaconClient),
+  ).catch((err: unknown) => {
+    log.warn("failed to preload dimacon employees — phases fall back to their own fetch", {
+      error: formatError(err),
+    })
+    return undefined
+  })
+
+  // Phase 1: Mitarbeiter-Stammdaten-Abgleich. Läuft ab hier NEBEN der
+  // Tagesplanung — er ist nicht datumsgebunden und die Dimacon-Reads der
+  // Tagesplanung hängen nicht von ihm ab. Erst das Mitarbeiter-MATCHING
+  // braucht sein Ergebnis (`employeePairs`).
+  //
+  // `.catch()` hängt sofort dran: ohne das wäre jeder frühe Rückgabepfad
+  // eine unhandled rejection.
   let employeeSync: SyncResult["employeeSync"]
   let employeePairs: ReadonlyMap<string, number> = new Map()
-  if (steps.employees) {
-    const outcome = await withPhase("employee-sync", () =>
-      runEmployeeSync(
-        dimaconClient,
-        clockinClient,
-        employeeMapping,
-        { dryRun, createInDimacon: steps.employeeCreateInDimacon },
-        log,
-        onMappingWarning,
-      ),
-    )
+  let employeeSettled = false
+  const employeeSyncPromise: Promise<EmployeeSyncOutcome | undefined> = steps.employees
+    ? dimaconEmployeesPromise
+        .then((preloaded) =>
+          withPhase("employee-sync", () =>
+            runEmployeeSync(
+              dimaconClient,
+              clockinClient,
+              employeeMapping,
+              { dryRun, createInDimacon: steps.employeeCreateInDimacon },
+              log,
+              onMappingWarning,
+              preloaded,
+            ),
+          ),
+        )
+        .catch((err: unknown) => {
+          const message = formatError(err)
+          log.error("employee sync failed", { error: message })
+          errors.push({ scope: "employee", message })
+          return undefined
+        })
+    : Promise.resolve(undefined)
+  if (!steps.employees) log.info("employee sync step disabled — skipping")
+
+  /**
+   * Ergebnis des Stammdaten-Abgleichs einsammeln. MUSS auf JEDEM
+   * Rückgabepfad laufen — sonst geht das Ergebnis der parallelen Phase
+   * verloren und der Lauf endet, während sie noch schreibt.
+   */
+  const settleEmployeeSync = async (): Promise<void> => {
+    if (employeeSettled) return
+    employeeSettled = true
+    const outcome = await employeeSyncPromise
+    if (!outcome) return
     employeeSync = { counts: outcome.counts, rows: outcome.rows }
     employeePairs = outcome.pairs
     errors.push(...outcome.errors)
     log.info("employee sync finished", { ...outcome.counts, rows: outcome.rows.length })
-  } else {
-    log.info("employee sync step disabled — skipping")
   }
 
   // Phase 2: Tagesplanung
@@ -113,6 +166,7 @@ export async function runDimaconClockinSync(
     const message = formatError(err)
     log.error("failed to load appointments", { error: message })
     errors.push({ scope: "appointments", message })
+    await settleEmployeeSync()
     return result(
       date,
       dryRun,
@@ -134,32 +188,102 @@ export async function runDimaconClockinSync(
 
   if (loaded.jobIds.length === 0) {
     log.info("no appointments for date — skipping daily plan")
+    await settleEmployeeSync()
     return result(date, dryRun, steps, startedAt, loaded.counts, employeeSync, projects, [], errors)
   }
 
+  // Gesamtbestand der Dimacon-Kunden: sichert den Namens-Fallback ab UND
+  // ersetzt die Einzelabrufe der Kunden im Enrichment (ein Aufruf statt C).
+  // Der Tagesausschnitt taugt für den Fallback NICHT: der gleichnamige
+  // Zwilling hat meist gerade keinen Termin, wäre im Ausschnitt unsichtbar
+  // und der Fallback verknüpfte den Kunden dauerhaft mit dem Clockin-Kunden
+  // des Zwillings.
+  const inventory = await withPhase("customer-inventory", () =>
+    loadCustomerInventory(dimaconClient, log, errors),
+  )
+
+  // Archiv-Horizont: ±N Tage um das Sync-Datum. Was in diesem Fenster
+  // eingeplant ist, wird nicht archiviert — sonst pendeln wiederkehrende
+  // Projekte täglich zwischen archiviert und aktiv.
+  //
+  // LOAD-BEARING: Das Fenster spannt IMMER auch über heute. `date` ist frei
+  // wählbar (Run-Formular, Webhook) — hinge der Horizont allein daran, würde
+  // ein Live-Lauf für ein vergangenes Datum den kompletten aktuell
+  // eingeplanten Bestand archivieren, weil dessen Termine außerhalb des
+  // Fensters lägen.
+  const horizonDays = archiveHorizonDays()
+  const today = todayInBerlin()
+  const horizonFrom = date < today ? date : today
+  const horizonTo = date > today ? date : today
+  const horizon = steps.archive
+    ? { from: addDays(horizonFrom, -horizonDays), to: addDays(horizonTo, horizonDays + 1) }
+    : undefined
+
   let enriched
   try {
-    enriched = await withPhase("enrich", () => enrich(dimaconClient, loaded.jobIds))
+    const preloadedEmployees = await dimaconEmployeesPromise
+    enriched = await withPhase("enrich", () =>
+      enrich(dimaconClient, {
+        jobIds: loaded.jobIds,
+        appointments: loaded.appointments,
+        date,
+        needsTeamAssignments: steps.assignments,
+        horizon,
+        customers: inventory.customers,
+        employees: preloadedEmployees,
+        log,
+      }),
+    )
   } catch (err) {
     const message = formatError(err)
     log.error("enrichment failed", { error: message })
     errors.push({ scope: "enrichment", message })
+    await settleEmployeeSync()
     return result(date, dryRun, steps, startedAt, loaded.counts, employeeSync, projects, [], errors)
   }
 
-  // Gesamtbestand der Dimacon-Kunden für den Namens-Fallback (ein Aufruf,
-  // wie ihn der dimacon-lexoffice-Lauf ohnehin macht). Der Tagesausschnitt
-  // taugt dafür NICHT: der gleichnamige Zwilling hat meist gerade keinen
-  // Termin, wäre im Ausschnitt unsichtbar und der Fallback verknüpfte den
-  // Kunden dauerhaft mit dem Clockin-Kunden des Zwillings.
-  const customerMatching = await withPhase("customer-inventory", () =>
-    loadCustomerMatching(dimaconClient, log, errors),
-  )
+  // Clockin-Vorabladungen. Beide sind reine Optimierungen: schlägt eine
+  // fehl, laufen die Einzelsuchen weiter — nur langsamer.
+  const onPrefetchFailure = (what: string) => (err: unknown) => {
+    const message = formatError(err)
+    log.warn("clockin prefetch failed — falling back to per-item lookups", {
+      what,
+      error: message,
+    })
+    errors.push({
+      scope: "load",
+      message: `${what} konnte nicht vorab geladen werden — Einzelabrufe für diesen Lauf (${message})`,
+    })
+    return undefined
+  }
+
+  const dimaconProjectIds = unique([...enriched.jobs.values()].map((j) => j.projectId))
+  const neededCustomers = unique([...enriched.jobs.values()].map((j) => j.customerId)).length
+
+  const [customerIndex, projectLookup]: [
+    ClockinCustomerIndex | undefined,
+    ClockinProjectLookup | undefined,
+  ] = await Promise.all([
+    withPhase("customer-index", () =>
+      loadClockinCustomerIndex(clockinClient, { neededCustomers, log }),
+    ).catch(onPrefetchFailure("Clockin-Kundenbestand")),
+    withPhase("project-lookup", () =>
+      loadClockinProjectsByNumber(clockinClient, dimaconProjectIds, {
+        withCustomFields: projectMapping.hasCustomTargets,
+        withEmployees: steps.assignments,
+        log,
+      }),
+    ).catch(onPrefetchFailure("Clockin-Projekte")),
+  ])
 
   const onCustomerAmbiguous = (message: string) => {
     log.warn("ambiguous clockin customer", { message })
     errors.push({ scope: "customer", message })
   }
+
+  // Erst hier wird das Ergebnis von Phase 1 gebraucht — das Matching seedet
+  // sich aus den Paaren des Stammdaten-Abgleichs.
+  await settleEmployeeSync()
 
   const employeeMatcher = new EmployeeMatcher(clockinClient, log, employeePairs)
   const customerSyncer = new CustomerSyncer(
@@ -169,8 +293,9 @@ export async function runDimaconClockinSync(
     steps.customers,
     customerMapping_,
     onMappingWarning,
-    customerMatching,
+    inventory.matching,
     onCustomerAmbiguous,
+    customerIndex,
   )
   const upserter = new ProjectUpserter(
     clockinClient,
@@ -182,6 +307,7 @@ export async function runDimaconClockinSync(
     // Archiv-Schutz unabhängig vom Zeilen-Status: jede aufgelöste oder
     // angelegte Clockin-ID zählt als "heute eingeplant".
     (clockinProjectId) => syncedClockinIds.add(clockinProjectId),
+    projectLookup,
   )
 
   // Die Projekt-Tasks schreiben nach Clockin (Dimacon ist zu diesem
@@ -294,9 +420,35 @@ export async function runDimaconClockinSync(
 
   let archived: Awaited<ReturnType<typeof archiveUnplanned>> = []
   if (steps.archive) {
+    if (!enriched.horizon.complete) {
+      errors.push({
+        scope: "archive",
+        message: `Archiv-Phase übersprungen: Planungshorizont (±${horizonDays} Tage) konnte nicht ermittelt werden${
+          enriched.horizon.reason ? ` — ${enriched.horizon.reason}` : ""
+        }`,
+      })
+    }
     try {
       archived = await withPhase("archive", () =>
-        archiveUnplanned(clockinClient, syncedClockinIds, log, dryRun),
+        archiveUnplanned(
+          clockinClient,
+          {
+            syncedClockinProjectIds: syncedClockinIds,
+            horizonProjectNumbers: new Set(
+              [...enriched.horizon.projectIds].map((id) => normalizeName(id)),
+            ),
+            horizonComplete: enriched.horizon.complete,
+            dryRun,
+            onSkipped: (message) => errors.push({ scope: "archive", message }),
+            onError: (clockinProjectId, message) =>
+              errors.push({
+                scope: "archive",
+                refId: String(clockinProjectId),
+                message: `Projekt ${clockinProjectId} konnte nicht archiviert werden: ${message}`,
+              }),
+          },
+          log,
+        ),
       )
     } catch (err) {
       const message = formatError(err)
@@ -305,6 +457,14 @@ export async function runDimaconClockinSync(
     }
   } else {
     log.info("archive step disabled — skipping")
+  }
+
+  const lookups: SyncLookupInfo = {
+    ...enriched.sources,
+    clockinCustomerIndex: customerIndex !== undefined,
+    clockinProjectPrefetch:
+      projectLookup === undefined ? "off" : projectLookup.bundled ? "bundled" : "per-id",
+    archiveHorizonDays: horizonDays,
   }
 
   const final = result(
@@ -317,6 +477,7 @@ export async function runDimaconClockinSync(
     projects,
     archived,
     errors,
+    lookups,
   )
   log.info("sync finished", {
     durationMs: final.durationMs,
@@ -324,6 +485,7 @@ export async function runDimaconClockinSync(
     projects: final.projects.length,
     archived: final.archived.length,
     errors: final.errors.length,
+    lookups,
   })
   return final
 }
@@ -338,6 +500,7 @@ function result(
   projects: ProjectSyncResult[],
   archived: SyncResult["archived"],
   errors: SyncError[],
+  lookups?: SyncLookupInfo,
 ): SyncResult {
   return {
     date,
@@ -349,7 +512,14 @@ function result(
     projects,
     archived,
     errors,
+    ...(lookups ? { lookups } : {}),
   }
+}
+
+interface CustomerInventory {
+  matching: CustomerMatchingContext
+  /** undefined = Bestand nicht geladen; das Enrichment lädt dann einzeln nach */
+  customers?: DimaconCustomerInfo[]
 }
 
 /**
@@ -359,11 +529,11 @@ function result(
  * Lauf legt dann eher einen sichtbaren Clockin-Kunden zu viel an, als still
  * auf den falschen zu buchen.
  */
-async function loadCustomerMatching(
+async function loadCustomerInventory(
   dimaconClient: DimaconClient,
   log: Logger,
   errors: SyncError[],
-): Promise<CustomerMatchingContext> {
+): Promise<CustomerInventory> {
   try {
     const all = await loadAllCustomers(dimaconClient)
     const knownCustomerNumbers = new Set(
@@ -374,7 +544,10 @@ async function loadCustomerMatching(
       customers: all.length,
       duplicateNames: duplicateNames.size,
     })
-    return { duplicateNames, knownCustomerNumbers, inventoryLoaded: true }
+    return {
+      matching: { duplicateNames, knownCustomerNumbers, inventoryLoaded: true },
+      customers: all,
+    }
   } catch (err) {
     const message = formatError(err)
     log.error("failed to load dimacon customer inventory — name fallback disabled", {
@@ -384,7 +557,13 @@ async function loadCustomerMatching(
       scope: "customer",
       message: `Dimacon-Kundenbestand konnte nicht geladen werden — Namens-Fallback für diesen Lauf deaktiviert (${message})`,
     })
-    return { duplicateNames: new Set(), knownCustomerNumbers: new Set(), inventoryLoaded: false }
+    return {
+      matching: {
+        duplicateNames: new Set(),
+        knownCustomerNumbers: new Set(),
+        inventoryLoaded: false,
+      },
+    }
   }
 }
 

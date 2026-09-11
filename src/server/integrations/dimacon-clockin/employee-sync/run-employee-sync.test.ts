@@ -86,7 +86,12 @@ function page(current: number, lastPage: number, rows: Record<string, unknown>[]
 }
 
 function run(
-  options: { dryRun?: boolean; createInDimacon?: boolean; hasCustomTargets?: boolean } = {},
+  options: {
+    dryRun?: boolean
+    createInDimacon?: boolean
+    hasCustomTargets?: boolean
+    preloaded?: readonly DimaconEmployeeFull[]
+  } = {},
 ) {
   return runEmployeeSync(
     stubDimaconClient,
@@ -95,6 +100,7 @@ function run(
     { dryRun: options.dryRun ?? false, createInDimacon: options.createInDimacon ?? false },
     silentLog,
     noop,
+    options.preloaded,
   )
 }
 
@@ -316,5 +322,35 @@ describe("runEmployeeSync — Anlage Clockin → Dimacon", () => {
       // kein Verweis auf Log-Zeilen, die es pro Kandidat nicht gibt
       reason: "nicht angelegt — Ergebnis auf 200 Einzelbegründungen begrenzt",
     })
+  })
+})
+
+describe("runEmployeeSync — vorgeladene Dimacon-Mitarbeiter (#15)", () => {
+  it("verzichtet auf den eigenen Abruf, wenn der Orchestrator sie schon hat", async () => {
+    const outcome = await run({ preloaded: [dim({ id: "d1", personnelNumber: "P-1" })] })
+
+    expect(loadEmployeesWithEmailMock).not.toHaveBeenCalled()
+    expect(outcome.counts.dimacon).toBe(1)
+  })
+
+  it("lädt selbst, wenn nichts vorgeladen wurde", async () => {
+    loadEmployeesWithEmailMock.mockResolvedValue([dim()])
+
+    const outcome = await run()
+
+    expect(loadEmployeesWithEmailMock).toHaveBeenCalledTimes(1)
+    expect(outcome.counts.dimacon).toBe(1)
+  })
+
+  it('meldet den Ladefehler weiterhin mit scope "load"', async () => {
+    // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
+    loadEmployeesWithEmailMock.mockRejectedValue(new Error("boom 400"))
+
+    const outcome = await run()
+
+    expect(outcome.counts).toEqual({ dimacon: 0, clockin: 0, matched: 0 })
+    expect(outcome.errors).toContainEqual(
+      expect.objectContaining({ scope: "load", refId: "dimacon" }),
+    )
   })
 })

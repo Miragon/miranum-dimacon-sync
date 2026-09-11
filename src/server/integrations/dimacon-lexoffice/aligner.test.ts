@@ -8,6 +8,7 @@ vi.mock("@miragon/client-dimacon", () => ({
 }))
 
 const { CustomerAligner } = await import("./aligner.js")
+const { LexwareContactIndex } = await import("./contact-index.js")
 const { log } = await import("../../lib/log.js")
 
 const silentLog = log.child({ test: true })
@@ -573,5 +574,84 @@ describe("CustomerAligner", () => {
     expect(row.reason).toContain("1001")
     expect(lex.post).not.toHaveBeenCalled()
     expect(updateCustomerMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("CustomerAligner mit Lexware-Kontaktindex (#15)", () => {
+  const lexContact = (id: string, name: string, number?: string) => ({
+    id,
+    version: 1,
+    company: { name },
+    roles: { customer: number === undefined ? {} : { number } },
+  })
+
+  function indexedAligner(
+    contacts: Parameters<typeof LexwareContactIndex.prototype.add>[0][],
+    lex = lexClient(),
+  ) {
+    const index = new LexwareContactIndex(contacts)
+    return {
+      lex,
+      index,
+      aligner: new CustomerAligner(
+        dimaconClient,
+        lex as never,
+        silentLog,
+        false,
+        { createContacts: true, alignNumbers: true },
+        undefined,
+        () => undefined,
+        { names: new Set(), numbers: new Set() },
+        index,
+      ),
+    }
+  }
+
+  it("löst über die Nummer auf, ohne einen einzigen GET", async () => {
+    const { aligner, lex } = indexedAligner([lexContact("lex-1", "Muster GmbH", "D-100")])
+
+    const row = await aligner.align(customer)
+
+    expect(row.status).toBe("unchanged")
+    expect(row.lexwareContactId).toBe("lex-1")
+    expect(lex.get).not.toHaveBeenCalled()
+  })
+
+  it("löst über den Namen auf, ohne einen einzigen GET", async () => {
+    // D-100 ist nicht numerisch ⇒ die Nummernstufe entfällt wie bisher.
+    const { aligner, lex } = indexedAligner([lexContact("lex-1", "Muster GmbH", "9999")])
+
+    const row = await aligner.align(customer)
+
+    expect(row.lexwareContactId).toBe("lex-1")
+    expect(row.status).toBe("aligned")
+    expect(lex.get).not.toHaveBeenCalled()
+  })
+
+  it("meldet gleichnamige Kontakte als mehrdeutig statt zu schreiben", async () => {
+    // Mit einem EINWERTIGEN Index wäre dieser Schutz still weg.
+    const { aligner, lex } = indexedAligner([
+      lexContact("lex-1", "Muster GmbH", "1"),
+      lexContact("lex-2", "Muster GmbH", "2"),
+    ])
+
+    const row = await aligner.align(customer)
+
+    expect(row.status).toBe("ambiguous")
+    expect(row.reason).toContain("gleichem Firmennamen")
+    expect(lex.post).not.toHaveBeenCalled()
+    expect(updateCustomerMock).not.toHaveBeenCalled()
+  })
+
+  it("macht einen frisch angelegten Kontakt sofort auffindbar (kein zweiter POST)", async () => {
+    const { aligner, lex } = indexedAligner([])
+
+    const first = await aligner.align({ ...customer, customerNumber: "D-1" })
+    const second = await aligner.align({ ...customer, id: "cust-2", customerNumber: "D-2" })
+
+    expect(first.status).toBe("created")
+    expect(second.status).toBe("unchanged")
+    expect(second.lexwareContactId).toBe("lex-new")
+    expect(lex.post).toHaveBeenCalledTimes(1)
   })
 })

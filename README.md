@@ -107,6 +107,7 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 | `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`). Defaults: 10 / 5 / 2 Requests pro Sekunde.                     | nein    |
 | `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2.                                                                           | nein    |
 | `CONCURRENCY_<SYS>`        | Obergrenze paralleler Tasks je Lauf; maßgeblich ist das strengste beteiligte System. Defaults: 8 / 5 / 2.                         | nein    |
+| `ARCHIVE_HORIZON_DAYS`     | Planungshorizont des Archiv-Schutzes in Tagen (±, Default 14): was in diesem Fenster einen Termin hat, wird nie archiviert.       | nein    |
 
 ### Rate-Limits & Laufzeit
 
@@ -140,6 +141,51 @@ Lexware-Lookups (der Lexware-Client wiederholt 429 selbst; ohne die Ausnahme
 werden aus einem logischen Aufruf ~20 HTTP-Calls). Weil diese client-internen
 Wiederholungen am Wrapper vorbeilaufen, zählt `requests.lexoffice` sie nicht
 mit — die Zahl ist die der logischen Aufrufe.
+
+### Bündelung statt Einzelabrufe
+
+Beide Syncs lösen ihre Gegenstücke seit #15 über wenige Sammelabrufe statt
+über einen Request je Element auf:
+
+- **Dimacon**: `getAllJobsInPeriod` + `getCurrentTeamAssignments` +
+  `getAllProjects` statt `getJobById`/`getProjectById` je Element; Kunden und
+  Mitarbeiter werden ohnehin einmal als Gesamtbestand geladen und
+  durchgereicht.
+- **Clockin**: ein lokaler Kundenindex (`getAListOfCustomers`, paginiert) und
+  eine gebündelte Projektsuche (`searchForProjects` mit mehreren Nummern und
+  `includes: employees`) — damit entfällt auch das
+  `getAListOfProjectEmployees` je Projekt.
+- **Lexware**: ein paginierter Voll-Import von `/v1/contacts` statt einer
+  Suche je Kunde.
+
+Alle Bündelungen sind defensiv gebaut, weil das Verhalten der APIs an diesen
+Stellen nicht dokumentiert ist: jede hat einen Einzelabruf-Fallback, die
+Team-Zuweisungen werden einmal je Lauf gegen `getJobById` geprobt, und die
+gebündelte Projektsuche schaltet auf Einzelanfragen um, wenn `byNumber`
+mehrere Parameter offenbar nicht als ODER auswertet. Welcher Weg tatsächlich
+genommen wurde, steht als `lookups` im Ergebnis (`sync_runs.result`) und im
+Log. Indizes sind grundsätzlich **mehrwertig**: mehrere Kandidaten zu einem
+Schlüssel bleiben sichtbar und führen wie bisher zu einer gemeldeten
+Mehrdeutigkeit statt zu einem Schreibvorgang.
+
+### Projekt-Startdatum und Archiv-Horizont
+
+Zwei fachlich sichtbare Änderungen aus #15:
+
+- Das Clockin-**Projekt-Startdatum** (`start_date`) wird nur noch bei der
+  Anlage gesetzt und danach im Update-Body zurückgespiegelt. Vorher wurde es
+  bei jedem Lauf auf das Sync-Datum gesetzt — damit war der Änderungsvergleich
+  für jedes an einem anderen Tag synchronisierte Projekt per Definition wahr
+  und praktisch jedes Projekt wurde täglich geschrieben.
+- Die **Archiv-Phase** liest jetzt alle Seiten der unarchivierten Projekte
+  (vorher nur die erste) und schreibt parallel. Damit das nicht in einer
+  Massen-Archivierung endet, ist der Horizont-Schutz Pflicht: archiviert wird
+  nur, was im Fenster ±`ARCHIVE_HORIZON_DAYS` (Default 14) um das Sync-Datum
+  **keinen** Termin hat. Kann der Horizont nicht ermittelt werden, archiviert
+  der Lauf gar nichts und meldet das als Fehlerzeile — lieber zu wenig
+  archivieren als auf halber Datenbasis. Denselben Fail-Safe gibt es bei
+  unvollständiger Paginierung. **Vor dem ersten Live-Lauf nach diesem Update
+  einen dryRun fahren und die Archiv-Liste abnehmen.**
 
 **Nur noch Seed-Input** (einmaliger Import beim allerersten Boot gegen eine
 leere DB — danach entfernen, siehe [`env.example`](./env.example)):

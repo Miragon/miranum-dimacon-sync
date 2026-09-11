@@ -7,6 +7,8 @@ import { loadMappingContext } from "../shared/mapping-context.js"
 import type { EntityMappingContext } from "../shared/mapping-context.js"
 import { duplicateKeys } from "../shared/matching.js"
 import { CustomerAligner } from "./aligner.js"
+import { loadLexwareContactIndex } from "./contact-index.js"
+import type { LexwareContactIndex } from "./contact-index.js"
 import { DEFAULT_LEXOFFICE_STEPS } from "./types.js"
 import type {
   CustomerAlignRow,
@@ -111,6 +113,28 @@ export async function runDimaconLexofficeSync(
     return result(dryRun, steps, startedAt, rows, errors)
   }
 
+  // Voll-Import der Lexware-Kontakte: aus einer Suche JE KUNDE werden ein
+  // paar Seitenabrufe. Scheitert er, läuft der Sync mit dem bisherigen
+  // Verhalten (Serversuche je Kunde) weiter — nur langsamer.
+  let contactIndex: LexwareContactIndex | undefined
+  try {
+    contactIndex = await withPhase("contact-index", () =>
+      loadLexwareContactIndex(lexofficeClient, log),
+    )
+  } catch (err) {
+    const message = formatError(err)
+    log.warn("lexware contact index failed — falling back to per-customer lookups", {
+      error: message,
+    })
+    errors.push({
+      scope: "customers",
+      message: `Lexware-Kontakte konnten nicht vorab geladen werden — Auflösung läuft je Kunde einzeln (${message})`,
+    })
+  }
+  if (!contactIndex) {
+    log.info("running without lexware contact index — per-customer lookups")
+  }
+
   // Jede Task fasst Lexware UND Dimacon an — maßgeblich ist das strengste
   // beteiligte System (Lexware Office: 2 req/s laut Doku).
   const limit = createLimit("lexoffice")
@@ -123,6 +147,7 @@ export async function runDimaconLexofficeSync(
     mapping,
     onMappingWarning,
     { names: duplicateDimaconNames, numbers: duplicateDimaconNumbers },
+    contactIndex,
   )
 
   await withPhase("align", () =>

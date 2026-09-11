@@ -3,21 +3,13 @@ import type { Client as ClockInClient } from "@miragon/client-clockin"
 import { NON_IDEMPOTENT_RETRY, withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
 import type { DimaconProjectInfo } from "./enrichment.js"
+import type { ClockinProjectLookup, ClockinProjectRow } from "./project-lookup.js"
 import { projectSourceValues } from "../shared/field-catalog.js"
 import { applyMapping, diffMappedFields } from "../shared/field-mapping.js"
 import type { AppliedMapping } from "../shared/field-mapping.js"
 import type { EntityMappingContext } from "../shared/mapping-context.js"
 import { startDateForClockin } from "../shared/time.js"
 import type { CustomerMapping, ProjectSyncResult, SyncSteps } from "./types.js"
-
-interface ClockinProjectRow {
-  id?: number
-  name?: string
-  number?: string | null
-  start_date?: string | null
-  archived?: boolean
-  customFields?: { custom_field_id?: number; value?: string | null }[]
-}
 
 interface ClockinProjectEmployeeRow {
   id?: number
@@ -52,14 +44,23 @@ export class ProjectUpserter {
      * darf nur Projekte archivieren, die hier nie gemeldet wurden.
      */
     private readonly onResolved: (clockinProjectId: number) => void = () => undefined,
+    /**
+     * Vorab gebündelt geladene Clockin-Projekte (`searchForProjects` mit
+     * mehreren Nummern + `includes:employees`). Vorhanden = weder eine Suche
+     * noch ein `getAListOfProjectEmployees` je Projekt.
+     */
+    private readonly prefetched?: ClockinProjectLookup,
   ) {}
+
+  /** Einmalige Diagnose je Lauf — s. `warnAboutMissingTargets`. */
+  private warnedMissingTargets = false
 
   async upsert(input: UpsertInput): Promise<ProjectSyncResult> {
     const { date, project, customer, desiredEmployeeIds } = input
 
     // Auch bei deaktivierten Schritten immer auflösen: die Archiv-Phase
     // schützt nur Projekte, deren Clockin-ID dieser Lauf kennt.
-    const found = await this.findByNumber(project.id)
+    const found = await this.resolveRow(project.id)
     if (found?.id !== undefined) this.onResolved(found.id)
 
     if (!found) {
@@ -98,8 +99,15 @@ export class ProjectUpserter {
     return applied
   }
 
+  /**
+   * `startDate` ist ein PARAMETER, kein abgeleiteter Wert: beim Anlegen das
+   * Sync-Datum, beim Update der Bestandswert der Clockin-Zeile. Vorher wurde
+   * er täglich neu gesetzt — damit war der Änderungsvergleich für jedes an
+   * einem anderen Tag synchronisierte Projekt per Definition wahr und jeder
+   * Lauf schrieb praktisch jedes Projekt (Issue #15).
+   */
   private buildBody(
-    date: string,
+    startDate: string,
     project: DimaconProjectInfo,
     customer: CustomerMapping,
     applied: AppliedMapping,
@@ -109,19 +117,44 @@ export class ProjectUpserter {
       ...applied.standardFields,
       number: project.id,
       customer_id: customer.clockinId,
-      start_date: startDateForClockin(date),
+      start_date: startDate,
       ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
       ...extra,
     } as ProjectWriteBody
   }
 
+  /**
+   * Clockin-Zeile zur Dimacon-Projektnummer. Mit Prefetch ohne Request; die
+   * Einzelsuche bleibt der Fallback (kein Prefetch bzw. Prefetch-Fehler).
+   */
+  private async resolveRow(dimaconProjectId: string): Promise<ClockinProjectRow | null> {
+    if (this.prefetched) {
+      const rows = this.prefetched.get(dimaconProjectId)
+      if (rows.length > 1) {
+        // Der Index ist mehrwertig — Mehrdeutigkeit bleibt sichtbar, statt
+        // still auf den ersten Treffer zu kollabieren.
+        this.log.warn("multiple clockin projects share one dimacon number", {
+          dimaconProjectId,
+          clockinProjectIds: rows.map((r) => r.id),
+        })
+      }
+      return rows[0] ?? null
+    }
+    return this.findByNumber(dimaconProjectId)
+  }
+
   private async findByNumber(dimaconProjectId: string): Promise<ClockinProjectRow | null> {
+    const includes: { relation: "employees" | "customFields" }[] = []
+    // Mitarbeiter gleich mitladen — spart das getAListOfProjectEmployees.
+    if (this.steps.assignments) includes.push({ relation: "employees" })
+    if (this.mapping.hasCustomTargets) includes.push({ relation: "customFields" })
+
     const result = (await withRetry(() =>
       clockin.searchForProjects({
         client: this.client,
         body: {
           scopes: [{ name: "byNumber", parameters: [dimaconProjectId] }],
-          ...(this.mapping.hasCustomTargets ? { includes: [{ relation: "customFields" }] } : {}),
+          ...(includes.length > 0 ? { includes } : {}),
         },
       }),
     )) as unknown as { data?: ClockinProjectRow[] }
@@ -157,7 +190,8 @@ export class ProjectUpserter {
       () =>
         clockin.createProject({
           client: this.client,
-          body: this.buildBody(date, project, customer, applied),
+          // Anlage: das Startdatum ist das Sync-Datum.
+          body: this.buildBody(startDateForClockin(date), project, customer, applied),
         }),
       // Anlage ist nicht idempotent (s. NON_IDEMPOTENT_RETRY): ein Retry nach
       // serverseitig erfolgtem Insert legte ein zweites Projekt an.
@@ -220,12 +254,16 @@ export class ProjectUpserter {
         })
       : { changed: false, changes: [] }
 
+    // `start_date` steht bewusst NICHT mehr im Vergleich (Issue #15): es
+    // wurde bei jedem Lauf auf das Sync-Datum gesetzt und war damit für jedes
+    // an einem anderen Tag synchronisierte Projekt per Definition „geändert" —
+    // der Schutz „nur bei Änderung schreiben" war dadurch wirkungslos. Das
+    // Clockin-Startdatum bleibt künftig auf dem Wert der Anlage stehen.
     const fieldsChanged =
       applied !== null &&
-      (row.archived === true ||
-        (row.number ?? "") !== project.id ||
-        (row.start_date ?? "").slice(0, 10) !== date ||
-        mappedDiff.changed)
+      (row.archived === true || (row.number ?? "") !== project.id || mappedDiff.changed)
+
+    if (applied) this.warnAboutMissingTargets(applied, row)
 
     // Der volle Update-Body braucht customer_id — ohne aufgelösten Kunden
     // werden Feld-Updates übersprungen.
@@ -240,7 +278,7 @@ export class ProjectUpserter {
     let toAdd: number[] = []
     let toRemove: number[] = []
     if (this.steps.assignments) {
-      const currentEmployees = await this.listEmployees(clockinId)
+      const currentEmployees = await this.currentEmployees(row, clockinId)
       const desired = new Set(desiredEmployeeIds)
       const current = new Set(currentEmployees)
       toAdd = [...desired].filter((id) => !current.has(id))
@@ -278,7 +316,18 @@ export class ProjectUpserter {
         clockin.updateProject({
           client: this.client,
           path: { project: clockinId },
-          body: this.buildBody(date, project, customer, applied, { archived: false }),
+          // Update: Bestands-Startdatum zurückspiegeln. Korrekt bei Merge-
+          // UND bei Replace-Semantik des Clockin-PUT (weglassen wäre es nur
+          // bei Merge — die Semantik ist nicht dokumentiert).
+          body: this.buildBody(
+            row.start_date ?? startDateForClockin(date),
+            project,
+            customer,
+            applied,
+            {
+              archived: false,
+            },
+          ),
         }),
       )
     } else if (needsBareUnarchive) {
@@ -319,6 +368,38 @@ export class ProjectUpserter {
       employeesDetached: toRemove,
       reason,
     }
+  }
+
+  /**
+   * Aktuelle Belegschaft des Projekts. Trägt die Zeile ein `employees`-Array
+   * (Prefetch bzw. Einzelsuche mit `includes:employees`), entfällt der
+   * Request je Projekt komplett. Ein LEERES Array ist eine gültige Antwort —
+   * deshalb `Array.isArray` statt eines Truthy-Checks.
+   */
+  private async currentEmployees(row: ClockinProjectRow, clockinId: number): Promise<number[]> {
+    if (Array.isArray(row.employees)) {
+      return row.employees.map((e) => e.id).filter((x): x is number => x !== undefined)
+    }
+    return this.listEmployees(clockinId)
+  }
+
+  /**
+   * Diagnose zum im Issue vermuteten „immer geändert"-Fall: taucht ein
+   * gemapptes Zielfeld in der Such-Zeile gar nicht als Key auf, vergleicht
+   * `diffMappedFields` gegen `undefined` und meldet jeden Lauf eine Änderung.
+   * Bewusst nur eine Warnung — die Vergleichssemantik bleibt unangetastet.
+   */
+  private warnAboutMissingTargets(applied: AppliedMapping, row: ClockinProjectRow): void {
+    if (this.warnedMissingTargets) return
+    const missing = Object.keys(applied.standardFields).filter(
+      (field) => !Object.prototype.hasOwnProperty.call(row, field),
+    )
+    if (missing.length === 0) return
+    this.warnedMissingTargets = true
+    this.log.warn("mapped project fields missing from the clockin search row", {
+      fields: missing,
+      hint: "der Feldvergleich meldet sie deshalb bei jedem Lauf als geändert",
+    })
   }
 
   private async listEmployees(clockinProjectId: number): Promise<number[]> {

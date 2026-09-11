@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import {
   Table,
   TableBody,
@@ -53,7 +54,14 @@ export interface RunMetricsSnapshot {
  * Metriken trägt — ältere Läufe und ältere Server-Versionen bleiben
  * kompatibel.
  */
-export function MetricsSection({ metrics }: { metrics?: RunMetricsSnapshot }) {
+export function MetricsSection({
+  metrics,
+  footer,
+}: {
+  metrics?: RunMetricsSnapshot
+  /** Zusatzzeile im selben Abschnitt (z. B. die Auflösungswege des Laufs). */
+  footer?: ReactNode
+}) {
   if (!metrics) return null
 
   // Spalten nur für Systeme, die im Lauf überhaupt angefragt wurden.
@@ -114,6 +122,7 @@ export function MetricsSection({ metrics }: { metrics?: RunMetricsSnapshot }) {
         wegen Rate-Limit). Parallel laufende Phasen überlappen — die Summe der Phasen-Dauern ist
         deshalb größer als die Gesamtdauer.
       </p>
+      {footer}
     </section>
   )
 }

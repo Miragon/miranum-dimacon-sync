@@ -147,7 +147,6 @@ describe("ProjectUpserter", () => {
     it.each([
       ["archived project is re-planned", matchingRow({ archived: true })],
       ["number drifted", matchingRow({ number: "old-number" })],
-      ["start_date drifted", matchingRow({ start_date: "2026-08-13T07:30:00+02:00" })],
       ["mapped field drifted (name)", matchingRow({ name: "Alter Name" })],
     ])("writes exactly one full update when %s", async (_label, row) => {
       searchForProjectsMock.mockResolvedValue({ data: [row] })
@@ -163,6 +162,150 @@ describe("ProjectUpserter", () => {
         body: fullBody({ archived: false }),
       })
       expect(createProjectMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("start_date (Regression #15)", () => {
+    it("does NOT write when only start_date differs", async () => {
+      // Vorher setzte buildBody start_date auf das Sync-Datum und der
+      // Vergleich schlug damit für JEDES an einem anderen Tag
+      // synchronisierte Projekt an — jeder Lauf schrieb praktisch jedes
+      // Projekt. Das Clockin-Startdatum bleibt jetzt stehen.
+      searchForProjectsMock.mockResolvedValue({
+        data: [matchingRow({ start_date: "2026-08-13T07:30:00+02:00" })],
+      })
+      const upserter = makeUpserter()
+
+      const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(result.status).toBe("unchanged")
+      expectNoWrites()
+    })
+
+    it("echoes the existing start_date in a real update body", async () => {
+      searchForProjectsMock.mockResolvedValue({
+        data: [matchingRow({ name: "Alter Name", start_date: "2026-08-13T07:30:00+02:00" })],
+      })
+      const upserter = makeUpserter()
+
+      await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(updateProjectMock.mock.calls[0][0]).toEqual({
+        client: stubClient,
+        path: { project: 55 },
+        body: fullBody({ archived: false, start_date: "2026-08-13T07:30:00+02:00" }),
+      })
+    })
+
+    it("uses the sync date as start_date when creating", async () => {
+      searchForProjectsMock.mockResolvedValue({ data: [] })
+      createProjectMock.mockResolvedValue({ data: { id: 99 } })
+      const upserter = makeUpserter()
+
+      await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(createProjectMock.mock.calls[0][0]).toEqual({
+        client: stubClient,
+        body: fullBody(),
+      })
+    })
+
+    it("falls back to the sync date when the existing row has no start_date", async () => {
+      searchForProjectsMock.mockResolvedValue({
+        data: [matchingRow({ name: "Alter Name", start_date: null })],
+      })
+      const upserter = makeUpserter()
+
+      await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(updateProjectMock.mock.calls[0][0]).toMatchObject({
+        body: { start_date: startDateForClockin(date) },
+      })
+    })
+  })
+
+  describe("Prefetch (#15)", () => {
+    function prefetch(rows: Record<string, unknown>[]) {
+      return {
+        get: (id: string) => (id === "proj-1" ? rows : []),
+        bundled: true,
+        size: rows.length,
+      }
+    }
+
+    function makePrefetchedUpserter(rows: Record<string, unknown>[]) {
+      return new ProjectUpserter(
+        stubClient,
+        silentLog,
+        false,
+        DEFAULT_STEPS,
+        mapping,
+        () => undefined,
+        () => undefined,
+        prefetch(rows) as never,
+      )
+    }
+
+    it("never searches when the row comes from the prefetch", async () => {
+      const upserter = makePrefetchedUpserter([matchingRow({ employees: [] })])
+
+      const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(result.status).toBe("unchanged")
+      expect(searchForProjectsMock).not.toHaveBeenCalled()
+      expect(getAListOfProjectEmployeesMock).not.toHaveBeenCalled()
+    })
+
+    it("derives the attach/detach delta from the included employees", async () => {
+      const upserter = makePrefetchedUpserter([matchingRow({ employees: [{ id: 1 }, { id: 2 }] })])
+
+      const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [2, 3] })
+
+      expect(getAListOfProjectEmployeesMock).not.toHaveBeenCalled()
+      expect(result.employeesAttached).toEqual([3])
+      expect(result.employeesDetached).toEqual([1])
+    })
+
+    it("still reads the employees when the row carries none", async () => {
+      // Ohne `employees`-Key (includes nicht angefragt) bleibt der Einzelabruf
+      // der Fallback — ein LEERES Array ist dagegen eine gültige Antwort.
+      getAListOfProjectEmployeesMock.mockResolvedValue({ data: [{ id: 9 }] })
+      const upserter = makePrefetchedUpserter([matchingRow()])
+
+      const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(getAListOfProjectEmployeesMock).toHaveBeenCalledTimes(1)
+      expect(result.employeesDetached).toEqual([9])
+    })
+
+    it("falls back to a single search (with includes:employees) without prefetch", async () => {
+      searchForProjectsMock.mockResolvedValue({ data: [matchingRow({ employees: [{ id: 4 }] })] })
+      const upserter = makeUpserter()
+
+      const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [4] })
+
+      expect(searchForProjectsMock.mock.calls[0][0]).toMatchObject({
+        body: {
+          scopes: [{ name: "byNumber", parameters: ["proj-1"] }],
+          includes: [{ relation: "employees" }],
+        },
+      })
+      expect(getAListOfProjectEmployeesMock).not.toHaveBeenCalled()
+      expect(result.status).toBe("unchanged")
+    })
+
+    it("keeps ambiguity visible instead of silently taking the first row", async () => {
+      const warn = vi.spyOn(silentLog, "warn").mockImplementation(() => undefined)
+      const upserter = makePrefetchedUpserter([matchingRow(), matchingRow({ id: 56 })])
+
+      const result = await upserter.upsert({ date, project, customer, desiredEmployeeIds: [] })
+
+      expect(result.clockinProjectId).toBe(55)
+      expect(warn).toHaveBeenCalledWith(
+        "multiple clockin projects share one dimacon number",
+        expect.objectContaining({ clockinProjectIds: [55, 56] }),
+      )
+      warn.mockRestore()
     })
   })
 

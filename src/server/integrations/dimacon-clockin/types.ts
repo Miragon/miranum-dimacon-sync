@@ -75,6 +75,22 @@ export interface SyncError {
   message: string
 }
 
+/**
+ * Welcher Weg die Auflösungen genommen haben (Issue #15). Jede Bündelung
+ * hat einen Einzelabruf-Fallback — ohne diese Anzeige wäre im Ergebnis nicht
+ * erkennbar, ob die Optimierung greift. Optional, damit ältere Läufe und
+ * ältere Clients unverändert lesbar bleiben.
+ */
+export interface SyncLookupInfo {
+  jobs: "period" | "per-job"
+  teamAssignments: "period" | "per-job" | "none"
+  projects: "bulk" | "per-id"
+  customers: "preloaded" | "bulk" | "per-id"
+  clockinCustomerIndex: boolean
+  clockinProjectPrefetch: "bundled" | "per-id" | "off"
+  archiveHorizonDays: number
+}
+
 export interface SyncResult {
   date: string
   dryRun: boolean
@@ -90,6 +106,8 @@ export interface SyncResult {
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
+  /** Auflösungswege des Laufs — fehlt auf frühen Rückgabepfaden */
+  lookups?: SyncLookupInfo
 }
 
 export interface EmployeeMapping {

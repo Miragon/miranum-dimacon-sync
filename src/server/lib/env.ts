@@ -61,6 +61,17 @@ export const env = {
     orgSync: () => optional("WORKOS_ORG_SYNC") === "on",
   },
   /**
+   * Planungshorizont des Archiv-Schutzes in Tagen (Default kommt aus der
+   * Integration, damit die fachliche Begründung dort steht). Wie `tuning`
+   * bei jedem Aufruf frisch gelesen.
+   */
+  // Untergrenze 1: ein Bruchwert wie "0.5" würde sonst still auf 0 gefloort
+  // und schrumpfte den Archiv-Schutz auf den Lauftag zusammen.
+  archiveHorizonDays: (fallback: number): number => {
+    const days = Math.floor(positiveNumber("ARCHIVE_HORIZON_DAYS", fallback))
+    return days >= 1 ? days : fallback
+  },
+  /**
    * Optionales Laufzeit-Tuning je Zielsystem (Token-Bucket + Parallelität).
    * Wird bei jedem Aufruf frisch gelesen — kein Neustart nötig, um ein
    * gedrosseltes System zu entlasten. Credentials bleiben ausdrücklich

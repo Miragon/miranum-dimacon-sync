@@ -16,7 +16,7 @@ import {
   LexofficeContactLookup,
   numericLexwareNumber,
 } from "./contact-lookup.js"
-import type { LexContact } from "./contact-lookup.js"
+import type { ContactSource, LexContact } from "./contact-lookup.js"
 import type { CustomerAlignRow, LexofficeSyncSteps } from "./types.js"
 
 /** Ergebnis der mehrstufigen Kunden-Auflösung. Nur `match`/`none` schreiben. */
@@ -65,7 +65,7 @@ export const NO_DUPLICATE_KEYS: DimaconDuplicateKeys = { names: new Set(), numbe
  * nächsten Lauf aligned, wenn der Kontakt wiedergefunden wird.
  */
 export class CustomerAligner {
-  private readonly lookup: LexofficeContactLookup
+  private readonly lookup: ContactSource
 
   constructor(
     private readonly dimaconClient: DimaconClient,
@@ -78,8 +78,15 @@ export class CustomerAligner {
     private readonly onMappingWarning: (message: string) => void = () => undefined,
     /** Mehrfach vergebene Dimacon-Schlüssel des Laufs — sperren die jeweilige Stufe */
     private readonly duplicates: DimaconDuplicateKeys = NO_DUPLICATE_KEYS,
+    /**
+     * Vorab geladener Voll-Index der Lexware-Kontakte. Vorhanden = 0 statt
+     * ein GET je Kunde; signaturgleich zur Serversuche, damit die
+     * Auflösungslogik unverändert bleibt. Fehlt er, gilt das bisherige
+     * Verhalten.
+     */
+    index?: ContactSource,
   ) {
-    this.lookup = new LexofficeContactLookup(lexofficeClient)
+    this.lookup = index ?? new LexofficeContactLookup(lexofficeClient)
   }
 
   async align(customer: DimaconCustomerInfo): Promise<CustomerAlignRow> {
@@ -298,10 +305,22 @@ export class CustomerAligner {
     // erfolgreicher, aber verloren gegangener Response würde beim Retry ein
     // Duplikat anlegen. Ein Fehlschlag heilt sich im nächsten Lauf über das
     // Find-or-Create selbst. (429 retryt der Lexoffice-Client intern.)
-    return (await this.lexofficeClient.post<LexContact>(
+    const created = (await this.lexofficeClient.post<LexContact>(
       "/v1/contacts",
       buildLexofficeContactBody(applied, customer.name),
     )) as LexContact
+
+    // Frisch angelegten Kontakt sofort auffindbar machen: zwei gleichnamige
+    // Dimacon-Kunden im selben Lauf legten sonst zwei Kontakte an. Die
+    // Create-Response trägt i. d. R. keine `roles` — deshalb der Kunden-Rolle
+    // und dem Firmennamen aus dem Request nachhelfen.
+    this.lookup.add?.({
+      ...created,
+      roles: created.roles ?? { customer: {} },
+      company: created.company ?? { name: customer.name },
+    })
+
+    return created
   }
 
   private async alignDimaconNumber(

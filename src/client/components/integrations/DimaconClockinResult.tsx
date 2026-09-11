@@ -81,6 +81,57 @@ export interface SyncResult {
   errors: SyncError[]
   /** optional: ältere Läufe/Server liefern keine Metriken */
   metrics?: RunMetricsSnapshot
+  /** optional: welche Auflösungswege der Lauf genommen hat (#15) */
+  lookups?: {
+    jobs?: string
+    teamAssignments?: string
+    projects?: string
+    customers?: string
+    clockinCustomerIndex?: boolean
+    clockinProjectPrefetch?: string
+    archiveHorizonDays?: number
+  }
+}
+
+/**
+ * Jede Bündelung hat einen Einzelabruf-Fallback — ohne diese Zeile wäre nicht
+ * erkennbar, ob die Optimierung greift oder der Lauf still auf den alten,
+ * langsamen Pfad gefallen ist.
+ */
+function LookupsNote({ lookups }: { lookups: NonNullable<SyncResult["lookups"]> }) {
+  const parts: string[] = []
+  if (lookups.jobs) parts.push(`Aufträge ${BULK_LABELS[lookups.jobs] ?? lookups.jobs}`)
+  if (lookups.projects)
+    parts.push(`Dimacon-Projekte ${BULK_LABELS[lookups.projects] ?? lookups.projects}`)
+  if (lookups.customers)
+    parts.push(`Dimacon-Kunden ${BULK_LABELS[lookups.customers] ?? lookups.customers}`)
+  if (lookups.clockinProjectPrefetch)
+    parts.push(
+      `Clockin-Projekte ${BULK_LABELS[lookups.clockinProjectPrefetch] ?? lookups.clockinProjectPrefetch}`,
+    )
+  if (lookups.clockinCustomerIndex !== undefined)
+    parts.push(`Clockin-Kunden ${lookups.clockinCustomerIndex ? "aus dem Index" : "einzeln"}`)
+
+  return (
+    <p className="text-ink-2 -mt-12 mb-16 text-[0.8rem]">
+      <span className="font-mono">Auflösung:</span> {parts.join(" · ")}
+      {lookups.archiveHorizonDays !== undefined
+        ? ` · Archiv-Horizont ±${lookups.archiveHorizonDays} Tage`
+        : ""}
+    </p>
+  )
+}
+
+/** Deutsche Kurzlabel der Auflösungswege. */
+const BULK_LABELS: Record<string, string> = {
+  period: "gebündelt",
+  bundled: "gebündelt",
+  bulk: "gebündelt",
+  preloaded: "vorgeladen",
+  "per-job": "einzeln",
+  "per-id": "einzeln",
+  none: "nicht geladen",
+  off: "einzeln",
 }
 
 const DIRECTION_LABELS: Record<EmployeeSyncRow["direction"], string> = {
@@ -135,7 +186,10 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
         </div>
       </section>
 
-      <MetricsSection metrics={result.metrics} />
+      <MetricsSection
+        metrics={result.metrics}
+        footer={result.lookups ? <LookupsNote lookups={result.lookups} /> : null}
+      />
 
       {result.employeeSync ? (
         <section className="mb-16">

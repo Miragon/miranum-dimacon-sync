@@ -10,6 +10,7 @@ vi.mock("@miragon/client-clockin", () => ({
 }))
 
 const { CustomerSyncer, OPEN_CUSTOMER_MATCHING } = await import("./customers.js")
+const { buildIndex } = await import("./customer-index.js")
 const { log } = await import("../../lib/log.js")
 
 /** Gesamtbestands-Wissen für den Namens-Fallback, Default = alles unauffällig. */
@@ -393,4 +394,101 @@ describe("Retry-Verhalten der Kunden-Anlage", () => {
     expect(mapping?.clockinId).toBe(99)
     expect(createCustomerMock).toHaveBeenCalledTimes(2)
   }, 60_000)
+})
+
+/** Syncer mit vorab geladenem Clockin-Kundenindex (#15). */
+function indexedSyncer(rows: Parameters<typeof buildIndex>[0]) {
+  const index = buildIndex(rows)
+  return {
+    index,
+    syncer: new CustomerSyncer(
+      stubClient,
+      silentLog,
+      false,
+      true,
+      undefined,
+      () => undefined,
+      matching(),
+      () => undefined,
+      index,
+    ),
+  }
+}
+
+describe("CustomerSyncer mit Clockin-Kundenindex (#15)", () => {
+  it("löst über die Nummer auf, ohne einen einzigen searchForCustomers-Aufruf", async () => {
+    const { syncer } = indexedSyncer([{ id: 7, company: "Muster GmbH", identifier: "D-100" }])
+
+    const mapping = await syncer.resolve(customer)
+
+    expect(mapping?.clockinId).toBe(7)
+    expect(searchForCustomersMock).not.toHaveBeenCalled()
+    expect(createCustomerMock).not.toHaveBeenCalled()
+  })
+
+  it("bedient den Namens-Fallback lokal (geänderte Dimacon-Nummer)", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    const { syncer } = indexedSyncer([{ id: 7, company: "Muster GmbH", identifier: "D-100" }])
+
+    const mapping = await syncer.resolve({ ...customer, customerNumber: "L-200" })
+
+    expect(mapping?.clockinId).toBe(7)
+    // Nur die Nummernstufe ging (als Miss) an den Server, der Name kam lokal
+    expect(searchForCustomersMock).toHaveBeenCalledTimes(1)
+    expect(searchForCustomersMock.mock.calls[0][0]).toMatchObject({
+      body: { scopes: [{ name: "byNameOrNumber", parameters: ["L-200"] }] },
+    })
+  })
+
+  it("meldet mehrere exakte Treffer als mehrdeutig statt zu schreiben (#16 bleibt scharf)", async () => {
+    // Genau der Fall, den ein EINWERTIGER Index still verschlucken würde.
+    const ambiguous: string[] = []
+    const index = buildIndex([
+      { id: 7, company: "Muster GmbH", identifier: "D-100" },
+      { id: 8, company: "Muster GmbH", identifier: "D-100" },
+    ])
+    const syncer = new CustomerSyncer(
+      stubClient,
+      silentLog,
+      false,
+      true,
+      undefined,
+      () => undefined,
+      matching(),
+      (message) => void ambiguous.push(message),
+      index,
+    )
+
+    expect(await syncer.resolve(customer)).toBeNull()
+    expect(ambiguous[0]).toContain("2 Clockin-Kandidaten")
+    expect(createCustomerMock).not.toHaveBeenCalled()
+    expect(searchForCustomersMock).not.toHaveBeenCalled()
+  })
+
+  it("fragt bei einem Index-Miss weiterhin die unscharfe Serversuche", async () => {
+    // Der Index kennt nur EXAKTE Treffer — ohne diesen Fallback legte der Lauf
+    // bisher unscharf gematchte Kunden neu an.
+    searchForCustomersMock.mockResolvedValue({
+      data: [{ id: 9, company: "Muster GmbH & Co. KG", identifier: "D-100-alt" }],
+    })
+    const { syncer } = indexedSyncer([])
+
+    const mapping = await syncer.resolve(customer)
+
+    expect(mapping?.clockinId).toBe(9)
+    expect(searchForCustomersMock).toHaveBeenCalled()
+  })
+
+  it("macht einen frisch angelegten Kunden sofort auffindbar (keine Doppelanlage)", async () => {
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+    createCustomerMock.mockResolvedValue({ data: { id: 42 } })
+    const { syncer } = indexedSyncer([])
+
+    const first = await syncer.resolve(customer)
+    const second = await syncer.resolve({ ...customer, id: "cust-2" })
+
+    expect(first?.clockinId).toBe(42)
+    expect(second?.clockinId).toBe(42)
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+  })
 })

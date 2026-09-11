@@ -3,6 +3,7 @@ import type { Client as ClockInClient } from "@miragon/client-clockin"
 import { NON_IDEMPOTENT_RETRY, withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
 import type { DimaconCustomerInfo } from "../shared/dimacon.js"
+import type { ClockinCustomerIndex } from "./customer-index.js"
 import { customerSourceValues } from "../shared/field-catalog.js"
 import { applyMapping } from "../shared/field-mapping.js"
 import type { EntityMappingContext } from "../shared/mapping-context.js"
@@ -75,6 +76,11 @@ export class CustomerSyncer {
     private readonly matching: CustomerMatchingContext = OPEN_CUSTOMER_MATCHING,
     /** Meldung einer nicht auflösbaren Mehrdeutigkeit (landet in `errors`). */
     private readonly onAmbiguous: (message: string) => void = () => undefined,
+    /**
+     * Vorab geladener Clockin-Kundenbestand. Vorhanden = exakte Treffer
+     * kommen ohne einen einzigen `searchForCustomers`-Aufruf zustande.
+     */
+    private readonly index?: ClockinCustomerIndex,
   ) {}
 
   async resolve(customer: DimaconCustomerInfo): Promise<CustomerMapping | null> {
@@ -205,6 +211,19 @@ export class CustomerSyncer {
     needle: string,
     field: "identifier" | "company",
   ): Promise<ClockinLookupResult> {
+    if (this.index) {
+      // Der Index ist MEHRWERTIG — die Mehrdeutigkeitsprüfung sieht hier
+      // dieselben Kandidaten wie bei der Serversuche.
+      const exact =
+        field === "identifier" ? this.index.byIdentifier(needle) : this.index.byCompany(needle)
+      if (exact.length === 1) return { row: exact[0] }
+      if (exact.length > 1) return { ambiguous: exact }
+      // Miss: der Index kennt nur EXAKTE Treffer. Die unscharfe Serversuche
+      // (`byNameOrNumber`) bleibt deshalb der Fallback — sonst legte der Lauf
+      // bestehende, bisher unscharf gematchte Kunden neu an. Ein Miss kostet
+      // wie bisher einen Request, ein Treffer künftig keinen.
+    }
+
     const result = (await withRetry(() =>
       clockin.searchForCustomers({
         client: this.clockinClient,
@@ -273,6 +292,10 @@ export class CustomerSyncer {
     if (id === undefined) {
       throw new Error(`clockin createCustomer returned no id for ${customer.name}`)
     }
+
+    // Frisch angelegten Kunden sofort auffindbar machen: zwei gleichnamige
+    // Dimacon-Kunden im selben Lauf legten sonst zwei Clockin-Kunden an.
+    this.index?.add({ id, company: customer.name, identifier: number })
 
     return {
       dimaconId: customer.id,

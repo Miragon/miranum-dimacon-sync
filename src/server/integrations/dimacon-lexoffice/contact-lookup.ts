@@ -56,12 +56,27 @@ export function isActiveCustomerContact(contact: LexContact): boolean {
 }
 
 /**
+ * Quelle der Kontakt-Auflösung. Beide Implementierungen (Serversuche und
+ * vorab geladener Voll-Index aus #15) liefern ALLE Kandidaten — nur so
+ * bleibt Mehrdeutigkeit im Aligner entscheidbar.
+ */
+export interface ContactSource {
+  byNumber(number: string): Promise<LexContact[]>
+  byName(name: string): Promise<LexContact[]>
+  /**
+   * Nur der lokale Index kann im Lauf angelegte Kontakte nachtragen — die
+   * Serversuche sieht sie ohnehin sofort.
+   */
+  add?(contact: LexContact): void
+}
+
+/**
  * Kapselt die Kontakt-Suche gegen die Lexware-API. Beide Lookups liefern
  * bewusst ALLE Kandidaten (kein `.find()`): Mehrdeutigkeit muss oben
- * entscheidbar bleiben. #15 kann diese Schicht später gegen einen vorab
- * geladenen Voll-Index tauschen, ohne die Auflösungslogik anzufassen.
+ * entscheidbar bleiben. Der Voll-Index (`contact-index.ts`) ersetzt diese
+ * Schicht signaturgleich, ohne die Auflösungslogik anzufassen.
  */
-export class LexofficeContactLookup {
+export class LexofficeContactLookup implements ContactSource {
   constructor(private readonly client: LexofficeClient) {}
 
   /** Alle aktiven Kunden-Kontakte mit exakt dieser Kundennummer. */

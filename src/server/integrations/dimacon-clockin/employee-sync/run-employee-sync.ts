@@ -4,9 +4,10 @@ import type { Client as DimaconClient } from "@miragon/client-dimacon"
 import { createLimit, withRetry } from "../../../lib/concurrency.js"
 import { formatError } from "../../../lib/errors.js"
 import type { Logger } from "../../../lib/log.js"
-import { loadAllClockinPages } from "../../shared/clockin-pages.js"
+import { clockinPageQuery, loadAllClockinPages } from "../../shared/clockin-pages.js"
 import type { ClockinPage } from "../../shared/clockin-pages.js"
 import { loadEmployeesWithEmail } from "../../shared/dimacon.js"
+import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
 import type { EntityMappingContext } from "../../shared/mapping-context.js"
 import { todayInBerlin } from "../../shared/time.js"
 import {
@@ -71,6 +72,12 @@ export async function runEmployeeSync(
   options: EmployeeSyncOptions,
   log: Logger,
   onMappingWarning: (message: string) => void,
+  /**
+   * Bereits geladene Dimacon-Mitarbeiter. Der Orchestrator lädt sie einmal
+   * für Stammdaten-Abgleich UND Tagesplanung — das spart je Lauf ein
+   * `getAllEmployees` + `getAllUsers`.
+   */
+  preloadedDimaconEmployees?: readonly DimaconEmployeeFull[],
 ): Promise<EmployeeSyncOutcome> {
   const errors: EmployeeSyncError[] = []
   const rows: EmployeeSyncRow[] = []
@@ -78,7 +85,9 @@ export async function runEmployeeSync(
 
   let dimaconEmployees
   try {
-    dimaconEmployees = await loadEmployeesWithEmail(dimaconClient)
+    dimaconEmployees = preloadedDimaconEmployees
+      ? [...preloadedDimaconEmployees]
+      : await loadEmployeesWithEmail(dimaconClient)
   } catch (err) {
     const message = formatError(err)
     log.error("failed to load dimacon employees", { error: message })
@@ -179,9 +188,11 @@ export async function runEmployeeSync(
     })
   }
 
-  // Gemischte Tasks (Clockin- und Dimacon-Schreibzugriffe) — maßgeblich
-  // ist das strengere der beiden Systeme.
-  const limit = createLimit("clockin")
+  // Getrennte Limits je Zielsystem: die Anlage-Richtung Clockin → Dimacon
+  // darf sich nicht denselben Slot-Vorrat mit den Clockin-Schreibzugriffen
+  // teilen, sonst blockieren sich die Richtungen gegenseitig.
+  const clockinLimit = createLimit("clockin")
+  const dimaconLimit = createLimit("dimacon")
   const syncer = new EmployeeSyncer(
     dimaconClient,
     clockinClient,
@@ -201,7 +212,7 @@ export async function runEmployeeSync(
 
   await Promise.all([
     ...outcome.pairs.map((pair) =>
-      limit(() =>
+      clockinLimit(() =>
         syncer
           .alignPair(pair)
           .then((row) => void rows.push(row))
@@ -211,7 +222,7 @@ export async function runEmployeeSync(
       ),
     ),
     ...(mayCreate ? outcome.dimaconOnly : []).map((e) =>
-      limit(() =>
+      clockinLimit(() =>
         syncer
           .createInClockin(e)
           .then((row) => {
@@ -223,7 +234,7 @@ export async function runEmployeeSync(
       ),
     ),
     ...createCandidates.map((c) =>
-      limit(() =>
+      dimaconLimit(() =>
         syncer
           .createInDimacon(c)
           .then((row) => void rows.push(row))
@@ -329,15 +340,9 @@ interface ClockinEmployeeLoad {
 /** Query-Typ der Mitarbeiter-Listen — beide Endpunkte teilen ihn. */
 type EmployeeListQuery = NonNullable<Parameters<typeof clockin.getAListOfEmployees>[0]>["query"]
 
-/**
- * Der Laravel-Parameter `page` fehlt in den generierten Typen, die API wertet
- * ihn aber aus (`meta.current_page`/`last_page`). Seite 1 geht bewusst ohne
- * Query raus; die Abbruchwächter in `loadAllClockinPages` sind der Fail-Safe,
- * falls die API ihn doch ignoriert.
- */
+/** s. `clockinPageQuery` — der `page`-Cast liegt zentral in clockin-pages.ts. */
 function pageQuery(page: number | undefined): EmployeeListQuery {
-  if (page === undefined) return undefined
-  return { page } as unknown as EmployeeListQuery
+  return clockinPageQuery<NonNullable<EmployeeListQuery>>(page)
 }
 
 async function loadClockinEmployees(

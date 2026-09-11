@@ -58,3 +58,46 @@ describe("env.tuning", () => {
     expect(env.tuning("dimacon").concurrency).toBe(8)
   })
 })
+
+describe("env.archiveHorizonDays", () => {
+  // Eigenes Aufräumen, damit kein gesetzter Horizont in andere Suiten leckt.
+  afterEach(() => {
+    delete process.env.ARCHIVE_HORIZON_DAYS
+  })
+
+  it("nimmt den von der Integration gelieferten Default", () => {
+    delete process.env.ARCHIVE_HORIZON_DAYS
+    expect(env.archiveHorizonDays(14)).toBe(14)
+  })
+
+  it("übernimmt einen ganzzahligen Override", () => {
+    process.env.ARCHIVE_HORIZON_DAYS = "30"
+    expect(env.archiveHorizonDays(14)).toBe(30)
+    process.env.ARCHIVE_HORIZON_DAYS = "21"
+    expect(env.archiveHorizonDays(14)).toBe(21)
+    process.env.ARCHIVE_HORIZON_DAYS = "7.9"
+    expect(env.archiveHorizonDays(14)).toBe(7)
+  })
+
+  it("fällt bei ungültigen Werten auf den Default zurück", () => {
+    process.env.ARCHIVE_HORIZON_DAYS = "0"
+    expect(env.archiveHorizonDays(14)).toBe(14)
+    process.env.ARCHIVE_HORIZON_DAYS = "viel"
+    expect(env.archiveHorizonDays(14)).toBe(14)
+  })
+
+  // Regression: "0.5" ist positiv und rutscht damit durch positiveNumber, wurde
+  // aber still auf 0 gefloort — der Archiv-Schutz schrumpfte auf den Lauftag.
+  // Die Untergrenze 1 muss stattdessen den Integrations-Default zurückgeben.
+  it("fällt bei einem Bruchwert unter 1 auf den Default statt auf 0", () => {
+    process.env.ARCHIVE_HORIZON_DAYS = "0.5"
+    expect(env.archiveHorizonDays(14)).toBe(14)
+    process.env.ARCHIVE_HORIZON_DAYS = "0.999"
+    expect(env.archiveHorizonDays(30)).toBe(30)
+  })
+
+  it("lässt genau 1 als kleinsten gültigen Horizont zu", () => {
+    process.env.ARCHIVE_HORIZON_DAYS = "1"
+    expect(env.archiveHorizonDays(14)).toBe(1)
+  })
+})

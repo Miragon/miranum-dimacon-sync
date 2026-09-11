@@ -52,6 +52,14 @@ function lexQueries(): Record<string, string>[] {
   return lexGet.mock.calls.map((call) => call[1] as Record<string, string>)
 }
 
+/** Die eine Seite des Kontakt-Voll-Imports (#15) — kein Request je Kunde. */
+const INDEX_PAGE = { page: "0", size: "250" }
+
+/** Suchen JE KUNDE — der Voll-Import zählt bewusst nicht mit. */
+function perCustomerQueries(): Record<string, string>[] {
+  return lexQueries().filter((q) => q.page === undefined)
+}
+
 function rowFor(
   result: Awaited<ReturnType<typeof runDimaconLexofficeSync>>,
   dimaconCustomerId: string,
@@ -66,7 +74,7 @@ beforeEach(() => {
   updateCustomerMock.mockResolvedValue({})
   // Leerer Kontext → run.ts fällt auf die Default-Zuordnung zurück
   loadMappingContextMock.mockResolvedValue(new Map())
-  lexGet.mockResolvedValue({ content: [] })
+  lexGet.mockResolvedValue({ content: [], last: true })
   lexPost.mockResolvedValue({ id: "lex-new", version: 0 })
 })
 
@@ -88,8 +96,9 @@ describe("runDimaconLexofficeSync (Orchestrierung)", () => {
     }
     expect(lexPost).not.toHaveBeenCalled()
     expect(updateCustomerMock).not.toHaveBeenCalled()
-    // Namensstufe gesperrt ⇒ gar keine Suche (K-1/K-2 sind nicht numerisch)
-    expect(lexGet).not.toHaveBeenCalled()
+    // Namensstufe gesperrt ⇒ keine Suche je Kunde (K-1/K-2 sind nicht numerisch)
+    expect(perCustomerQueries()).toEqual([])
+    expect(lexQueries()).toEqual([INDEX_PAGE])
   })
 
   it("verdrahtet die Nummern-Duplikate in die Nummernstufe", async () => {
@@ -102,12 +111,9 @@ describe("runDimaconLexofficeSync (Orchestrierung)", () => {
 
     const result = await runDimaconLexofficeSync(testCtx(), {})
 
-    expect(lexQueries().every((q) => q.number === undefined)).toBe(true)
-    expect(
-      lexQueries()
-        .map((q) => q.name)
-        .sort(),
-    ).toEqual(["Fremd AG", "Muster GmbH"])
+    // Der Voll-Index löst beide Namen lokal auf — kein Request je Kunde,
+    // und die Nummernstufe wird (wie bisher) gar nicht erst angefragt.
+    expect(lexQueries()).toEqual([INDEX_PAGE])
     // Namen sind eindeutig ⇒ beide werden normal angelegt
     expect(rowFor(result, "cust-1").status).toBe("created")
     expect(rowFor(result, "cust-2").status).toBe("created")
@@ -127,12 +133,46 @@ describe("runDimaconLexofficeSync (Orchestrierung)", () => {
           roles: { customer: { number: "1001" } },
         },
       ],
+      last: true,
     })
 
     const result = await runDimaconLexofficeSync(testCtx(), {})
 
-    expect(lexQueries()).toEqual([{ number: "1001", size: "250" }])
+    // Auflösung über die Nummer — aber lokal aus dem Voll-Index.
+    expect(lexQueries()).toEqual([INDEX_PAGE])
     expect(rowFor(result, "cust-1").status).toBe("unchanged")
+    expect(lexPost).not.toHaveBeenCalled()
+  })
+
+  it("fällt auf die Suche je Kunde zurück, wenn der Kontakt-Voll-Import scheitert", async () => {
+    loadAllCustomersMock.mockResolvedValue([
+      customer({ id: "cust-1", customerNumber: "1001", name: "Muster GmbH" }),
+    ])
+    // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
+    lexGet.mockRejectedValueOnce(new Error("boom 400"))
+    lexGet.mockResolvedValue({
+      content: [
+        {
+          id: "lex-1",
+          version: 1,
+          company: { name: "Muster GmbH" },
+          roles: { customer: { number: "1001" } },
+        },
+      ],
+      last: true,
+    })
+
+    const result = await runDimaconLexofficeSync(testCtx(), {})
+
+    // Optimierung aus, Fachlogik unverändert: Nummernsuche je Kunde
+    expect(perCustomerQueries()).toEqual([{ number: "1001", size: "250" }])
+    expect(rowFor(result, "cust-1").status).toBe("unchanged")
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "customers",
+        message: expect.stringContaining("nicht vorab geladen"),
+      }),
+    )
     expect(lexPost).not.toHaveBeenCalled()
   })
 
