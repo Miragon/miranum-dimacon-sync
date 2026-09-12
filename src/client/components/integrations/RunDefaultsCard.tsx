@@ -1,5 +1,6 @@
 import { useState } from "react"
 import type { ScheduleEntry } from "#/components/integrations/ScheduleCard"
+import { StepNotes } from "#/components/integrations/bits"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { Button } from "#/components/ui/button"
@@ -140,6 +141,7 @@ export function RunDefaultsCard({
               </label>
             ))}
           </div>
+          <StepNotes steps={spec.steps} />
           {hints.length > 0 ? (
             <div className="mt-3 max-w-[520px] space-y-1">
               {hints.map((hint) => (

@@ -104,7 +104,7 @@ describe("hints", () => {
     const scope = readScope(CLOCKIN, {}, { dryRunFallback: false })
     const hints = RUN_SCOPE_SPECS[CLOCKIN].hints(scope.steps)
     expect(hints.some((h) => h.includes("gesamten Bestand beider Systeme"))).toBe(true)
-    expect(hints.some((h) => h.includes("Legt Clockin-Mitarbeiter in Dimacon an"))).toBe(false)
+    expect(hints.some((h) => h.includes("auch in Dimacon Mitarbeiter an"))).toBe(false)
   })
 
   it("adds the Dimacon creation warning only when that step is on", () => {
@@ -116,7 +116,7 @@ describe("hints", () => {
       assignments: true,
       archive: true,
     })
-    expect(hints.some((h) => h.includes("Legt Clockin-Mitarbeiter in Dimacon an"))).toBe(true)
+    expect(hints.some((h) => h.includes("auch in Dimacon Mitarbeiter an"))).toBe(true)
   })
 
   it("switches the lexoffice hint with createContacts", () => {
@@ -125,5 +125,29 @@ describe("hints", () => {
       /gesamten Dimacon-Kundenbestand/,
     )
     expect(spec.hints({ createContacts: false, alignNumbers: true })[0]).toMatch(/Nur Abgleich/)
+  })
+})
+
+/**
+ * Die Bedingungen der heiklen Schritte hängen nicht am Schaltzustand: Sie
+ * stehen als `note` am Schritt selbst und werden von StepNotes immer
+ * gerendert. Ohne das erfährt man den Relevanzfilter erst aus den
+ * übersprungenen Zeilen im Ergebnis — und hält ihn dort für einen Fehler.
+ */
+describe("Bedingungen am Schritt (note)", () => {
+  it("nennt beim Anlegen in Dimacon die Personalnummer-Regel", () => {
+    const step = RUN_SCOPE_SPECS[CLOCKIN].steps.find((s) => s.key === "employeeCreateInDimacon")
+    expect(step?.note).toMatch(/Personalnummer/)
+    expect(step?.note).toMatch(/OHNE Team/)
+  })
+
+  it("nennt beim Archivieren den Planungshorizont", () => {
+    const step = RUN_SCOPE_SPECS[CLOCKIN].steps.find((s) => s.key === "archive")
+    expect(step?.note).toMatch(/Planungshorizont/)
+  })
+
+  it("nennt bei der Lexware-Anlage die Mehrdeutigkeits-Regel", () => {
+    const step = RUN_SCOPE_SPECS[LEXOFFICE].steps.find((s) => s.key === "createContacts")
+    expect(step?.note).toMatch(/gleichnamige/)
   })
 })

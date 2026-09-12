@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import type { RunStepSpec } from "#/lib/run-scope"
 import {
   Table,
   TableBody,
@@ -134,4 +135,28 @@ function seconds(ms: number): string {
 function waitLabel(waitedMs: number, rateLimited: number): string {
   if (waitedMs === 0) return "—"
   return rateLimited > 0 ? `${seconds(waitedMs)} · ${rateLimited}× 429` : seconds(waitedMs)
+}
+
+/**
+ * Dauerhaft geltende Bedingungen der Schritte — immer sichtbar, auch für
+ * ausgeschaltete Schritte. Wer entscheidet, ob er einen Schritt einschaltet,
+ * muss dessen Regeln vorher lesen können; ein Filter, der sich erst im
+ * Ergebnis erklärt, sieht dort wie ein Fehler aus.
+ */
+export function StepNotes({ steps }: { steps: readonly RunStepSpec[] }) {
+  const withNote = steps.filter((step) => step.note)
+  if (withNote.length === 0) return null
+
+  return (
+    <dl className="border-rule mt-4 max-w-[560px] space-y-2 border-t pt-4">
+      {withNote.map((step) => (
+        <div key={step.key}>
+          <dt className="text-ink-2 font-mono text-[0.7rem] tracking-[0.14em] uppercase">
+            {step.label}
+          </dt>
+          <dd className="text-ink-3 mt-1 font-mono text-[0.7rem] leading-relaxed">{step.note}</dd>
+        </div>
+      ))}
+    </dl>
+  )
 }

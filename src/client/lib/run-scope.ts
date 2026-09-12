@@ -15,6 +15,13 @@ export interface RunStepSpec {
   default: boolean
   /** Schritt greift nur zusätzlich zu diesem Schritt (UI: disabled). */
   requires?: string
+  /**
+   * Dauerhaft geltende Einschränkung des Schritts — wird IMMER angezeigt, auch
+   * wenn der Schritt gerade aus ist. Wer entscheidet, ob er einen Schritt
+   * einschaltet, muss dessen Regeln vorher sehen; ein Filter, den man erst nach
+   * dem Einschalten erklärt bekommt, wirkt im Ergebnis wie ein Fehler.
+   */
+  note?: string
 }
 
 export interface RunScopeSpec {
@@ -37,11 +44,25 @@ export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
         label: "Mitarbeiter in Dimacon anlegen",
         default: false,
         requires: "employees",
+        note:
+          "Übernommen werden nur Clockin-Mitarbeiter mit Personalnummer, vollständigem Namen und ohne beendeten Vertrag — " +
+          "und nur, wenn in Dimacon kein namensähnlicher Mitarbeiter existiert und der Datensatz in Clockin nicht doppelt " +
+          "oder mehrdeutig ist. Angelegt wird mit Rolle CRAFTSMAN und OHNE Team (in Dimacon danach zuweisen). Alle " +
+          "übersprungenen Kandidaten stehen mit Begründung im Ergebnis.",
       },
       { key: "customers", label: "Kunden anlegen", default: true },
       { key: "projects", label: "Projekte anlegen/aktualisieren", default: true },
       { key: "assignments", label: "Mitarbeiter-Zuordnung", default: true },
-      { key: "archive", label: "Archivierung", default: true },
+      {
+        key: "archive",
+        label: "Archivierung",
+        default: true,
+        note:
+          "Archiviert Clockin-Projekte, die im Planungshorizont von ±14 Tagen um heute und um das Sync-Datum " +
+          "keinen Termin haben (anpassbar über ARCHIVE_HORIZON_DAYS). Projekte ohne Dimacon-Nummer bleiben " +
+          "unberührt. Konnte der Horizont oder die Projektliste nicht vollständig geladen werden, wird nichts " +
+          "archiviert und der Grund steht im Ergebnis.",
+      },
     ],
     hints: (steps) =>
       [
@@ -49,7 +70,7 @@ export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
           "Der Mitarbeiter-Abgleich läuft über den gesamten Bestand beider Systeme — ein Live-Lauf legt in Clockin fehlende Mitarbeiter dort an.",
         steps.employees &&
           steps.employeeCreateInDimacon &&
-          "Legt Clockin-Mitarbeiter in Dimacon an: nur mit Personalnummer, ohne Team (danach in Dimacon zuweisen); mehrdeutige und namensähnliche Kandidaten werden gemeldet statt angelegt.",
+          "Ein Live-Lauf legt jetzt auch in Dimacon Mitarbeiter an — siehe die Bedingungen unter den Schritten.",
         !steps.projects &&
           "Es werden keine Projekte angelegt oder aktualisiert — nur Abgleich/Zuordnung/Archivierung.",
         !steps.customers &&
@@ -59,7 +80,15 @@ export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
   },
   "dimacon-lexoffice": {
     steps: [
-      { key: "createContacts", label: "Lexware-Kontakte anlegen", default: true },
+      {
+        key: "createContacts",
+        label: "Lexware-Kontakte anlegen",
+        default: true,
+        note:
+          "Angelegt wird nur, wenn der Kunde in Lexware eindeutig NICHT existiert. Mehrere gleichnamige Treffer, " +
+          "gleichnamige Dimacon-Kunden im selben Lauf und Kundennummern, die in Lexware zu einem anderen Namen " +
+          "gehören, werden mit Begründung gemeldet statt geschrieben.",
+      },
       { key: "alignNumbers", label: "Kundennummern angleichen", default: true },
     ],
     hints: (steps) => [

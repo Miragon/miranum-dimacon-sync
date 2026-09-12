@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import type { ComponentType } from "react"
+import { StepNotes } from "#/components/integrations/bits"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
@@ -155,6 +156,7 @@ function ScopeRunForm({
             />
           ))}
         </div>
+        <StepNotes steps={spec.steps} />
         {hints.length > 0 ? (
           <div className="mt-3 max-w-[520px] space-y-1">
             {hints.map((hint) => (
