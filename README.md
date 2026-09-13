@@ -286,7 +286,7 @@ einmal ein frisches Token (`getAccessToken({ forceRefresh: true })`) und
 wiederholt den Request; parallele 401 teilen sich diesen Refresh
 (Single-Flight — sonst überschreiben sich die PKCE-Code-Verifier im
 sessionStorage). Erst wenn auch das scheitert, erscheint ein
-„Sitzung abgelaufen"-Overlay mit Button; der Redirect passiert auf Klick, und
+„Anmeldung nicht erneuert"-Overlay mit Button; der Redirect passiert auf Klick, und
 offene Formulareingaben bleiben erhalten, weil das Overlay nichts unmountet.
 Ein Netzfehler ist dabei kein Sitzungsende: nur authkit-eigene Fehler
 (`LoginRequiredError`) öffnen das Overlay, ein WLAN-Aussetzer erzeugt ein

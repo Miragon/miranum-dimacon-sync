@@ -93,33 +93,34 @@ function transientAuthError(cause: unknown): Error {
 }
 
 /**
- * Gehört das frische Token noch zur erwarteten Organisation?
+ * Meldet eine Abweichung zwischen erwarteter und tatsächlicher Organisation —
+ * NUR als Warnung, ohne die Sitzung anzutasten.
  *
- * Zweites Netz hinter `pinOrganization`: schreibt der Pin ins Leere (Storage
- * gesperrt, Schlüsselname in einer neuen authkit-Version umbenannt), liefert
- * der Refresh ein Token einer anderen Organisation. Das darf NIE still
- * durchgehen — sonst arbeitet die UI im falschen Mandanten weiter.
+ * LOAD-BEARING, dass das kein Gate ist: Die beiden Werte stammen aus
+ * VERSCHIEDENEN Quellen — `expected` aus `useAuth().organizationId` (der
+ * WorkOS-Authentication-Response), der Vergleichswert aus dem `org_id`-Claim
+ * des JWT. Sie können auseinanderlaufen, ohne dass die Sitzung defekt ist.
+ * Eine frühere Fassung hat daraus einen terminalen Fehler gemacht und damit
+ * die komplette UI hinter dem Abgelaufen-Overlay eingesperrt, obwohl jeder
+ * API-Call weiter funktionierte — ohne Rückweg, weil „Erneut versuchen" in
+ * denselben Vergleich lief.
  *
- * Ein nicht dekodierbares Token blockieren wir NICHT: das eigentliche Gate ist
- * der Server (`resolveTenant` aus dem JWT), hier wäre eine Sperre nur Lärm.
+ * Das echte Gate ist und bleibt der Server: `resolveTenant` liest die Org aus
+ * dem JWT und antwortet bei einer unbekannten mit 403 `UNKNOWN_ORG`, was das
+ * TenantGate sauber behandelt. Hier genügt eine Spur in der Konsole.
  */
-export function isSameOrganization(token: string, expected: string | null): boolean {
-  if (!expected) return true
+export function warnOnOrganizationDrift(token: string, expected: string | null): void {
+  if (!expected) return
   try {
-    return (getClaims(token).org_id ?? null) === expected
+    const actual = getClaims(token).org_id ?? null
+    if (actual !== expected) {
+      console.warn("[auth] Organisation des frischen Tokens weicht ab — der Server entscheidet:", {
+        erwartet: expected,
+        imToken: actual,
+      })
+    }
   } catch {
-    return true
-  }
-}
-
-/**
- * Abweichende Organisation nach dem Refresh — eigener terminaler Grund.
- * Eigene Klasse, damit der Aufrufer „abgelaufen" von „falscher Mandant"
- * unterscheiden kann: die Meldungen führen zu unterschiedlichem Handeln.
- */
-export class WrongOrganizationError extends Error {
-  constructor() {
-    super("Die Sitzung gehört zu einer anderen Organisation — bitte neu anmelden")
+    // Nicht dekodierbares Token: nichts zu melden, der Server prüft ohnehin.
   }
 }
 
@@ -160,10 +161,11 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
     pendingRefresh ??= auth
       .getToken({ forceRefresh: true })
       .then<RefreshResult, RefreshResult>(
-        (token) =>
-          isSameOrganization(token, expectedOrg)
-            ? { ok: true, token }
-            : { ok: false, terminal: true, cause: new WrongOrganizationError() },
+        (token) => {
+          // Nur protokollieren, nicht blockieren — siehe warnOnOrganizationDrift.
+          warnOnOrganizationDrift(token, expectedOrg)
+          return { ok: true, token }
+        },
         (cause: unknown) => ({ ok: false, terminal: isSessionTerminal(cause), cause }),
       )
       .finally(() => {
@@ -188,7 +190,6 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
       if (!refreshed.ok && !refreshed.terminal) throw transientAuthError(refreshed.cause)
       if (!refreshed.ok) {
         auth.onSessionExpired()
-        if (refreshed.cause instanceof WrongOrganizationError) throw refreshed.cause
         throw new Error("Sitzung abgelaufen — bitte neu anmelden")
       }
       token = refreshed.token
