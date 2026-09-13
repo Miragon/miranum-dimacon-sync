@@ -6,6 +6,7 @@ import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { readJson, useApiFetch } from "#/lib/api"
 import { formatRunDate } from "#/lib/integrations"
 import type { IntegrationInfo } from "#/lib/integrations"
+import { describeScope, isDefaultScope } from "#/lib/run-scope"
 import {
   Table,
   TableBody,
@@ -92,6 +93,12 @@ function IntegrationsPage() {
                     )}
                     {i.cronActive ? <MnStatusBadge>cron aktiv</MnStatusBadge> : null}
                     {i.running ? <MnStatusBadge>läuft</MnStatusBadge> : null}
+                    {/* Nur bei abweichendem Umfang (eingeschränkt oder
+                        dauerhaft dry-run) — bewusst variant default, das
+                        Akzent-Rot ist auf diesem Screen schon vergeben. */}
+                    {isDefaultScope(i.id, i.runDefaults) ? null : (
+                      <MnStatusBadge>{describeScope(i.id, i.runDefaults)}</MnStatusBadge>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="font-mono text-[0.8rem]">

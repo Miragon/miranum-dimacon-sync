@@ -165,6 +165,9 @@ describe("EmployeeSyncer.alignPair", () => {
         dim({
           role: "BACKOFFICE",
           phoneNumber: "0151 123",
+          team: "Team Nord",
+          additionalInformation: "Zusatzinfo",
+          profilePicture: "pic-1",
           color: "#123456",
           timeTrackingActive: false,
         }),
@@ -179,12 +182,17 @@ describe("EmployeeSyncer.alignPair", () => {
     expect(dimaconUpdateEmployeeMock.mock.calls[0][0]).toMatchObject({
       path: { employeeId: "d1" },
     })
+    // team/additionalInformation/profilePicture MÜSSEN im Body stehen —
+    // sonst löscht das Voll-Replace sie (Issue #17, Team-Verlust).
     expect(dimaconUpdateEmployeeMock.mock.calls[0][0].body).toEqual({
       role: "BACKOFFICE",
       firstName: "Anna",
       lastName: "Muster",
       personnelNumber: "P-7",
       phoneNumber: "0151 123",
+      team: "Team Nord",
+      profilePicture: "pic-1",
+      additionalInformation: "Zusatzinfo",
       color: "#123456",
       timeTrackingActive: false,
     })
@@ -241,7 +249,7 @@ describe("EmployeeSyncer.createInDimacon", () => {
       dimaconId: "d-new",
       clockinId: 1,
       status: "created",
-      reason: "Rolle CRAFTSMAN (Default)",
+      reason: "Rolle CRAFTSMAN (Default), ohne Team — in Dimacon manuell einem Team zuweisen",
     })
     expect(dimaconCreateEmployeeMock).toHaveBeenCalledTimes(1)
     expect(dimaconCreateEmployeeMock.mock.calls[0][0].body).toEqual({
@@ -275,6 +283,9 @@ describe("EmployeeSyncer dryRun", () => {
 
     const createdDimacon = await dry.createInDimacon(clk())
     expect(createdDimacon.status).toBe("created")
+    expect(createdDimacon.reason).toBe(
+      "[dryRun] Rolle CRAFTSMAN (Default), ohne Team — in Dimacon manuell einem Team zuweisen",
+    )
 
     expect(clockinCreateEmployeeMock).not.toHaveBeenCalled()
     expect(clockinUpdateEmployeeMock).not.toHaveBeenCalled()

@@ -94,14 +94,19 @@ Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
 - `/modules` — Die 3 angebundenen Systeme mit Konfigurations-Status des
   aktiven Mandanten aus `GET /api/systems`
 - `/sync` — Integrations-Übersicht (Tabelle aller Integrationen mit Status)
-- `/sync/$integrationId` — Detail: Run-Form (Datum, dryRun) + Result-View;
+- `/sync/$integrationId` — Detail: Run-Form (Datum, dryRun, Schritte —
+  vorbelegt aus dem gespeicherten Umfang) + Result-View + Run-Historie;
   unbekannte Integrationen bekommen einen JSON-Fallback-Renderer
 - `/settings` — zentral: Dimacon-Zugangsdaten + Linkliste zu den
   Integrations-Einstellungen
 - `/sync/$integrationId/settings` — je Integration, erreichbar über das
   Zahnrad in der /sync-Tabelle (einziger Nav-Einstieg): Tab-Menü
-  Zeitplan | Zugangsdaten (Zielsystem) | Feld-Zuordnung (eingebetteter
-  Editor); aktiver Tab als Search-Param `?tab=…`. Der Zeitplan-Editor ist
+  Zeitplan | Umfang | Zugangsdaten (Zielsystem) | Feld-Zuordnung
+  (eingebetteter Editor); aktiver Tab als Search-Param `?tab=…`. Der
+  Umfang-Tab erscheint nur für Integrationen mit Eintrag in
+  `RUN_SCOPE_SPECS` (`src/client/lib/run-scope.ts` — Single Source of Truth
+  für Step-Labels, Warnhinweise und Step-Defaults im Client).
+  Der Zeitplan-Editor ist
   Picker-basiert (Täglich mit Uhrzeit + Mo–So-Chips | Intervall aus
   kuratierten Teilern von 60/24 | Experte = rohes Cron-Feld) und übersetzt
   client-seitig nach Cron (`src/client/lib/schedule-cron.ts`); nicht
@@ -129,7 +134,9 @@ registriert in `integrations/registry.ts`. `run(ctx, input)` bekommt den
 Factory, `ctx.getFieldMapping`, `ctx.log`) — Integrations-Code kennt weder DB
 noch Env-Vars; Tests bauen ctx von Hand. Damit automatisch: Mutex je
 (Mandant, Integration) (`runIntegration` → 409), Cron-Slots je Mandant,
-Run-Historie (`sync_runs`, letzte 50 je Mandant+Integration, keine UI bisher),
+Run-Historie (`sync_runs`, letzte 50 je Mandant+Integration; `GET
+/api/integrations/:id/runs` liegt auf dem AUTHENTIFIZIERTEN Router und speist
+die Tabelle unter `/sync/<id>` mit Auslöser/Modus/Umfang),
 Routen `/api/integrations/:id/{run,healthz}` + Eintrag in `/sync`/`/settings`.
 `requiredCredentials` (System-IDs) steuert den „konfiguriert"-Status je
 Mandant (kein Crash — Run liefert 503 mit `missing`). Der
@@ -151,17 +158,45 @@ optional, ohne Registrierung greifen Defaults:
 
 Scheduler-Settings: `schedule_settings` (PK tenant+integration). PUT auf
 `/api/settings/integrations/:id` validiert + restartet den Cron des Mandanten
-hot. Feld-Zuordnungen: `field_mappings` (PK tenant+integration+entity),
+hot. **Run-Umfang**: `schedule_settings.run_defaults` (jsonb) hält je
+(Mandant, Integration) den persistenten Umfang; PUT auf
+`/api/settings/integrations/:id/run-defaults` validiert generisch gegen
+`def.inputSchema` und speichert normalisiert — **kein Cron-Restart**, der
+Scheduler liest zur Feuerzeit. Regeln (alle in
+`src/server/integrations/run-input.ts`): `date` wird NIE persistiert (Cron =
+immer heute); der Request-Body wird ÜBER die Defaults gemerged (top-level
+gewinnt, `steps` eine Ebene tief) — Abweichungen gelten nur für den einen
+Lauf; ungültige gespeicherte Defaults sind **fail-closed** (Cron überspringt
+mit `log.error` + Historie-Zeile mit Status `skipped` = nie gestartet, daher
+ohne Modus/Umfang in der UI; ausgelöste Läufe bekommen 400) statt auf die
+Schema-Defaults (= alles an, live) zurückzufallen. Ein gespeicherter Wert, der
+gar kein Objekt ist, gilt ebenfalls als ungültig. `updateScheduleSettings` fasst
+`run_defaults` bewusst nicht an und umgekehrt. Feld-Zuordnungen: `field_mappings` (PK tenant+integration+entity),
 editierbar im Feld-Zuordnungs-Tab der Integrations-Einstellungen
 (`/sync/<id>/settings?tab=mapping`) via `/api/mappings/:id[/:entity]`.
 Katalog/Engine in `src/server/integrations/shared/field-{catalog,mapping}.ts`;
 ohne persistierte Zuordnung gelten die Default-Regeln und es gibt keine
 Discovery-API-Calls. Match-Keys (project.number, customer.identifier,
 employee-Namen/PN) sind fixiert und nie remappbar. Der dimacon-clockin-Sync
-akzeptiert `steps: { employees, customers, projects, assignments, archive }`
-im Run-Input (Default: alles an); die Archiv-Phase schützt nur Projekte, die
-der Lauf auflöst, deshalb läuft die Projekt-Auflösung auch bei deaktivierten
-Schritten.
+akzeptiert `steps: { employees, customers, projects, assignments, archive,
+employeeCreateInDimacon }` im Run-Input (Default: alles an —
+**`employeeCreateInDimacon` ist die Ausnahme und per Default AUS**, Issue #17);
+die Archiv-Phase schützt (a) Projekte, die der Lauf auflöst — deshalb läuft die
+Projekt-Auflösung auch bei deaktivierten Schritten —, (b) alles mit Termin im
+Fenster ±`ARCHIVE_HORIZON_DAYS` um **heute UND** um das Sync-Datum
+(`run.ts`/`archive.ts`) und (c) Projekte ohne Dimacon-Nummer (die stammen nicht
+aus dem Sync). Ist der Horizont unbekannt oder die Clockin-Projektliste
+unvollständig geladen, archiviert der Lauf gar nichts und meldet den Grund.
+
+Zwei load-bearing Regeln des Mitarbeiter-Abgleichs: Dimacon-PUTs sind
+Voll-Replace — jeder Update-Body spiegelt ALLE geladenen Felder zurück
+(`dimaconEmployeeUpdateBody` in `employee-sync/syncer.ts`, sonst verlieren
+Mitarbeiter beim Personalnummer-Backfill ihr Team). Und die Anlage ist
+fail-closed: wurde der Clockin-Bestand unvollständig geladen
+(`shared/clockin-pages.ts` paginiert und meldet Abbruchgründe), legt der Lauf
+in KEINER Richtung Mitarbeiter an; nicht angelegte Kandidaten erscheinen mit
+deutscher Begründung als `skipped`-Zeile im Ergebnis
+(`employee-sync/creation-policy.ts`).
 
 Die alte settings.json wird nur noch vom **einmaligen Legacy-Seed** gelesen
 (`src/server/lib/legacy-settings.ts` parst beide Alt-Formen; Seed-Guard =
@@ -196,6 +231,38 @@ Fehlerdetails nur ins Log, typisierte 4xx/503-Pfade bleiben deutsch.
 Docker-Build-Arg!) und
 mountet `<AuthKitProvider>` + `<AuthGate>` + `<TenantGate>` nur dann. Alle
 UI-Fetches gehen über `useApiFetch()` in `src/client/lib/api.ts` (Bearer-Header,
-401 → PKCE-Neustart). Mandanten-Switcher im `UserMenu` nutzt
+401 → EIN Force-Refresh + Retry, danach das Abgelaufen-Overlay — kein
+automatischer Redirect, s. u.). Mandanten-Switcher im `UserMenu` nutzt
 `switchToOrganization` + Hard-Reload; seine Liste kommt aus dem
 membership-gefilterten `/api/tenants` (s. Mandanten-Modell).
+**Session-Robustheit (load-bearing):** `useApiFetch()` liefert den von
+`createApiFetch()` gebauten Fetch — bei 401 EIN deduplizierter
+Force-Refresh (Single-Flight, sonst überschreiben sich die PKCE-Verifier)
+plus genau ein Retry. Ein 401 löst KEINEN Redirect mehr aus, sondern den
+`sessionExpired`-Zustand des AuthGate (Overlay, Redirect erst auf Klick,
+Formular-State überlebt). Die **Identität von `apiFetch` muss stabil
+bleiben** — Consumer hängen sie in `useEffect`-Deps, also darf
+`sessionExpired` nie in die `useMemo`-Deps von `auth`/`apiFetch`.
+Ebenfalls load-bearing: `isSessionTerminal()` trennt „Session weg" von
+„gerade kein Netz" — nur `AuthKitError`-Ableitungen (`LoginRequiredError`)
+gelten als endgültig, ein roher `TypeError` aus dem fetch bzw. der
+`LockError` des Tab-Locks wird als transienter deutscher Fehler geworfen
+(Pendant zu `TOKEN_INVALID_CODES` serverseitig; `err.name` taugt NICHT als
+Kriterium, authkit setzt es nicht). Und `pendingRefresh = null` im `finally`
+gibt den Single-Flight-Slot wieder frei — ohne das liefert jeder spätere
+Zyklus derselben (sitzungslangen) Instanz das alte Ergebnis. Das Overlay hat
+neben „Neu anmelden" ein „Erneut versuchen" (stiller `forceRefresh`), weil
+`onRefreshFailure` in authkit auch bei transienten WorkOS-429/5xx feuert —
+ohne diesen Rückweg sperrt ein Blip die UI bis zum Full-Page-Redirect.
+Dazu: `signIn({ state: { returnTo } })` + `onRedirectCallback` →
+`router.history.replace` (nach `setTimeout(…, 0)`, sonst überschreibt das
+SDK die Route), `returnTo` gegen Open Redirects validiert
+(`lib/return-to.ts`), `onRefreshFailure` über die Modul-Bridge
+`lib/session-expiry.ts` (der Provider hängt außerhalb des Routers),
+`visibilitychange`-Refresh als Ersatz für das nicht durchgereichte
+`onBeforeAutoRefresh`, optionales `VITE_WORKOS_API_HOSTNAME`
+(AuthKit-Custom-Domain ⇒ First-Party-Cookies; leer = heutiges Verhalten).
+Serverseitig: `verifyAccessToken` liefert `valid | invalid | unavailable` —
+JWKS-/Netzfehler ⇒ 503 `AUTH_UNAVAILABLE`, nie 401; `clockTolerance: 30`;
+401 tragen `code` + `WWW-Authenticate`; die Run-Route antwortet bei gültigem
+JWT mit unbekannter/fehlender Org 403 (`UNKNOWN_ORG`/`NO_ORG`) statt 401.

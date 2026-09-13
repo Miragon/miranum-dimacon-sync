@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
@@ -6,6 +7,7 @@ import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
 import { readJson, useApiFetch } from "#/lib/api"
 import { formatRunDate } from "#/lib/integrations"
+import { describeScope, RUN_SCOPE_SPECS } from "#/lib/run-scope"
 import {
   ALL_DAYS,
   cronToSpec,
@@ -26,6 +28,13 @@ export interface ScheduleEntry {
   active: boolean
   nextRun: string | null
   nextRuns: string[]
+  /**
+   * Gespeicherter Run-Umfang — der Cron fährt genau diesen. NICHT optional:
+   * `/api/settings/integrations` liefert das Feld immer (mindestens `{}`).
+   * Damit ist „nicht geladen" typseitig kein `undefined`, das im Editor
+   * stillschweigend als „Schema-Defaults" durchginge.
+   */
+  runDefaults: Record<string, unknown>
 }
 
 const CRON_PRESETS: { label: string; expr: string }[] = [
@@ -152,12 +161,14 @@ export function ScheduleCard({
   }
 
   const fieldId = (suffix: string) => `${entry.id}-${suffix}`
+  // Nur Integrationen mit konfigurierbarem Umfang bekommen den Verweis.
+  const hasScope = entry.id in RUN_SCOPE_SPECS
   const intervalValue =
     spec.mode === "interval" ? `${spec.unit === "minutes" ? "m" : "h"}${spec.every}` : "m15"
 
   return (
     <section>
-      <dl className="border-rule mb-6 grid grid-cols-2 border md:grid-cols-4">
+      <dl className="border-rule mb-6 grid grid-cols-2 border md:grid-cols-5">
         <Stat label="Cron aktiv" value={entry.active ? "ja" : "nein"} />
         <Stat label="Zeitplan" value={entry.cron ? describeSpec(cronToSpec(entry.cron)) : "—"} />
         <Stat label="Zeitzone" value={entry.timezone} />
@@ -165,7 +176,24 @@ export function ScheduleCard({
           label="Nächster Lauf"
           value={entry.nextRun ? formatRunDate(entry.nextRun, entry.timezone) : "—"}
         />
+        {/* Macht einen dauerhaft eingeschränkten oder auf dry-run gestellten
+            Cron schon im Zeitplan-Tab sichtbar. */}
+        <Stat label="Umfang" value={describeScope(entry.id, entry.runDefaults)} />
       </dl>
+
+      {hasScope ? (
+        <p className="text-ink-3 mb-6 font-mono text-[0.7rem]">
+          Der geplante Lauf fährt den gespeicherten Umfang —{" "}
+          <Link
+            to="/sync/$integrationId/settings"
+            params={{ integrationId: entry.id }}
+            search={{ tab: "umfang" }}
+            className="text-ink-2 hover:text-ink underline underline-offset-4"
+          >
+            umfang ändern →
+          </Link>
+        </p>
+      ) : null}
 
       <div className="border-rule space-y-6 border p-6">
         <div>

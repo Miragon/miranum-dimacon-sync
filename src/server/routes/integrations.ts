@@ -1,17 +1,25 @@
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { CredentialCryptoError } from "../lib/crypto.js"
-import { isAuthConfigured, verifyAccessToken } from "../lib/auth.js"
+import {
+  AUTH_UNAVAILABLE_MESSAGE,
+  bearerChallenge,
+  isAuthConfigured,
+  verifyAccessToken,
+  type AuthErrorCode,
+} from "../lib/auth.js"
 import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import { getCachedTenantByOrgId, type AppEnv } from "../lib/tenant.js"
+import { getRunDefaults } from "../db/repos/schedules.js"
 import { getOrCreateDevTenant, type Tenant } from "../db/repos/tenants.js"
 import { findTenantBySecret, touchLastUsed } from "../db/repos/webhook-secrets.js"
-import type { RunTrigger } from "../db/repos/sync-runs.js"
+import { listRuns, type RunTrigger } from "../db/repos/sync-runs.js"
 import { buildRunContext } from "../integrations/context.js"
 import { isRunning, SyncBusyError } from "../integrations/mutex.js"
 import { MAPPABLE_ENTITIES } from "../integrations/shared/field-catalog.js"
 import { getIntegration, integrations, runIntegration } from "../integrations/registry.js"
+import { resolveRunInput } from "../integrations/run-input.js"
 import { getNextRun, isCronActive } from "../integrations/scheduler.js"
 import { isConfigured, missingCredentials } from "../integrations/types.js"
 import type { IntegrationDefinition } from "../integrations/types.js"
@@ -22,7 +30,9 @@ import type { IntegrationDefinition } from "../integrations/types.js"
  * identifiziert den Mandanten direkt; alternativ zählt ein gültiges
  * AuthKit-JWT (der UI-Pfad — vorher scheiterte der am Secret-Vergleich).
  * Fail-closed: ohne identifizierbaren Mandanten 401, kein impliziter
- * Default-Mandant.
+ * Default-Mandant. Bei GÜLTIGEM JWT mit unbekannter/fehlender Org ist es
+ * dagegen ein 403 mit Code (NO_ORG/UNKNOWN_ORG/ORG_INACTIVE) — ein
+ * Re-Login würde daran nichts ändern.
  */
 export const integrationsOpenRoutes = new Hono()
 
@@ -72,10 +82,25 @@ integrationsApiRoutes.get("/", async (c) => {
         nextRun: getNextRun(tenant.id, def.id),
         // Single Source of Truth für den „Erweitert"-Link im Client
         mappable: def.id in MAPPABLE_ENTITIES,
+        // Gespeicherter Run-Umfang — belegt das manuelle Formular vor.
+        runDefaults: await getRunDefaults(tenant.id, def.id),
       }
     }),
   )
   return c.json(rows)
+})
+
+/**
+ * Run-Historie einer Integration (neueste zuerst). Bewusst auf dem
+ * AUTHENTIFIZIERTEN Router: Läufe sind Mandantendaten — `listRuns` selektiert
+ * zusätzlich tenant-gescopt.
+ */
+integrationsApiRoutes.get("/:id/runs", async (c) => {
+  const def = getIntegration(c.req.param("id"))
+  if (!def) return c.json({ error: "unknown integration" }, 404)
+  const raw = Number(c.req.query("limit"))
+  const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.trunc(raw), 50) : 20
+  return c.json(await listRuns(c.get("tenant").id, def.id, limit))
 })
 
 /**
@@ -100,6 +125,10 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
 
   let tenant: Tenant | undefined
   let trigger: RunTrigger = "webhook"
+  // Grund des 401 am Ende, im dokumentierten Code-Set: ohne jede
+  // Anmeldeinformation TOKEN_MISSING, mit untauglichem Secret/Token
+  // TOKEN_INVALID — der JWT-Pfad verfeinert das ggf. auf TOKEN_EXPIRED.
+  let authFailure: AuthErrorCode = token ? "TOKEN_INVALID" : "TOKEN_MISSING"
 
   if (token) {
     tenant = await findTenantBySecret(token)
@@ -109,12 +138,30 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
       // Kein Secret-Treffer, aber ein Bearer-Header: AuthKit-JWT prüfen —
       // der UI-Pfad. x-sync-token ist dagegen explizit ein Webhook-Secret,
       // für das es keinen JWT-Fallback gibt.
-      const claims = await verifyAccessToken(bearer)
-      const orgId = claims?.org_id
-      if (orgId) {
+      const result = await verifyAccessToken(bearer)
+      if (result.status === "unavailable") {
+        // JWKS-Ausfall darf keinen Re-Login provozieren.
+        return c.json({ error: AUTH_UNAVAILABLE_MESSAGE, code: "AUTH_UNAVAILABLE" }, 503)
+      }
+      // Abgelaufen vs. kaputt für die 401-Antwort unten festhalten.
+      if (result.status === "invalid") authFailure = result.code
+      if (result.status === "valid") {
+        // Ab hier ist der Aufrufer identifiziert — fachlich dieselben
+        // 403-Fälle wie in resolveTenant, damit der Client im TenantGate
+        // landet statt im Login-Flow.
+        const orgId = result.claims.org_id
+        if (!orgId) {
+          return c.json({ error: "forbidden: no organization in token", code: "NO_ORG" }, 403)
+        }
         tenant = await getCachedTenantByOrgId(orgId)
+        if (!tenant) {
+          log.warn("tenant unknown", { orgId })
+          return c.json({ error: "forbidden: unknown organization", code: "UNKNOWN_ORG" }, 403)
+        }
         trigger = "manual"
       }
+      // `invalid` fällt durch auf das 401 unten — fail-closed für Caller
+      // ohne Secret-Treffer.
     }
   } else if (!isAuthConfigured() && process.env.NODE_ENV !== "production") {
     // Dev ohne Auth bleibt offen (heutige Haltung) — Prod ist durch den
@@ -124,8 +171,12 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
   }
 
   if (!tenant) {
-    log.warn("integration run unauthorized", { integration: def.id })
-    return c.json({ error: "unauthorized" }, 401)
+    log.warn("integration run unauthorized", { integration: def.id, code: authFailure })
+    c.header("WWW-Authenticate", bearerChallenge(authFailure))
+    // Das Feld `error` bleibt "unauthorized" — die UI zeigt genau das an. Der
+    // `code` ist keine neue Preisgabe: dieselbe expired/invalid-Unterscheidung
+    // liefert `requireAuth` unauthentifiziert an jeder anderen /api/*-Route.
+    return c.json({ error: "unauthorized", code: authFailure }, 401)
   }
   if (!tenant.active) {
     return c.json({ error: "forbidden: organization deactivated", code: "ORG_INACTIVE" }, 403)
@@ -136,14 +187,17 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
     return c.json({ error: "integration not configured", missing }, 503)
   }
 
-  const raw = await safeJson(c.req.raw)
-  const parsed = def.inputSchema.safeParse(raw)
-  if (!parsed.success) {
-    return c.json({ error: "invalid input", details: parsed.error.flatten() }, 400)
+  // Request-Body ÜBER den gespeicherten Umfang legen: ohne Body gilt der
+  // gespeicherte Umfang (leer = alles an, wie bisher), Abweichungen im Body
+  // gelten nur für diesen Lauf. Reihenfolge (Auth → active →
+  // missingCredentials → Input) bleibt unverändert.
+  const resolved = await resolveRunInput(def, tenant.id, await safeJson(c.req.raw))
+  if (!resolved.ok) {
+    return c.json({ error: resolved.error, details: resolved.details }, 400)
   }
 
   try {
-    const result = await runIntegration(def, buildRunContext(def, tenant, trigger), parsed.data)
+    const result = await runIntegration(def, buildRunContext(def, tenant, trigger), resolved.input)
     return c.json(result)
   } catch (err) {
     if (err instanceof SyncBusyError) {

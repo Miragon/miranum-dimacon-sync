@@ -1,14 +1,31 @@
-import { createContext, useCallback, useContext } from "react"
+import { AuthKitError, getClaims } from "@workos-inc/authkit-react"
+import { createContext, useContext } from "react"
+import { pinOrganization } from "#/lib/workos-org-pin"
 
 export interface AuthTokenContext {
-  getToken: () => Promise<string>
-  /** startet den PKCE-Flow neu — für abgelaufene Sessions und 401-Antworten */
-  forceReauth: () => void
+  /** Signatur von authkit `getAccessToken` — `forceRefresh` erzwingt einen Refresh. */
+  getToken: (opts?: { forceRefresh?: boolean }) => Promise<string>
+  /**
+   * Organisation, in der die Sitzung BEGONNEN hat — als Funktion, weil der Wert
+   * aus einem Ref kommt.
+   *
+   * LOAD-BEARING, dass hier NICHT der laufend aktualisierte `organizationId`
+   * aus `useAuth()` steht: ein Refresh, der ein Token der falschen Organisation
+   * liefert, schreibt diesen State über seinen eigenen `onRefresh`-Callback
+   * sofort um. Der Vergleich unten hätte dann ab dem zweiten Versuch die
+   * FALSCHE Organisation als Erwartung und liefe ins Leere.
+   */
+  getExpectedOrganizationId: () => string | null
+  /**
+   * Signal (KEIN Redirect): die Session ist endgültig abgelaufen. Der AuthGate
+   * zeigt daraufhin ein Overlay — offene Formulareingaben bleiben erhalten.
+   */
+  onSessionExpired: () => void
 }
 
-export const TokenContext = createContext<AuthTokenContext | null>(null)
-
 export type ApiFetch = (input: string, init?: RequestInit) => Promise<Response>
+
+export const ApiFetchContext = createContext<ApiFetch | null>(null)
 
 /**
  * Liest eine JSON-Antwort. Nötig, weil `res.json()` bei leerem Body mit
@@ -35,30 +52,171 @@ export async function readJson<T>(res: Response): Promise<T> {
   }
 }
 
-export function useApiFetch(): ApiFetch {
-  const auth = useContext(TokenContext)
-  return useCallback<ApiFetch>(
-    async (input, init) => {
-      const headers = new Headers(init?.headers)
-      if (auth) {
-        try {
-          const token = await auth.getToken()
-          headers.set("Authorization", `Bearer ${token}`)
-        } catch {
-          // authkit wirft LoginRequiredError, wenn der Refresh scheitert —
-          // neu anmelden statt eines toten Fehlerbanners.
-          auth.forceReauth()
-          throw new Error("Sitzung abgelaufen — Anmeldung wird neu gestartet …")
-        }
+/** Frische Headers je Versuch — ein wiederholter Request darf nie das alte Token tragen. */
+function withAuthHeaders(init: RequestInit | undefined, token: string): RequestInit {
+  const headers = new Headers(init?.headers)
+  headers.set("Authorization", `Bearer ${token}`)
+  return { ...init, headers }
+}
+
+/**
+ * Ein Stream-Body ist nach dem ersten Versuch verbraucht — ein zweiter
+ * Request würde stillschweigend leer rausgehen.
+ */
+function isReplayable(init: RequestInit | undefined): boolean {
+  return !(init?.body instanceof ReadableStream)
+}
+
+/**
+ * Trennt „Session endgültig weg" von „gerade kein Netz". authkit-js mappt NUR
+ * seinen eigenen `RefreshError` (= HTTP-Antwort mit `!response.ok`) auf
+ * `LoginRequiredError`; ein roher `TypeError` aus dem fetch (offline, DNS,
+ * WorkOS kurz weg) und der `LockError` des Tab-übergreifenden Refresh-Locks
+ * werden unverändert durchgereicht — und authkit selbst behandelt genau die
+ * als transient (State zurück auf AUTHENTICATED).
+ *
+ * LOAD-BEARING: ohne diese Unterscheidung sperrt ein 3-Sekunden-WLAN-Aussetzer
+ * die App hinter dem Abgelaufen-Overlay, obwohl die Session intakt ist.
+ * Spiegelbild zu `TOKEN_INVALID_CODES` in `src/server/lib/auth.ts`, wo der
+ * Server aus demselben Grund `invalid` von `unavailable` trennt.
+ *
+ * `err.name` taugt NICHT als Kriterium — `AuthKitError` und Ableitungen
+ * setzen `name` nicht und heißen darum alle schlicht "Error".
+ */
+export function isSessionTerminal(err: unknown): boolean {
+  return err instanceof AuthKitError
+}
+
+/** Transienter Fehler: normales Fehlerbanner der Seite statt Re-Login. */
+function transientAuthError(cause: unknown): Error {
+  return new Error("Anmeldedienst nicht erreichbar — bitte erneut versuchen", { cause })
+}
+
+/**
+ * Gehört das frische Token noch zur erwarteten Organisation?
+ *
+ * Zweites Netz hinter `pinOrganization`: schreibt der Pin ins Leere (Storage
+ * gesperrt, Schlüsselname in einer neuen authkit-Version umbenannt), liefert
+ * der Refresh ein Token einer anderen Organisation. Das darf NIE still
+ * durchgehen — sonst arbeitet die UI im falschen Mandanten weiter.
+ *
+ * Ein nicht dekodierbares Token blockieren wir NICHT: das eigentliche Gate ist
+ * der Server (`resolveTenant` aus dem JWT), hier wäre eine Sperre nur Lärm.
+ */
+export function isSameOrganization(token: string, expected: string | null): boolean {
+  if (!expected) return true
+  try {
+    return (getClaims(token).org_id ?? null) === expected
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Abweichende Organisation nach dem Refresh — eigener terminaler Grund.
+ * Eigene Klasse, damit der Aufrufer „abgelaufen" von „falscher Mandant"
+ * unterscheiden kann: die Meldungen führen zu unterschiedlichem Handeln.
+ */
+export class WrongOrganizationError extends Error {
+  constructor() {
+    super("Die Sitzung gehört zu einer anderen Organisation — bitte neu anmelden")
+  }
+}
+
+/**
+ * Ergebnis eines erzwungenen Refresh. `terminal` entscheidet, ob der Aufrufer
+ * das Abgelaufen-Signal geben darf oder nur einen transienten Fehler meldet.
+ */
+type RefreshResult = { ok: true; token: string } | { ok: false; terminal: boolean; cause: unknown }
+
+/**
+ * Fabrik für den authentifizierten Fetch — bewusst React-frei und damit
+ * direkt testbar. Ein 401 löst KEINEN Redirect mehr aus, sondern erst einen
+ * einmaligen Force-Refresh mit Retry und, wenn auch das scheitert, das
+ * `onSessionExpired`-Signal.
+ *
+ * Das `pendingRefresh`-Closure ist load-bearing: mehrere parallele 401
+ * (z. B. /api/me + /api/tenants) müssen sich EINEN Refresh teilen. Ohne
+ * Dedup erzeugt jeder Reauth-Versuch einen neuen PKCE-Code-Verifier und
+ * überschreibt den vorherigen im sessionStorage. Nebenbei löst der
+ * erzwungene Refresh die Sackgasse in authkit-js: `getAccessToken` prüft
+ * `options?.forceRefresh ||` VOR `#shouldRefresh()`, das im ERROR-State
+ * dauerhaft `false` liefert.
+ */
+export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
+  let pendingRefresh: Promise<RefreshResult> | null = null
+
+  function refreshOnce(): Promise<RefreshResult> {
+    if (!auth) return Promise.resolve({ ok: false, terminal: true, cause: null })
+    // Lokale Kopie: die Prüfung läuft in einer Closure, in der `auth` nicht
+    // mehr eingeengt ist.
+    const expectedOrg = auth.getExpectedOrganizationId()
+    // Organisation zurückschreiben, BEVOR der Refresh rausgeht — authkit hat
+    // sie beim Fehlschlag gelöscht und schickte sonst kein `organization_id`.
+    pinOrganization(expectedOrg)
+    // LOAD-BEARING: das `= null` im finally macht den Single-Flight-Slot wieder
+    // frei. Ohne das liefert jeder spätere Zyklus dasselbe (längst veraltete)
+    // Ergebnis — apiFetch lebt über `useMemo` die ganze Sitzung lang.
+    pendingRefresh ??= auth
+      .getToken({ forceRefresh: true })
+      .then<RefreshResult, RefreshResult>(
+        (token) =>
+          isSameOrganization(token, expectedOrg)
+            ? { ok: true, token }
+            : { ok: false, terminal: true, cause: new WrongOrganizationError() },
+        (cause: unknown) => ({ ok: false, terminal: isSessionTerminal(cause), cause }),
+      )
+      .finally(() => {
+        pendingRefresh = null
+      })
+    return pendingRefresh
+  }
+
+  return async function apiFetch(input, init) {
+    if (!auth) return fetch(input, init)
+
+    let token: string
+    try {
+      token = await auth.getToken()
+    } catch (err) {
+      // Netzfehler/Lock-Timeout: Session unangetastet lassen, Fehler melden.
+      if (!isSessionTerminal(err)) throw transientAuthError(err)
+
+      // authkit wirft LoginRequiredError, wenn der Refresh scheitert —
+      // einmal erzwingen, bevor die Session als abgelaufen gilt.
+      const refreshed = await refreshOnce()
+      if (!refreshed.ok && !refreshed.terminal) throw transientAuthError(refreshed.cause)
+      if (!refreshed.ok) {
+        auth.onSessionExpired()
+        if (refreshed.cause instanceof WrongOrganizationError) throw refreshed.cause
+        throw new Error("Sitzung abgelaufen — bitte neu anmelden")
       }
-      const res = await fetch(input, { ...init, headers })
-      // 401 trotz Token: Session serverseitig ungültig → PKCE-Flow neu starten.
-      // 403 (falsche Organisation) bleibt ein normaler Fehler — Re-Login hilft nicht.
-      if (res.status === 401 && auth) {
-        auth.forceReauth()
-      }
+      token = refreshed.token
+    }
+
+    const res = await fetch(input, withAuthHeaders(init, token))
+    // 401 trotz Token: einmal refreshen und den Request wiederholen.
+    // 403 (falsche Organisation) bleibt ein normaler Fehler — Re-Login hilft nicht.
+    if (res.status !== 401 || !isReplayable(init)) return res
+
+    const fresh = await refreshOnce()
+    if (!fresh.ok) {
+      // Nur ein echter authkit-Fehler beweist, dass die Session weg ist; bei
+      // einem Netzfehler bleibt es beim normalen 401-Fehlerbild der Seite.
+      if (fresh.terminal) auth.onSessionExpired()
+      // Original-Response zurück, Body ungelesen — readJson des Aufrufers bleibt intakt.
       return res
-    },
-    [auth],
-  )
+    }
+
+    const retry = await fetch(input, withAuthHeaders(init, fresh.token))
+    if (retry.status === 401) auth.onSessionExpired()
+    return retry
+  }
+}
+
+/** Auth aus (Dev): ein Modul-Singleton, damit die Identität stabil bleibt. */
+const FALLBACK_FETCH = createApiFetch(null)
+
+export function useApiFetch(): ApiFetch {
+  return useContext(ApiFetchContext) ?? FALLBACK_FETCH
 }

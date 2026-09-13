@@ -2,7 +2,7 @@ import { sdk as clockin } from "@miragon/client-clockin"
 import { sdk as dimacon } from "@miragon/client-dimacon"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
 import type { Client as DimaconClient } from "@miragon/client-dimacon"
-import { withRetry } from "../../../lib/concurrency.js"
+import { NON_IDEMPOTENT_RETRY, withRetry } from "../../../lib/concurrency.js"
 import type { Logger } from "../../../lib/log.js"
 import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
 import { employeeSourceValues } from "../../shared/field-catalog.js"
@@ -60,18 +60,22 @@ export class EmployeeSyncer {
     const applied = this.applyEmployeeMapping(e)
     // fillIfNonEmpty-Semantik: leere Werte fehlen im Body (Clockin validiert
     // z. B. phone_work als String — null wird abgelehnt).
-    const created = (await withRetry(() =>
-      clockin.createEmployee({
-        client: this.clockinClient,
-        body: {
-          ...applied.standardFields,
-          first_name: e.firstName,
-          last_name: e.lastName,
-          personnel_number: e.personnelNumber?.trim() || undefined,
-          email: e.email ?? null,
-          ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
-        } as EmployeeWriteBody,
-      }),
+    const created = (await withRetry(
+      () =>
+        clockin.createEmployee({
+          client: this.clockinClient,
+          body: {
+            ...applied.standardFields,
+            first_name: e.firstName,
+            last_name: e.lastName,
+            personnel_number: e.personnelNumber?.trim() || undefined,
+            email: e.email ?? null,
+            ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
+          } as EmployeeWriteBody,
+        }),
+      // Anlage ist nicht idempotent (s. NON_IDEMPOTENT_RETRY) — ein Retry
+      // nach erfolgtem Insert erzeugte einen zweiten Mitarbeiter.
+      NON_IDEMPOTENT_RETRY,
     )) as unknown as { data?: { id?: number } }
 
     return {
@@ -93,23 +97,27 @@ export class EmployeeSyncer {
         clockinId: c.id,
         name,
         status: "created",
-        reason: "[dryRun] Rolle CRAFTSMAN (Default)",
+        reason:
+          "[dryRun] Rolle CRAFTSMAN (Default), ohne Team — in Dimacon manuell einem Team zuweisen",
       }
     }
 
-    const created = (await withRetry(() =>
-      dimacon.createNewEmployee({
-        client: this.dimaconClient,
-        body: {
-          firstName: c.firstName,
-          lastName: c.lastName,
-          role: "CRAFTSMAN",
-          personnelNumber: c.personnelNumber?.trim() || undefined,
-          phoneNumber: c.phoneWork,
-          color: DEFAULT_DIMACON_COLOR,
-          timeTrackingActive: true,
-        },
-      }),
+    const created = (await withRetry(
+      () =>
+        dimacon.createNewEmployee({
+          client: this.dimaconClient,
+          body: {
+            firstName: c.firstName,
+            lastName: c.lastName,
+            role: "CRAFTSMAN",
+            personnelNumber: c.personnelNumber?.trim() || undefined,
+            phoneNumber: c.phoneWork,
+            color: DEFAULT_DIMACON_COLOR,
+            timeTrackingActive: true,
+          },
+        }),
+      // s. o.: nicht idempotent.
+      NON_IDEMPOTENT_RETRY,
     )) as unknown as { id?: string }
 
     return {
@@ -118,7 +126,7 @@ export class EmployeeSyncer {
       clockinId: c.id,
       name,
       status: "created",
-      reason: "Rolle CRAFTSMAN (Default)",
+      reason: "Rolle CRAFTSMAN (Default), ohne Team — in Dimacon manuell einem Team zuweisen",
     }
   }
 
@@ -192,20 +200,41 @@ export class EmployeeSyncer {
         dimacon.updateEmployee({
           client: this.dimaconClient,
           path: { employeeId: d.id },
-          body: {
-            role: d.role,
-            firstName: d.firstName,
-            lastName: d.lastName,
+          body: dimaconEmployeeUpdateBody(d, {
             personnelNumber: diff.backfillPersonnelNumber,
-            phoneNumber: d.phoneNumber,
-            color: d.color,
-            timeTrackingActive: d.timeTrackingActive,
-          },
+          }),
         }),
       )
     }
 
     return { ...base, status: "updated", reason: describeDiff(diff, mappedDiff) }
+  }
+}
+
+/**
+ * Dimacon-PUT ist ein Voll-Replace: bestehende Werte MÜSSEN zurückgespiegelt
+ * werden, sonst werden sie gelöscht (Issue #17 — Mitarbeiter verloren beim
+ * Personalnummer-Backfill ihr Team). Deshalb spiegelt der Body ALLE geladenen
+ * Felder zurück und die Änderung kommt als `overrides` obendrauf.
+ * `undefined`-Werte bleiben bewusst weg statt auf `null` normalisiert zu
+ * werden — unter Merge-Semantik strikt sicherer, unter Replace identisch.
+ */
+function dimaconEmployeeUpdateBody(
+  d: DimaconEmployeeFull,
+  overrides: { personnelNumber?: string } = {},
+): NonNullable<Parameters<typeof dimacon.updateEmployee>[0]>["body"] {
+  return {
+    role: d.role,
+    firstName: d.firstName,
+    lastName: d.lastName,
+    personnelNumber: d.personnelNumber,
+    phoneNumber: d.phoneNumber,
+    team: d.team,
+    profilePicture: d.profilePicture,
+    color: d.color,
+    timeTrackingActive: d.timeTrackingActive,
+    additionalInformation: d.additionalInformation,
+    ...overrides,
   }
 }
 

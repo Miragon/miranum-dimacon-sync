@@ -8,14 +8,14 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table"
-import { ResultSectionHead, Stat } from "./bits.js"
+import { MetricsSection, ResultSectionHead, Stat, type RunMetricsSnapshot } from "./bits.js"
 
 export interface CustomerAlignRow {
   dimaconCustomerId: string
   name: string
   lexwareContactId?: string
   lexwareNumber?: string
-  status: "created" | "aligned" | "unchanged" | "skipped" | "failed"
+  status: "created" | "aligned" | "unchanged" | "ambiguous" | "conflict" | "skipped" | "failed"
   reason?: string
 }
 
@@ -32,6 +32,8 @@ export interface CustomerSyncResult {
   steps?: { createContacts: boolean; alignNumbers: boolean }
   customers: CustomerAlignRow[]
   errors: CustomerSyncError[]
+  /** optional: ältere Läufe/Server liefern keine Metriken */
+  metrics?: RunMetricsSnapshot
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -62,7 +64,17 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
                   </MnStatusBadge>
                 ))
             : null}
-          {(["created", "aligned", "unchanged", "skipped", "failed"] as const).map((s) =>
+          {(
+            [
+              "created",
+              "aligned",
+              "unchanged",
+              "ambiguous",
+              "conflict",
+              "skipped",
+              "failed",
+            ] as const
+          ).map((s) =>
             counts[s] > 0 ? (
               <MnStatusBadge key={s} variant={badgeVariant(s)}>
                 {s} · {counts[s]}
@@ -71,6 +83,8 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
           )}
         </div>
       </section>
+
+      <MetricsSection metrics={result.metrics} />
 
       {result.customers.length > 0 ? (
         <section className="mb-16">
@@ -124,7 +138,8 @@ export function DimaconLexofficeResult({ result }: { result: CustomerSyncResult 
 
 function badgeVariant(status: CustomerAlignRow["status"]): "default" | "ok" | "warn" {
   if (status === "created" || status === "aligned") return "ok"
-  if (status === "failed" || status === "skipped") return "warn"
+  // ambiguous/conflict: bewusst nichts geschrieben — braucht eine Entscheidung
+  if (status !== "unchanged") return "warn"
   return "default"
 }
 
@@ -133,6 +148,8 @@ function countByStatus(rows: CustomerAlignRow[]): Record<CustomerAlignRow["statu
     created: 0,
     aligned: 0,
     unchanged: 0,
+    ambiguous: 0,
+    conflict: 0,
     skipped: 0,
     failed: 0,
   }

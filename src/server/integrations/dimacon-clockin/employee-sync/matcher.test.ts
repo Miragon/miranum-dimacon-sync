@@ -69,6 +69,76 @@ describe("matchEmployees", () => {
     expect(outcome.ambiguous).toHaveLength(1)
   })
 
+  it("blocks both candidates of an ambiguous match as creation candidates", () => {
+    const outcome = matchEmployees([dim()], [clk({ id: 1 }), clk({ id: 2 })])
+
+    // clockinOnly bleibt unverändert — nur die Anlage-Policy filtert später
+    expect(outcome.clockinOnly.map((c) => c.id)).toEqual([1, 2])
+    expect(outcome.blockedClockinIds.get(1)).toContain("mehrdeutig")
+    expect(outcome.blockedClockinIds.get(2)).toContain("mehrdeutig")
+  })
+
+  it("blocks a clockin duplicate of an already matched record", () => {
+    const outcome = matchEmployees(
+      [dim({ personnelNumber: "P-1" })],
+      [
+        clk({ id: 1, personnelNumber: "P-1" }),
+        // gleiche Person, zweiter Datensatz ohne Personalnummer
+        clk({ id: 2 }),
+      ],
+    )
+
+    expect(outcome.pairs.map((p) => p.clockin.id)).toEqual([1])
+    expect(outcome.clockinOnly.map((c) => c.id)).toEqual([2])
+    expect(outcome.blockedClockinIds.get(2)).toBe(
+      "Dublette in Clockin zu bereits zugeordnetem Datensatz #1",
+    )
+  })
+
+  it("blocks a clockin duplicate even when neither record is matched", () => {
+    // Beide Datensätze sind Dubletten derselben Person und in Dimacon
+    // unbekannt — ohne Sperre würden zwei neue Dimacon-Mitarbeiter entstehen.
+    const outcome = matchEmployees(
+      [],
+      [
+        clk({ id: 1, firstName: "Max", lastName: "Mustermann", personnelNumber: "P-9" }),
+        clk({ id: 2, firstName: "Max", lastName: "Mustermann", personnelNumber: "P-9" }),
+      ],
+    )
+
+    expect(outcome.pairs).toHaveLength(0)
+    expect(outcome.clockinOnly.map((c) => c.id)).toEqual([1, 2])
+    // Der erste Datensatz bleibt Anlage-Kandidat, der zweite ist gesperrt
+    expect(outcome.blockedClockinIds.has(1)).toBe(false)
+    expect(outcome.blockedClockinIds.get(2)).toBe("Dublette in Clockin zu Datensatz #1")
+  })
+
+  it("blocks an unmatched clockin duplicate that only shares the name", () => {
+    const outcome = matchEmployees(
+      [],
+      [
+        clk({ id: 1, firstName: "Max", lastName: "Mustermann", personnelNumber: "P-9" }),
+        clk({ id: 2, firstName: "Max", lastName: "Mustermann", personnelNumber: "P-10" }),
+      ],
+    )
+
+    expect(outcome.blockedClockinIds.get(2)).toBe("Dublette in Clockin zu Datensatz #1")
+  })
+
+  it("keeps the ambiguous reason when a blocked record is also a duplicate", () => {
+    const outcome = matchEmployees([dim()], [clk({ id: 1 }), clk({ id: 2 })])
+
+    expect(outcome.blockedClockinIds.get(1)).toContain("mehrdeutig")
+    expect(outcome.blockedClockinIds.get(2)).toContain("mehrdeutig")
+  })
+
+  it("leaves genuinely new clockin employees unblocked", () => {
+    const outcome = matchEmployees([dim()], [clk(), clk({ id: 9, lastName: "Beta" })])
+
+    expect(outcome.clockinOnly.map((c) => c.id)).toEqual([9])
+    expect(outcome.blockedClockinIds.size).toBe(0)
+  })
+
   it("skips archived dimacon employees as creation candidates", () => {
     const outcome = matchEmployees([dim({ isArchived: true })], [])
     expect(outcome.dimaconOnly).toHaveLength(0)

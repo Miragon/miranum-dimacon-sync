@@ -196,4 +196,56 @@ describe("sync_runs retention (repo)", () => {
     // Fremder Mandant bleibt unangetastet — Retention ist tenant-gescopt
     expect(all.filter((r) => r.tenantId === t2.id)).toHaveLength(1)
   })
+
+  it("lists runs newest first, tenant-scoped and limited", async () => {
+    const { listRuns, recordRun } = await import("./repos/sync-runs.js")
+    const [t1] = await db
+      .insert(tenants)
+      .values({ workosOrgId: "org_list_a", displayName: "A" })
+      .returning()
+    const [t2] = await db
+      .insert(tenants)
+      .values({ workosOrgId: "org_list_b", displayName: "B" })
+      .returning()
+
+    const base = Date.parse("2026-02-01T00:00:00Z")
+    for (let i = 0; i < 5; i++) {
+      await recordRun({
+        tenantId: t1.id,
+        integrationId: "dimacon-clockin",
+        trigger: "cron",
+        status: "success",
+        dryRun: i === 0,
+        input: { dryRun: i === 0, steps: { employees: false } },
+        result: { i },
+        startedAt: new Date(base + i * 60_000),
+        finishedAt: new Date(base + i * 60_000 + 1000),
+      })
+    }
+    await recordRun({
+      tenantId: t2.id,
+      integrationId: "dimacon-clockin",
+      trigger: "manual",
+      status: "error",
+      dryRun: false,
+      input: {},
+      error: "boom",
+      startedAt: new Date(base + 10 * 60_000),
+      finishedAt: new Date(base + 10 * 60_000 + 10),
+    })
+
+    const rows = await listRuns(t1.id, "dimacon-clockin", 3)
+    expect(rows).toHaveLength(3)
+    // Neueste zuerst
+    expect(rows[0].startedAt.getTime()).toBe(base + 4 * 60_000)
+    expect(rows[1].startedAt.getTime()).toBe(base + 3 * 60_000)
+    // Fremder Mandant taucht nie auf (tenant-gescopt)
+    expect(rows.every((r) => r.error === null)).toBe(true)
+    // `input` kommt als jsonb-Objekt zurück
+    expect(rows[0].input).toEqual({ dryRun: false, steps: { employees: false } })
+    expect(rows[0].durationMs).toBe(1000)
+
+    // Andere Integration desselben Mandanten ist leer
+    expect(await listRuns(t1.id, "dimacon-lexoffice")).toEqual([])
+  })
 })

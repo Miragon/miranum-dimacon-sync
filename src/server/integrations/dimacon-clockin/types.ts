@@ -7,6 +7,11 @@ import type { EmployeeSyncCounts, EmployeeSyncRow } from "./employee-sync/types.
  * `assignments` die Mitarbeiter-Zuordnung auf Projekte. Teilobjekte wie
  * `{archive:false}` werden durch die inneren Defaults vervollständigt;
  * fehlt `steps` ganz (auch beim Scheduler-`parse({})`), läuft alles.
+ *
+ * Ausnahme: `employeeCreateInDimacon` schaltet NUR die Anlage-Richtung
+ * Clockin → Dimacon und ist bewusst per Default AUS (Issue #17 — der Sync hat
+ * ungefiltert teamlose Mitarbeiter in Dimacon angelegt). Der Schalter greift
+ * nur zusätzlich zu `employees`.
  */
 export const SyncStepsSchema = z.object({
   employees: z.boolean().default(true),
@@ -14,9 +19,29 @@ export const SyncStepsSchema = z.object({
   projects: z.boolean().default(true),
   assignments: z.boolean().default(true),
   archive: z.boolean().default(true),
+  employeeCreateInDimacon: z.boolean().default(false),
 })
 
 export type SyncSteps = z.infer<typeof SyncStepsSchema>
+
+/**
+ * Feldübergreifend normalisieren statt ablehnen: `employeeCreateInDimacon`
+ * greift nur ZUSÄTZLICH zu `employees` — ohne den Stammdaten-Abgleich liest
+ * der Lauf den Schalter ohnehin nie (run.ts startet `runEmployeeSync` nur bei
+ * `steps.employees`). Bliebe er trotzdem auf `true` stehen, würde er
+ * mitgespeichert, in Anzeige und Badges als aktiver Schritt gezählt und beim
+ * späteren Wiedereinschalten von `employees` ungefragt wieder scharf — ein
+ * Run-Body `{steps:{employees:true}}` wird eine Ebene tief über die
+ * gespeicherten Defaults gemerged (Issue #17).
+ *
+ * LOAD-BEARING: das läuft als `.transform` NACH der Validierung. Es kann keine
+ * bisher abgelehnte Eingabe retten — „ungültige gespeicherte Defaults sind
+ * fail-closed" bleibt unverändert — und schaltet ausschließlich in die
+ * schreibärmere Richtung ab.
+ */
+export function normalizeSyncSteps(steps: SyncSteps): SyncSteps {
+  return steps.employees ? steps : { ...steps, employeeCreateInDimacon: false }
+}
 
 export const DEFAULT_STEPS: SyncSteps = {
   employees: true,
@@ -24,6 +49,7 @@ export const DEFAULT_STEPS: SyncSteps = {
   projects: true,
   assignments: true,
   archive: true,
+  employeeCreateInDimacon: false,
 }
 
 export const SyncRunInputSchema = z.object({
@@ -32,7 +58,7 @@ export const SyncRunInputSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD")
     .optional(),
   dryRun: z.boolean().optional(),
-  steps: SyncStepsSchema.optional(),
+  steps: SyncStepsSchema.transform(normalizeSyncSteps).optional(),
 })
 
 export type SyncRunInput = z.infer<typeof SyncRunInputSchema>
@@ -68,6 +94,22 @@ export interface SyncError {
   message: string
 }
 
+/**
+ * Welcher Weg die Auflösungen genommen haben (Issue #15). Jede Bündelung
+ * hat einen Einzelabruf-Fallback — ohne diese Anzeige wäre im Ergebnis nicht
+ * erkennbar, ob die Optimierung greift. Optional, damit ältere Läufe und
+ * ältere Clients unverändert lesbar bleiben.
+ */
+export interface SyncLookupInfo {
+  jobs: "period" | "per-job"
+  teamAssignments: "period" | "per-job" | "none"
+  projects: "bulk" | "per-id"
+  customers: "preloaded" | "bulk" | "per-id"
+  clockinCustomerIndex: boolean
+  clockinProjectPrefetch: "bundled" | "per-id" | "off"
+  archiveHorizonDays: number
+}
+
 export interface SyncResult {
   date: string
   dryRun: boolean
@@ -83,6 +125,8 @@ export interface SyncResult {
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
+  /** Auflösungswege des Laufs — fehlt auf frühen Rückgabepfaden */
+  lookups?: SyncLookupInfo
 }
 
 export interface EmployeeMapping {

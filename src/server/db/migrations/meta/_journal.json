@@ -15,6 +15,20 @@
       "when": 1787309659054,
       "tag": "0001_lyrical_preak",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789037574923,
+      "tag": "0002_unknown_inhumans",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789297449389,
+      "tag": "0003_sudden_maximus",
+      "breakpoints": true
     }
   ]
 }

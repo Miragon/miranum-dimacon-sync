@@ -5,8 +5,16 @@ export function todayInBerlin(): string {
 }
 
 export function nextDay(date: string): string {
+  return addDays(date, 1)
+}
+
+/**
+ * Kalendertage auf ein ISO-Datum addieren (UTC-Arithmetik auf reinen
+ * Datumswerten — kein Zeitzonen-Drift, weil keine Uhrzeit im Spiel ist).
+ */
+export function addDays(date: string, days: number): string {
   const [y, m, d] = date.split("-").map(Number)
-  return new Date(Date.UTC(y, (m ?? 1) - 1, (d ?? 1) + 1)).toISOString().slice(0, 10)
+  return new Date(Date.UTC(y, (m ?? 1) - 1, (d ?? 1) + days)).toISOString().slice(0, 10)
 }
 
 export function startDateForClockin(date: string, hhmm: string = DEFAULT_START_HHMM): string {

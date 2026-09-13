@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Logger } from "../../lib/log.js"
 import type { IntegrationRunContext } from "../types.js"
+import { addDays, todayInBerlin } from "../shared/time.js"
 import type { LoadedAppointments } from "../shared/dimacon.js"
 import type { EnrichedDimaconData } from "./enrichment.js"
 
@@ -11,8 +12,12 @@ const updateProjectMock = vi.fn()
 const attachEmployeesMock = vi.fn()
 const detachEmployeesMock = vi.fn()
 const getAListOfProjectEmployeesMock = vi.fn()
+// Fallback-Suche des EmployeeMatcher: greift nur für Mitarbeiter, die der
+// Stammdaten-Abgleich NICHT als Paar geliefert hat.
+const searchForEmployeesMock = vi.fn()
 const searchForCustomersMock = vi.fn()
 const createCustomerMock = vi.fn()
+const getAListOfCustomersMock = vi.fn()
 
 vi.mock("@miragon/client-clockin", () => ({
   sdk: {
@@ -22,8 +27,10 @@ vi.mock("@miragon/client-clockin", () => ({
     attachEmployees: attachEmployeesMock,
     detachEmployees: detachEmployeesMock,
     getAListOfProjectEmployees: getAListOfProjectEmployeesMock,
+    searchForEmployees: searchForEmployeesMock,
     searchForCustomers: searchForCustomersMock,
     createCustomer: createCustomerMock,
+    getAListOfCustomers: getAListOfCustomersMock,
   },
 }))
 
@@ -32,7 +39,14 @@ const clockinClientStub = { kind: "clockin" }
 const dimaconClientStub = { kind: "dimacon" }
 
 const loadAppointmentsMock = vi.fn()
-vi.mock("../shared/dimacon.js", () => ({ loadAppointments: loadAppointmentsMock }))
+const loadAllCustomersMock = vi.fn()
+const loadEmployeesWithEmailMock = vi.fn()
+vi.mock("../shared/dimacon.js", () => ({
+  loadAppointments: loadAppointmentsMock,
+  loadAllCustomers: loadAllCustomersMock,
+  loadEmployeesWithEmail: loadEmployeesWithEmailMock,
+  BULK_FETCH_THRESHOLD: 8,
+}))
 
 const enrichMock = vi.fn()
 vi.mock("./enrichment.js", () => ({ enrich: enrichMock }))
@@ -41,7 +55,10 @@ const loadMappingContextMock = vi.fn()
 vi.mock("../shared/mapping-context.js", () => ({ loadMappingContext: loadMappingContextMock }))
 
 const archiveUnplannedMock = vi.fn()
-vi.mock("./archive.js", () => ({ archiveUnplanned: archiveUnplannedMock }))
+vi.mock("./archive.js", () => ({
+  archiveUnplanned: archiveUnplannedMock,
+  archiveHorizonDays: () => 14,
+}))
 
 const runEmployeeSyncMock = vi.fn()
 vi.mock("./employee-sync/run-employee-sync.js", () => ({
@@ -99,6 +116,13 @@ function loadedAppointments(): LoadedAppointments {
 
 function enrichedData(): EnrichedDimaconData {
   return {
+    horizon: { projectIds: new Set(["proj-1"]), complete: true },
+    sources: {
+      jobs: "period",
+      teamAssignments: "none",
+      projects: "bulk",
+      customers: "preloaded",
+    },
     jobs: new Map([
       ["job-1", { jobId: "job-1", projectId: "proj-1", customerId: "cust-1", teamAssignments: [] }],
     ]),
@@ -115,14 +139,47 @@ function enrichedData(): EnrichedDimaconData {
   }
 }
 
+function archiveOptions(): {
+  syncedClockinProjectIds: Set<number>
+  horizonProjectNumbers: Set<string>
+  horizonComplete: boolean
+  dryRun: boolean
+} {
+  return archiveUnplannedMock.mock.calls[0][1]
+}
+
 function archivedSet(): Set<number> {
-  return archiveUnplannedMock.mock.calls[0][1] as Set<number>
+  return archiveOptions().syncedClockinProjectIds
+}
+
+/** identisch zum Mock von `archiveHorizonDays` oben */
+const HORIZON_DAYS = 14
+
+/** Das Fenster, das der Lauf dem Enrichment mitgibt (undefined = Archiv aus) */
+function enrichHorizon(): { from: string; to: string } | undefined {
+  return (enrichMock.mock.calls[0][1] as { horizon?: { from: string; to: string } }).horizon
+}
+
+// ISO-Daten sind lexikografisch vergleichbar; die Helfer machen die
+// Fehlermeldung im Rot-Fall lesbar (beide Werte im Diff).
+function atLeast(actual: string | undefined, bound: string): boolean | string {
+  return actual !== undefined && actual >= bound ? true : `${String(actual)} < ${bound}`
+}
+
+function atMost(actual: string | undefined, bound: string): boolean | string {
+  return actual !== undefined && actual <= bound ? true : `${String(actual)} > ${bound}`
 }
 
 beforeEach(() => {
   vi.resetAllMocks()
 
   loadAppointmentsMock.mockResolvedValue(loadedAppointments())
+  loadEmployeesWithEmailMock.mockResolvedValue([])
+  getAListOfCustomersMock.mockResolvedValue({ data: [], meta: { last_page: 1 } })
+  // Gesamtbestand = der eine Tageskunde: keine Namens-Duplikate
+  loadAllCustomersMock.mockResolvedValue([
+    { id: "cust-1", customerNumber: "D-100", name: "Muster GmbH" },
+  ])
   enrichMock.mockResolvedValue(enrichedData())
   // Leerer Kontext → run.ts fällt auf die Default-Zuordnung zurück
   loadMappingContextMock.mockResolvedValue(new Map())
@@ -161,12 +218,25 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
     loadMappingContextMock.mockRejectedValue(new Error("boom 400"))
 
-    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+    // Alle Schalter bewusst AN — nur so beweist das gemeldete steps-Objekt,
+    // dass der Safe-Mode sie überschreibt (und nicht bloß die Defaults gelten).
+    const result = await runDimaconClockinSync(testCtx(), {
+      date: DATE,
+      steps: {
+        employees: true,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: true,
+        employeeCreateInDimacon: true,
+      },
+    })
 
     // Safe-Mode: Schreibschritte deaktiviert, Fehler dokumentiert
     expect(result.steps.projects).toBe(false)
     expect(result.steps.customers).toBe(false)
     expect(result.steps.employees).toBe(false)
+    expect(result.steps.employeeCreateInDimacon).toBe(false)
     expect(result.errors.some((e) => e.scope === "mapping")).toBe(true)
     expect(runEmployeeSyncMock).not.toHaveBeenCalled()
     expect(result.employeeSync).toBeUndefined()
@@ -197,6 +267,84 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
   })
 
+  it("still protects the resolved project id when the customer match is ambiguous", async () => {
+    // Zwei unscharfe Treffer ohne exakten Match ⇒ weder verknüpfen noch anlegen.
+    searchForCustomersMock.mockResolvedValue({
+      data: [
+        { id: 8, company: "Muster Bau GmbH", identifier: "D-1000" },
+        { id: 9, company: "Muster Nord GmbH", identifier: "D-1001" },
+      ],
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "customer",
+        message: expect.stringContaining("2 Clockin-Kandidaten"),
+      }),
+    )
+    expect(createCustomerMock).not.toHaveBeenCalled()
+    // Der Upsert löst die Clockin-ID trotz offener Kunden-Zuordnung auf ...
+    expect(result.projects).toHaveLength(1)
+    expect(result.projects[0].clockinProjectId).toBe(CLOCKIN_PROJECT_ID)
+    // ... und die Archiv-Phase bekommt sie als geschützt gemeldet
+    expect(archiveUnplannedMock).toHaveBeenCalledTimes(1)
+    expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
+  })
+
+  it("detects duplicate customer names in the full dimacon inventory, not just the day slice", async () => {
+    // Zwilling 1001 hat heute KEINEN Termin — im Tagesausschnitt wäre die
+    // Namensdublette unsichtbar und der Namens-Fallback verknüpfte den
+    // heutigen Kunden 1002 dauerhaft mit dem Clockin-Kunden des Zwillings.
+    loadAllCustomersMock.mockResolvedValue([
+      { id: "cust-1", customerNumber: "1002", name: "Erdbau Friedberg GmbH" },
+      { id: "cust-9", customerNumber: "1001", name: "Erdbau Friedberg GmbH" },
+    ])
+    enrichMock.mockResolvedValue({
+      ...enrichedData(),
+      customers: new Map([
+        ["cust-1", { id: "cust-1", customerNumber: "1002", name: "Erdbau Friedberg GmbH" }],
+      ]),
+    })
+    searchForCustomersMock.mockImplementation(async (req: unknown) => {
+      const needle = (req as { body: { scopes: { parameters: string[] }[] } }).body.scopes[0]
+        .parameters[0]
+      // Nur der Zwilling steht in Clockin — die Nummernsuche 1002 geht leer aus
+      return needle === "Erdbau Friedberg GmbH"
+        ? { data: [{ id: 7, company: "Erdbau Friedberg GmbH", identifier: "1001" }] }
+        : { data: [] }
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    // Namens-Fallback gesperrt ⇒ nur die Nummernsuche, danach eigener Kunde
+    expect(searchForCustomersMock).toHaveBeenCalledTimes(1)
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+    expect(createCustomerMock.mock.calls[0][0]).toMatchObject({
+      body: { company: "Erdbau Friedberg GmbH", identifier: "1002" },
+    })
+    expect(result.errors).toEqual([])
+  })
+
+  it("disables the name fallback when the dimacon customer inventory fails to load", async () => {
+    // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
+    loadAllCustomersMock.mockRejectedValue(new Error("boom 400"))
+    searchForCustomersMock.mockResolvedValue({ data: [] })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "customer",
+        message: expect.stringContaining("Namens-Fallback"),
+      }),
+    )
+    // Fail-closed: kein zweiter (Namens-)Lookup, stattdessen eigener Kunde
+    expect(searchForCustomersMock).toHaveBeenCalledTimes(1)
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+  })
+
   it("skips the archive phase entirely when steps.archive is disabled", async () => {
     const result = await runDimaconClockinSync(testCtx(), {
       date: DATE,
@@ -206,6 +354,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
         projects: true,
         assignments: true,
         archive: false,
+        employeeCreateInDimacon: false,
       },
     })
 
@@ -264,6 +413,293 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     expect(result.errors).toContainEqual(expect.objectContaining({ scope: "appointments" }))
   })
 
+  it("keeps the dimacon creation switch off unless the input asks for it", async () => {
+    await runDimaconClockinSync(testCtx(), { date: DATE })
+    expect(runEmployeeSyncMock.mock.calls[0][3]).toEqual({ dryRun: false, createInDimacon: false })
+
+    runEmployeeSyncMock.mockClear()
+
+    await runDimaconClockinSync(testCtx(), {
+      date: DATE,
+      dryRun: true,
+      steps: {
+        employees: true,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: true,
+        employeeCreateInDimacon: true,
+      },
+    })
+    expect(runEmployeeSyncMock.mock.calls[0][3]).toEqual({ dryRun: true, createInDimacon: true })
+  })
+
+  it("starts the employee sync BEFORE the appointments load resolves", async () => {
+    // Phase 1 und Phase 2 dürfen sich überlappen — sie belasten
+    // unterschiedliche Systeme und hängen nicht voneinander ab.
+    let releaseAppointments: () => void = () => undefined
+    loadAppointmentsMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseAppointments = () => resolve(loadedAppointments())
+        }),
+    )
+
+    const promise = runDimaconClockinSync(testCtx(), { date: DATE })
+
+    // Der Stammdaten-Abgleich läuft an, obwohl die Termine noch offen sind.
+    await vi.waitFor(() => expect(runEmployeeSyncMock).toHaveBeenCalledTimes(1))
+    expect(loadAppointmentsMock).toHaveBeenCalledTimes(1)
+
+    releaseAppointments()
+    const result = await promise
+    expect(result.employeeSync).toBeDefined()
+    expect(result.projects).toHaveLength(1)
+  })
+
+  it("seeds the employee matcher from the master sync before the daily plan", async () => {
+    // LOAD-BEARING: `await settleEmployeeSync()` steht VOR `new EmployeeMatcher(...)`.
+    // Der Matcher bekommt die Paar-Map beim Bau übergeben — eine spätere
+    // Zuweisung an `employeePairs` erreicht ihn nicht mehr. Ohne den await
+    // liefe jede Tages-Zuordnung in die byLastName-Fallbacksuche.
+    const SEEDED_ID = 77
+    const SEARCHED_ID = 999
+
+    // Phase 1 löst erst einen Makrotask später auf. Alle übrigen Mocks sind
+    // sofort erfüllt, der Lauf bis zum Matcher-Bau ist also eine
+    // ununterbrochene Microtask-Kette — der 0-ms-Timer feuert erst, wenn der
+    // Lauf wirklich an `await settleEmployeeSync()` an den Event-Loop
+    // zurückgibt. Damit pinnt der Test die REIHENFOLGE, nicht nur die
+    // Referenz auf die Paar-Map.
+    runEmployeeSyncMock.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+      return {
+        counts: { dimacon: 1, clockin: 1, matched: 1 },
+        rows: [],
+        errors: [],
+        pairs: new Map([["e-1", SEEDED_ID]]),
+      }
+    })
+
+    // Ein Mitarbeiter mit Zuordnung am Sync-Datum — sonst fragt der Matcher nie.
+    enrichMock.mockResolvedValue({
+      ...enrichedData(),
+      jobs: new Map([
+        [
+          "job-1",
+          {
+            jobId: "job-1",
+            projectId: "proj-1",
+            customerId: "cust-1",
+            teamAssignments: [
+              { employeeId: "e-1", date: `${DATE}T07:00:00`, teamId: "team-1", isFixed: true },
+            ],
+          },
+        ],
+      ]),
+      employees: new Map([["e-1", { id: "e-1", firstName: "Anna", lastName: "Muster" }]]),
+    })
+    // Die Fallbacksuche liefert bewusst eine ANDERE Clockin-Id — damit ist im
+    // Ergebnis sichtbar, welcher Weg genommen wurde.
+    searchForEmployeesMock.mockResolvedValue({
+      data: [{ id: SEARCHED_ID, first_name: "Anna", last_name: "Muster" }],
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(searchForEmployeesMock).not.toHaveBeenCalled()
+    expect(attachEmployeesMock).toHaveBeenCalledTimes(1)
+    expect(attachEmployeesMock.mock.calls[0][0]).toMatchObject({
+      path: { project: CLOCKIN_PROJECT_ID },
+      body: { resources: [SEEDED_ID] },
+    })
+    expect(result.projects[0].employeesAttached).toEqual([SEEDED_ID])
+    expect(result.errors).toEqual([])
+  })
+
+  it("awaits the parallel employee sync even when it rejects on an early exit", async () => {
+    // Ohne das angehängte .catch() wäre das eine unhandled rejection.
+    loadAppointmentsMock.mockResolvedValue({
+      appointments: [],
+      jobIds: [],
+      byJobId: new Map(),
+      counts: { total: 0, live: 0 },
+    })
+    runEmployeeSyncMock.mockRejectedValue(new Error("boom 400"))
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.employeeSync).toBeUndefined()
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ scope: "employee", message: expect.stringContaining("boom") }),
+    )
+  })
+
+  it("carries the employee sync result through the enrichment failure exit", async () => {
+    enrichMock.mockRejectedValue(new Error("boom 400"))
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.employeeSync?.counts).toEqual({ dimacon: 2, clockin: 2, matched: 2 })
+    expect(result.errors).toContainEqual(expect.objectContaining({ scope: "enrichment" }))
+  })
+
+  it("loads the dimacon employees once and hands them to both phases", async () => {
+    const employees = [{ id: "e-1", firstName: "Anna", lastName: "Muster" }]
+    loadEmployeesWithEmailMock.mockResolvedValue(employees)
+
+    await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(loadEmployeesWithEmailMock).toHaveBeenCalledTimes(1)
+    expect(runEmployeeSyncMock.mock.calls[0][6]).toBe(employees)
+    expect(enrichMock.mock.calls[0][1].employees).toBe(employees)
+  })
+
+  it("passes the loaded dimacon customers into the enrichment", async () => {
+    // Der Gesamtbestand wird ohnehin geladen — damit kostet die
+    // Kunden-Auflösung im Enrichment keinen einzigen Request.
+    await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(enrichMock.mock.calls[0][1].customers).toEqual([
+      { id: "cust-1", customerNumber: "D-100", name: "Muster GmbH" },
+    ])
+  })
+
+  it("hands both protection sets to the archive phase", async () => {
+    await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect([...archiveOptions().syncedClockinProjectIds]).toEqual([CLOCKIN_PROJECT_ID])
+    expect([...archiveOptions().horizonProjectNumbers]).toEqual(["proj-1"])
+    expect(archiveOptions().horizonComplete).toBe(true)
+  })
+
+  it("reports an unknown horizon and lets the archive phase refuse to write", async () => {
+    enrichMock.mockResolvedValue({
+      ...enrichedData(),
+      horizon: { projectIds: new Set(), complete: false, reason: "Termine nicht ladbar" },
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(archiveOptions().horizonComplete).toBe(false)
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "archive",
+        message: expect.stringContaining("Planungshorizont"),
+      }),
+    )
+  })
+
+  it("falls back to per-project searches when the prefetch fails", async () => {
+    // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
+    searchForProjectsMock.mockRejectedValueOnce(new Error("prefetch boom 400"))
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "load",
+        message: expect.stringContaining("Clockin-Projekte"),
+      }),
+    )
+    // Der Lauf arbeitet weiter — mit der Einzelsuche je Projekt
+    expect(result.projects).toHaveLength(1)
+    expect(result.projects[0].clockinProjectId).toBe(CLOCKIN_PROJECT_ID)
+    expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
+  })
+
+  it("falls back to per-customer searches when the customer index fails", async () => {
+    getAListOfCustomersMock.mockRejectedValue(new Error("index boom 400"))
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "load",
+        message: expect.stringContaining("Clockin-Kundenbestand"),
+      }),
+    )
+    expect(searchForCustomersMock).toHaveBeenCalled()
+    expect(result.projects[0].clockinProjectId).toBe(CLOCKIN_PROJECT_ID)
+  })
+
+  it("reports which lookup path the run took", async () => {
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(result.lookups).toEqual({
+      jobs: "period",
+      teamAssignments: "none",
+      projects: "bulk",
+      customers: "preloaded",
+      clockinCustomerIndex: true,
+      clockinProjectPrefetch: "bundled",
+      archiveHorizonDays: 14,
+    })
+  })
+
+  // --- Archiv-Horizont ---------------------------------------------------
+  //
+  // LOAD-BEARING: `date` ist frei wählbar (Run-Formular, Webhook). Hinge der
+  // Horizont allein daran, würde ein Live-Lauf für ein vergangenes Datum den
+  // gesamten heute eingeplanten Bestand archivieren.
+
+  it("spans the archive horizon over today AND the run date for a past run", async () => {
+    const today = todayInBerlin()
+    const pastDate = addDays(today, -60)
+
+    await runDimaconClockinSync(testCtx(), { date: pastDate })
+
+    const horizon = enrichHorizon()
+    expect(horizon).toBeDefined()
+    // Untergrenze hängt am (älteren) Run-Datum ...
+    expect(horizon?.from).toBe(addDays(pastDate, -HORIZON_DAYS))
+    // ... die Obergrenze deckt trotzdem heute + N Tage ab. Genau hier lag der
+    // Defekt: `addDays(pastDate, N + 1)` läge 60 Tage zu früh.
+    expect(atLeast(horizon?.to, addDays(today, HORIZON_DAYS))).toBe(true)
+  })
+
+  it("spans the archive horizon over today AND the run date for a future run", async () => {
+    const today = todayInBerlin()
+    const futureDate = addDays(today, 60)
+
+    await runDimaconClockinSync(testCtx(), { date: futureDate })
+
+    const horizon = enrichHorizon()
+    // Obergrenze hängt am (späteren) Run-Datum ...
+    expect(horizon?.to).toBe(addDays(futureDate, HORIZON_DAYS + 1))
+    // ... die Untergrenze reicht trotzdem bis N Tage vor heute zurück.
+    expect(atMost(horizon?.from, addDays(today, -HORIZON_DAYS))).toBe(true)
+  })
+
+  it("keeps the horizon at ±N days around today for a run for today (Gegenprobe)", async () => {
+    const today = todayInBerlin()
+
+    await runDimaconClockinSync(testCtx(), { date: today })
+
+    // Ohne zweiten Anker bleibt das Fenster eng — der Fix weitet nicht pauschal.
+    expect(enrichHorizon()).toEqual({
+      from: addDays(today, -HORIZON_DAYS),
+      to: addDays(today, HORIZON_DAYS + 1),
+    })
+  })
+
+  it("passes no horizon at all when the archive step is disabled", async () => {
+    await runDimaconClockinSync(testCtx(), {
+      date: addDays(todayInBerlin(), -60),
+      steps: {
+        employees: true,
+        customers: true,
+        projects: true,
+        assignments: true,
+        archive: false,
+        employeeCreateInDimacon: false,
+      },
+    })
+
+    expect(enrichMock).toHaveBeenCalledTimes(1)
+    expect(enrichHorizon()).toBeUndefined()
+  })
+
   it("skips the employee master sync when steps.employees is disabled", async () => {
     const result = await runDimaconClockinSync(testCtx(), {
       date: DATE,
@@ -273,6 +709,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
         projects: true,
         assignments: true,
         archive: true,
+        employeeCreateInDimacon: false,
       },
     })
 

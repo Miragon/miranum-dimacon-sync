@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { SyncRunInputSchema } from "./types.js"
+import { DEFAULT_STEPS, SyncRunInputSchema } from "./types.js"
 
 describe("SyncRunInputSchema", () => {
   it("parses {} without steps — scheduler contract", () => {
@@ -15,7 +15,19 @@ describe("SyncRunInputSchema", () => {
       projects: true,
       assignments: true,
       archive: false,
+      employeeCreateInDimacon: false,
     })
+  })
+
+  it("keeps the dimacon creation switch off by default — scheduler contract", () => {
+    // Der Scheduler feuert mit inputSchema.parse({}) → steps bleibt undefined
+    // und run.ts nimmt DEFAULT_STEPS; ein Teilobjekt füllt den zod-Default.
+    expect(DEFAULT_STEPS.employeeCreateInDimacon).toBe(false)
+    expect(SyncRunInputSchema.parse({ steps: {} }).steps?.employeeCreateInDimacon).toBe(false)
+    expect(
+      SyncRunInputSchema.parse({ steps: { employeeCreateInDimacon: true } }).steps
+        ?.employeeCreateInDimacon,
+    ).toBe(true)
   })
 
   it("rejects non-boolean step values", () => {

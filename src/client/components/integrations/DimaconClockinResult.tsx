@@ -8,7 +8,8 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table"
-import { ResultSectionHead, Stat } from "./bits.js"
+import { MetricsSection, ResultSectionHead, Stat, type RunMetricsSnapshot } from "./bits.js"
+import { stepBadges } from "./step-badges.js"
 
 export interface ProjectSyncResult {
   dimaconProjectId: string
@@ -68,6 +69,8 @@ export interface SyncResult {
     projects: boolean
     assignments: boolean
     archive: boolean
+    /** optional: ältere persistierte Ergebnisse kennen den Schalter nicht */
+    employeeCreateInDimacon?: boolean
   }
   employeeSync?: {
     counts: { dimacon: number; clockin: number; matched: number }
@@ -76,14 +79,59 @@ export interface SyncResult {
   projects: ProjectSyncResult[]
   archived: ArchiveResult[]
   errors: SyncError[]
+  /** optional: ältere Läufe/Server liefern keine Metriken */
+  metrics?: RunMetricsSnapshot
+  /** optional: welche Auflösungswege der Lauf genommen hat (#15) */
+  lookups?: {
+    jobs?: string
+    teamAssignments?: string
+    projects?: string
+    customers?: string
+    clockinCustomerIndex?: boolean
+    clockinProjectPrefetch?: string
+    archiveHorizonDays?: number
+  }
 }
 
-const STEP_LABELS: Record<string, string> = {
-  employees: "mitarbeiter-abgleich",
-  customers: "kunden",
-  projects: "projekte",
-  assignments: "zuordnung",
-  archive: "archivierung",
+/**
+ * Jede Bündelung hat einen Einzelabruf-Fallback — ohne diese Zeile wäre nicht
+ * erkennbar, ob die Optimierung greift oder der Lauf still auf den alten,
+ * langsamen Pfad gefallen ist.
+ */
+function LookupsNote({ lookups }: { lookups: NonNullable<SyncResult["lookups"]> }) {
+  const parts: string[] = []
+  if (lookups.jobs) parts.push(`Aufträge ${BULK_LABELS[lookups.jobs] ?? lookups.jobs}`)
+  if (lookups.projects)
+    parts.push(`Dimacon-Projekte ${BULK_LABELS[lookups.projects] ?? lookups.projects}`)
+  if (lookups.customers)
+    parts.push(`Dimacon-Kunden ${BULK_LABELS[lookups.customers] ?? lookups.customers}`)
+  if (lookups.clockinProjectPrefetch)
+    parts.push(
+      `Clockin-Projekte ${BULK_LABELS[lookups.clockinProjectPrefetch] ?? lookups.clockinProjectPrefetch}`,
+    )
+  if (lookups.clockinCustomerIndex !== undefined)
+    parts.push(`Clockin-Kunden ${lookups.clockinCustomerIndex ? "aus dem Index" : "einzeln"}`)
+
+  return (
+    <p className="text-ink-2 -mt-12 mb-16 text-[0.8rem]">
+      <span className="font-mono">Auflösung:</span> {parts.join(" · ")}
+      {lookups.archiveHorizonDays !== undefined
+        ? ` · Archiv-Horizont ±${lookups.archiveHorizonDays} Tage`
+        : ""}
+    </p>
+  )
+}
+
+/** Deutsche Kurzlabel der Auflösungswege. */
+const BULK_LABELS: Record<string, string> = {
+  period: "gebündelt",
+  bundled: "gebündelt",
+  bulk: "gebündelt",
+  preloaded: "vorgeladen",
+  "per-job": "einzeln",
+  "per-id": "einzeln",
+  none: "nicht geladen",
+  off: "einzeln",
 }
 
 const DIRECTION_LABELS: Record<EmployeeSyncRow["direction"], string> = {
@@ -123,15 +171,11 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
           </p>
         ) : null}
         <div className="mt-4 flex flex-wrap gap-2">
-          {result.steps
-            ? Object.entries(result.steps)
-                .filter(([, on]) => !on)
-                .map(([step]) => (
-                  <MnStatusBadge key={step} variant="warn">
-                    {STEP_LABELS[step] ?? step} aus
-                  </MnStatusBadge>
-                ))
-            : null}
+          {stepBadges(result.steps).map((badge) => (
+            <MnStatusBadge key={badge.key} variant={badge.variant}>
+              {badge.label}
+            </MnStatusBadge>
+          ))}
           {(["created", "updated", "unchanged", "skipped", "failed"] as const).map((s) =>
             counts[s] > 0 ? (
               <MnStatusBadge key={s} variant={badgeVariant(s)}>
@@ -141,6 +185,11 @@ export function DimaconClockinResult({ result }: { result: SyncResult }) {
           )}
         </div>
       </section>
+
+      <MetricsSection
+        metrics={result.metrics}
+        footer={result.lookups ? <LookupsNote lookups={result.lookups} /> : null}
+      />
 
       {result.employeeSync ? (
         <section className="mb-16">

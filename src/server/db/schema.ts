@@ -14,7 +14,10 @@ import {
 
 export const credentialSystem = pgEnum("credential_system", ["dimacon", "clockin", "lexoffice"])
 export const runTrigger = pgEnum("run_trigger", ["manual", "cron", "webhook", "mcp"])
-export const runStatus = pgEnum("run_status", ["running", "success", "error"])
+// "skipped" = der Lauf wurde NIE gestartet (fail-closed übersprungener Cron).
+// Neue Werte IMMER ans Ende: drizzle-kit erzeugt daraus ein additives
+// `ALTER TYPE ... ADD VALUE`; ein Einschub in der Mitte baut den Typ neu.
+export const runStatus = pgEnum("run_status", ["running", "success", "error", "skipped"])
 
 /** Ein Mandant = eine WorkOS-Organisation. Die Tabelle IST die Zugangs-Allowlist. */
 export const tenants = pgTable(
@@ -77,6 +80,12 @@ export const scheduleSettings = pgTable(
     enabled: boolean("enabled").notNull().default(false),
     cron: text("cron"),
     timezone: text("timezone").notNull().default("Europe/Berlin"),
+    // Persistenter Run-Umfang je (Mandant, Integration): serverseitig gegen
+    // `def.inputSchema` validiert (generisch, kein integrationsspezifisches
+    // Schema in der Scheduler-Tabelle) und bewusst OHNE `date` — beim Cron
+    // ist das Datum immer „heute". `{}` reproduziert exakt das alte
+    // Verhalten (Zod-Defaults des jeweiligen inputSchema).
+    runDefaults: jsonb("run_defaults").notNull().default({}).$type<Record<string, unknown>>(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()

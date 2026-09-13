@@ -1,10 +1,12 @@
 import { Cron } from "croner"
 import { getScheduleSettings, listEnabledSchedules } from "../db/repos/schedules.js"
+import { recordRun } from "../db/repos/sync-runs.js"
 import { getTenantById } from "../db/repos/tenants.js"
 import { formatError } from "../lib/errors.js"
 import { log } from "../lib/log.js"
 import type { ScheduleSettings } from "../lib/schedule-schema.js"
 import { buildRunContext } from "./context.js"
+import { resolveScheduledInput } from "./run-input.js"
 import { SyncBusyError } from "./mutex.js"
 import { getIntegration, runIntegration } from "./registry.js"
 import { missingCredentials } from "./types.js"
@@ -47,6 +49,94 @@ export async function startTenantIntegrationCron(
   startCron(tenantId, integrationId, settings)
 }
 
+/**
+ * Ein geplanter Lauf (Cron-Feuerzeit) — bewusst als exportierte Funktion und
+ * nicht als Closure in `startCron`: nur so sind die Wachen und vor allem die
+ * Verdrahtung des gespeicherten Umfangs an `runIntegration` testbar. Wirft
+ * nie; Fehler landen im Log, damit croner den Slot behält.
+ */
+export async function runScheduledIntegration(
+  tenantId: string,
+  integrationId: string,
+): Promise<void> {
+  const def = getIntegration(integrationId)
+  if (!def) {
+    log.warn("scheduled run skipped: unknown integration", {
+      tenant: tenantId,
+      integration: integrationId,
+    })
+    return
+  }
+  try {
+    // Tenant + Credentials ZUR FEUERZEIT prüfen: Mandanten-
+    // Deaktivierung hat bewusst keinen eigenen Stop-Hook — dieser
+    // Check ist die einzige Wache gegen Läufe deaktivierter Mandanten.
+    const tenant = await getTenantById(tenantId)
+    if (!tenant || !tenant.active) {
+      log.warn("scheduled run skipped: tenant inactive", { tenant: tenantId })
+      return
+    }
+    const missing = await missingCredentials(def, tenantId)
+    if (missing.length > 0) {
+      log.warn("scheduled run skipped: not configured", { tenant: tenantId, missing })
+      return
+    }
+    // Umfang ZUR FEUERZEIT lesen (nicht beim Cron-Start einfrieren):
+    // eine Änderung im Umfang-Tab greift ohne Cron-Restart.
+    const resolved = await resolveScheduledInput(def, tenantId)
+    if (!resolved.ok) {
+      log.error("scheduled run skipped: invalid stored run defaults", {
+        tenant: tenantId,
+        integration: integrationId,
+        message: resolved.message,
+        details: resolved.details,
+      })
+      // Der fail-closed übersprungene Lauf MUSS in der Historie auftauchen —
+      // sonst sieht ein Mandant nur, dass nichts passiert, und hat keinen
+      // Hinweis auf die Ursache. recordRun wirft nie.
+      //
+      // Status "skipped" statt "error": hier lief NICHTS. `dryRun`/`input`
+      // sind nur Platzhalter für die NOT-NULL-Spalten und beschreiben weder
+      // Modus noch Umfang — die Historie blendet beides an genau diesem
+      // Status aus, statt „live · voller Umfang" für einen nie gestarteten
+      // Lauf zu behaupten. Der geplante Lauf ist trotzdem ausgefallen; die
+      // Ursache steht als Fehlermeldung in derselben Zeile.
+      const skippedAt = new Date()
+      await recordRun({
+        tenantId,
+        integrationId,
+        trigger: "cron",
+        status: "skipped",
+        dryRun: false,
+        input: {},
+        error: resolved.message,
+        startedAt: skippedAt,
+        finishedAt: skippedAt,
+      })
+      return
+    }
+    log.info("scheduled run input", {
+      tenant: tenantId,
+      integration: integrationId,
+      input: resolved.input,
+    })
+    await runIntegration(def, buildRunContext(def, tenant, "cron"), resolved.input)
+  } catch (err) {
+    if (err instanceof SyncBusyError) {
+      log.warn("scheduled run skipped: another run in progress", {
+        tenant: tenantId,
+        integration: integrationId,
+      })
+      return
+    }
+    log.error("scheduled run failed", {
+      tenant: tenantId,
+      integration: integrationId,
+      error: formatError(err),
+    })
+  }
+}
+
 function startCron(tenantId: string, integrationId: string, settings: ScheduleSettings): void {
   const def = getIntegration(integrationId)
   if (!def || !settings.cron) return
@@ -64,35 +154,7 @@ function startCron(tenantId: string, integrationId: string, settings: ScheduleSe
           schedule: settings.cron,
           tz: settings.timezone,
         })
-        try {
-          // Tenant + Credentials ZUR FEUERZEIT prüfen: Mandanten-
-          // Deaktivierung hat bewusst keinen eigenen Stop-Hook — dieser
-          // Check ist die einzige Wache gegen Läufe deaktivierter Mandanten.
-          const tenant = await getTenantById(tenantId)
-          if (!tenant || !tenant.active) {
-            log.warn("scheduled run skipped: tenant inactive", { tenant: tenantId })
-            return
-          }
-          const missing = await missingCredentials(def, tenantId)
-          if (missing.length > 0) {
-            log.warn("scheduled run skipped: not configured", { tenant: tenantId, missing })
-            return
-          }
-          await runIntegration(def, buildRunContext(def, tenant, "cron"), def.inputSchema.parse({}))
-        } catch (err) {
-          if (err instanceof SyncBusyError) {
-            log.warn("scheduled run skipped: another run in progress", {
-              tenant: tenantId,
-              integration: integrationId,
-            })
-            return
-          }
-          log.error("scheduled run failed", {
-            tenant: tenantId,
-            integration: integrationId,
-            error: formatError(err),
-          })
-        }
+        await runScheduledIntegration(tenantId, integrationId)
       },
     )
     crons.set(k, cron)

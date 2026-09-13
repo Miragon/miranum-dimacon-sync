@@ -3,10 +3,12 @@ import { useCallback, useEffect, useState } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { RunForm } from "#/components/integrations/RunForm"
+import { RunHistory } from "#/components/integrations/RunHistory"
 import { RunResultView } from "#/components/integrations/RunResultView"
 import { readJson, useApiFetch } from "#/lib/api"
 import { formatRunDate } from "#/lib/integrations"
 import type { IntegrationInfo } from "#/lib/integrations"
+import { describeScope } from "#/lib/run-scope"
 
 export const Route = createFileRoute("/sync/$integrationId")({ component: IntegrationDetailPage })
 
@@ -19,6 +21,8 @@ function IntegrationDetailPage() {
   const [running, setRunning] = useState<boolean>(false)
   const [result, setResult] = useState<unknown>(null)
   const [runError, setRunError] = useState<string | null>(null)
+  // Zähler statt Reload-Callback: die Historie lädt nach jedem Lauf neu.
+  const [runsVersion, setRunsVersion] = useState(0)
   const apiFetch = useApiFetch()
 
   const load = useCallback(async () => {
@@ -67,6 +71,10 @@ function IntegrationDetailPage() {
       setRunError(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
+      // Immer neu laden, nicht nur bei res.ok: die Registry schreibt auch bei
+      // einer Exception die Fehlerzeile in `sync_runs` und wirft weiter (500) —
+      // ohne Bump stünde diese Zeile erst nach einem Reload in der Historie.
+      setRunsVersion((v) => v + 1)
     }
   }
 
@@ -101,7 +109,7 @@ function IntegrationDetailPage() {
       </header>
 
       <section className="mb-12">
-        <dl className="border-rule grid grid-cols-2 border md:grid-cols-4">
+        <dl className="border-rule grid grid-cols-2 border md:grid-cols-5">
           <StatusStat label="Systeme" value={info.systems.join(" → ")} />
           <StatusStat label="Konfiguriert" value={info.configured ? "ja" : "nein"} />
           <StatusStat label="Cron aktiv" value={info.cronActive ? "ja" : "nein"} />
@@ -109,6 +117,8 @@ function IntegrationDetailPage() {
             label="Nächster Lauf"
             value={info.nextRun ? formatRunDate(info.nextRun) : "—"}
           />
+          {/* Umfang, mit dem geplante und body-lose Läufe fahren. */}
+          <StatusStat label="Umfang" value={describeScope(info.id, info.runDefaults)} />
         </dl>
       </section>
 
@@ -134,6 +144,7 @@ function IntegrationDetailPage() {
           running={running}
           disabled={!info.configured}
           onRun={run}
+          defaults={info.runDefaults}
         />
         {info.running ? (
           <div className="mt-4">
@@ -148,6 +159,8 @@ function IntegrationDetailPage() {
       </section>
 
       {result != null ? <RunResultView integrationId={info.id} result={result} /> : null}
+
+      <RunHistory integrationId={info.id} refreshKey={runsVersion} />
     </>
   )
 }

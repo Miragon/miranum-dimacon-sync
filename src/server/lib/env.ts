@@ -9,6 +9,41 @@ function optional(name: string): string | undefined {
   return value && value.length > 0 ? value : undefined
 }
 
+/** Positive Zahl aus der Env; alles andere (leer, NaN, ≤0) fällt auf den Default. */
+function positiveNumber(name: string, fallback: number): number {
+  const raw = optional(name)
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+export type RateLimitedSystem = "dimacon" | "clockin" | "lexoffice"
+
+export interface SystemTuning {
+  /** Token-Bucket: nachfließende Requests pro Sekunde. */
+  ratePerSec: number
+  /** Token-Bucket: maximaler Vorrat (Sofort-Burst). */
+  burst: number
+  /**
+   * Parallele Requests dieses Systems JE PHASE (p-limit) — NICHT je Lauf:
+   * `createLimit` baut an jeder Aufrufstelle ein eigenes Limit, parallel
+   * laufende Phasen addieren ihre Töpfe (README → Rate-Limits & Laufzeit).
+   * Laufweit bremst allein der Token-Bucket.
+   */
+  concurrency: number
+}
+
+/**
+ * Konservative Defaults — die echten Limits sind außer bei Lexware Office
+ * (laut Doku 2 Requests/Sekunde) unbekannt. Lieber etwas zu langsam als eine
+ * 429-Kaskade mit Wartezeiten im Minutenbereich; alles per Env übersteuerbar.
+ */
+const TUNING_DEFAULTS: Record<RateLimitedSystem, SystemTuning> = {
+  dimacon: { ratePerSec: 10, burst: 20, concurrency: 8 },
+  clockin: { ratePerSec: 5, burst: 10, concurrency: 5 },
+  lexoffice: { ratePerSec: 2, burst: 2, concurrency: 2 },
+}
+
 /**
  * Laufzeit-Konfiguration. Die Integrations-Credentials (DIMACON_*,
  * CLOCKIN_*, LEXWARE_OFFICE_*) sind KEINE Laufzeit-Env mehr — sie liegen
@@ -29,5 +64,37 @@ export const env = {
     // Expliziter Opt-in ("on") für den Org-Sync (tenant-sync.ts) — zusätzlich
     // zum API-Key, damit Stage/Prod unabhängig schaltbar sind.
     orgSync: () => optional("WORKOS_ORG_SYNC") === "on",
+  },
+  /**
+   * Planungshorizont des Archiv-Schutzes in Tagen (Default kommt aus der
+   * Integration, damit die fachliche Begründung dort steht). Wie `tuning`
+   * bei jedem Aufruf frisch gelesen.
+   */
+  // Untergrenze 1: ein Bruchwert wie "0.5" würde sonst still auf 0 gefloort
+  // und schrumpfte den Archiv-Schutz auf den Lauftag zusammen.
+  archiveHorizonDays: (fallback: number): number => {
+    const days = Math.floor(positiveNumber("ARCHIVE_HORIZON_DAYS", fallback))
+    return days >= 1 ? days : fallback
+  },
+  /**
+   * Optionales Laufzeit-Tuning je Zielsystem (Token-Bucket + Parallelität).
+   * Wird bei jedem Aufruf frisch gelesen — kein Neustart nötig, um ein
+   * gedrosseltes System zu entlasten. Credentials bleiben ausdrücklich
+   * außerhalb von env (verschlüsselt je Mandant in Postgres).
+   */
+  tuning: (system: RateLimitedSystem): SystemTuning => {
+    const key = system.toUpperCase()
+    const defaults = TUNING_DEFAULTS[system]
+    return {
+      ratePerSec: positiveNumber(`RATE_LIMIT_${key}_RPS`, defaults.ratePerSec),
+      burst: positiveNumber(`RATE_LIMIT_${key}_BURST`, defaults.burst),
+      // Untergrenze 1 wie bei `archiveHorizonDays`: ein Bruchwert wie "0.5"
+      // würde sonst auf 0 gefloort, und `createLimit` wirft mit `pLimit(0)`
+      // mitten im Lauf — jeder Lauf der betroffenen Integration schlüge fehl.
+      concurrency: Math.max(
+        1,
+        Math.floor(positiveNumber(`CONCURRENCY_${key}`, defaults.concurrency)),
+      ),
+    }
   },
 }

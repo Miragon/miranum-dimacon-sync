@@ -5,7 +5,10 @@ import { getDb } from "../client.js"
 import { syncRuns } from "../schema.js"
 
 export type RunTrigger = "manual" | "cron" | "webhook" | "mcp"
-export type RunStatus = "success" | "error"
+// "skipped": aufgezeichnet, aber NIE gestartet (fail-closed übersprungener
+// Cron). `dryRun`/`input` solcher Zeilen sind nur NOT-NULL-Platzhalter und
+// beschreiben weder Modus noch Umfang — die Historie blendet beides aus.
+export type RunStatus = "success" | "error" | "skipped"
 
 const KEEP_RUNS = 50
 // Ergebnisse jenseits dieser Größe werden nicht persistiert (jsonb-Bloat).
@@ -24,6 +27,48 @@ export interface RunRecord {
   finishedAt: Date
 }
 
+/** Zeile der Run-Historie — bewusst OHNE `result` (jsonb-Größe). */
+export interface RunSummary {
+  id: string
+  trigger: RunTrigger
+  status: "running" | "success" | "error" | "skipped"
+  dryRun: boolean
+  input: unknown
+  error: string | null
+  startedAt: Date
+  durationMs: number | null
+}
+
+/** Obergrenze der Historie-Abfrage — passt zur Retention (KEEP_RUNS). */
+const MAX_LIST_LIMIT = 50
+
+/**
+ * Run-Historie eines (Mandant, Integration)-Slots, neueste zuerst.
+ * LOAD-BEARING: tenant-gescopt — Läufe sind Mandantendaten.
+ */
+export async function listRuns(
+  tenantId: string,
+  integrationId: string,
+  limit = 20,
+): Promise<RunSummary[]> {
+  const rows = await getDb()
+    .select({
+      id: syncRuns.id,
+      trigger: syncRuns.trigger,
+      status: syncRuns.status,
+      dryRun: syncRuns.dryRun,
+      input: syncRuns.input,
+      error: syncRuns.error,
+      startedAt: syncRuns.startedAt,
+      durationMs: syncRuns.durationMs,
+    })
+    .from(syncRuns)
+    .where(and(eq(syncRuns.tenantId, tenantId), eq(syncRuns.integrationId, integrationId)))
+    .orderBy(sql`${syncRuns.startedAt} DESC`)
+    .limit(Math.min(Math.max(1, limit), MAX_LIST_LIMIT))
+  return rows
+}
+
 /**
  * Persistiert einen abgeschlossenen Lauf + Retention (letzte 50 je
  * (Mandant, Integration) — beide DELETE-Klauseln tenant-gescopt, sonst
@@ -37,7 +82,10 @@ export async function recordRun(record: RunRecord): Promise<void> {
     // Buffer.byteLength statt .length: UTF-16-Code-Units unterschätzen
     // Multi-Byte-Inhalte — das Cap soll echte Bytes begrenzen.
     if (result !== null && Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_RESULT_BYTES) {
-      result = { truncated: true }
+      // Die Lauf-Metrik überlebt die Kürzung: gerade die großen Läufe sind
+      // die interessanten, ihre Phasen-Timings dürfen nicht wegfallen.
+      const metrics = (record.result as { metrics?: unknown } | null | undefined)?.metrics
+      result = metrics === undefined ? { truncated: true } : { truncated: true, metrics }
     }
     await db.insert(syncRuns).values({
       tenantId: record.tenantId,
