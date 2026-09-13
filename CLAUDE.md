@@ -258,6 +258,17 @@ plus genau ein Retry. Ein 401 löst KEINEN Redirect mehr aus, sondern den
 Formular-State überlebt). Die **Identität von `apiFetch` muss stabil
 bleiben** — Consumer hängen sie in `useEffect`-Deps, also darf
 `sessionExpired` nie in die `useMemo`-Deps von `auth`/`apiFetch`.
+**Die Organisation des frischen Tokens ist KEIN Gate.** `warnOnOrganizationDrift`
+protokolliert eine Abweichung nur — `useAuth().organizationId` (Response) und
+der `org_id`-Claim (JWT) stammen aus verschiedenen Quellen und können
+auseinanderlaufen, ohne dass die Sitzung defekt ist. Eine frühere Fassung hat
+daraus einen terminalen Fehler gemacht und die UI hinter dem Overlay
+eingesperrt, obwohl jeder API-Call weiterlief — ohne Rückweg, weil „Erneut
+versuchen" in denselben Vergleich lief. Über die Org entscheidet `resolveTenant`
+serverseitig (403 `UNKNOWN_ORG` → TenantGate). `pinOrganization` bleibt: es
+schreibt die Org VOR dem erzwungenen Refresh zurück und verhindert den
+Mandantenwechsel proaktiv, ohne etwas zu blockieren.
+
 Ebenfalls load-bearing: `isSessionTerminal()` trennt „Session weg" von
 „gerade kein Netz" — nur `AuthKitError`-Ableitungen (`LoginRequiredError`)
 gelten als endgültig, ein roher `TypeError` aus dem fetch bzw. der

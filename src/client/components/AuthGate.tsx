@@ -4,7 +4,7 @@ import { MnAlert } from "#/components/miranum/MnAlert"
 import { SessionExpiredOverlay } from "#/components/SessionExpiredOverlay"
 import { TenantGate } from "#/components/TenantGate"
 import { Button } from "#/components/ui/button"
-import { ApiFetchContext, createApiFetch, isSameOrganization } from "#/lib/api"
+import { ApiFetchContext, createApiFetch, warnOnOrganizationDrift } from "#/lib/api"
 import { currentReturnTo } from "#/lib/return-to"
 import { subscribeSessionExpired } from "#/lib/session-expiry"
 import { pinOrganization } from "#/lib/workos-org-pin"
@@ -65,10 +65,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
       // schickte sonst kein `organization_id` mit.
       pinOrganization(expectedOrg.current)
       const token = await getAccessToken({ forceRefresh: true })
-      // Fail-closed, falls der Pin ins Leere lief: ein Token einer anderen
-      // Organisation heilt die Sitzung NICHT — es schöbe die UI still in einen
-      // fremden Mandanten. Overlay bleibt stehen, „Neu anmelden" hilft.
-      if (!isSameOrganization(token, expectedOrg.current)) return false
+      // Eine Org-Abweichung wird protokolliert, blockiert den Rückweg aber
+      // NICHT: der Refresh hat funktioniert, die Sitzung ist gültig, und über
+      // die Organisation entscheidet der Server (403 UNKNOWN_ORG → TenantGate).
+      // Vorher endete genau hier ein `return false` — das Overlay war damit
+      // unentrinnbar, obwohl die App dahinter normal bedienbar blieb.
+      warnOnOrganizationDrift(token, expectedOrg.current)
       setSessionExpired(false)
       return true
     } catch {

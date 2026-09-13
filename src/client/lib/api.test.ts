@@ -191,11 +191,14 @@ describe("createApiFetch", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  // #5: authkit löscht beim RefreshError zusammen mit dem Token auch die
-  // gespeicherte Organisation. Ein danach erzwungener Refresh geht ohne
-  // `organization_id` raus und kann ein Token einer FREMDEN Organisation
-  // liefern — das darf nie still als geheilte Sitzung durchgehen.
-  it("refuses a refreshed token that belongs to another organization", async () => {
+  // Eine abweichende Organisation ist KEIN Grund, die Sitzung zu beenden: die
+  // beiden Werte stammen aus verschiedenen Quellen (useAuth-Response vs.
+  // JWT-Claim) und können auseinanderlaufen, während die Sitzung gültig ist.
+  // Eine frühere Fassung hat daraus `terminal: true` gemacht und die UI hinter
+  // dem Overlay eingesperrt, obwohl jeder API-Call weiter funktionierte.
+  // Über die Organisation entscheidet der Server (403 UNKNOWN_ORG).
+  it("warns about a diverging organization but keeps the session alive", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined)
     fetchMock.mockResolvedValue(response('{"ok":true}', { status: 200 }))
     const auth = authStub(
       vi.fn(async (opts?: { forceRefresh?: boolean }) => {
@@ -205,11 +208,12 @@ describe("createApiFetch", () => {
       "org_original",
     )
 
-    await expect(createApiFetch(auth)("/api/me")).rejects.toThrow(/anderen Organisation/)
-    // Kein Request mit dem fremden Token — sonst arbeitete die UI im falschen
-    // Mandanten weiter, ohne dass es jemand merkt.
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+    const res = await createApiFetch(auth)("/api/me")
+
+    expect(res.status).toBe(200)
+    expect(auth.onSessionExpired).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
   })
 
   it("accepts a refreshed token of the same organization", async () => {
@@ -229,7 +233,7 @@ describe("createApiFetch", () => {
     expect(auth.onSessionExpired).not.toHaveBeenCalled()
   })
 
-  it("does not block an undecodable token — the server is the real gate", async () => {
+  it("stays silent on an undecodable token — the server is the real gate", async () => {
     fetchMock.mockResolvedValue(response('{"ok":true}', { status: 200 }))
     const auth = authStub(
       vi.fn(async (opts?: { forceRefresh?: boolean }) => {
@@ -245,11 +249,12 @@ describe("createApiFetch", () => {
     expect(auth.onSessionExpired).not.toHaveBeenCalled()
   })
 
-  // Derselbe Guard auf dem 401-Replay-Pfad. In Produktion entsteht die
-  // Abweichung dort nicht (authkit liest die Org aus dem noch vorhandenen
-  // Memory-Token) — der Test isoliert den Guard, nicht das Szenario.
-  it("does not replay a 401 with a token of another organization", async () => {
-    fetchMock.mockResolvedValue(response("", { status: 401 }))
+  // Auch auf dem 401-Replay-Pfad hält eine Org-Abweichung den Retry nicht auf.
+  it("still replays a 401 when the organization diverges", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined)
+    fetchMock
+      .mockResolvedValueOnce(response("", { status: 401 }))
+      .mockResolvedValueOnce(response('{"ok":true}', { status: 200 }))
     const auth = authStub(
       vi.fn(async (opts?: { forceRefresh?: boolean }) =>
         opts?.forceRefresh ? jwtFor("org_fremd") : "old",
@@ -259,9 +264,11 @@ describe("createApiFetch", () => {
 
     const res = await createApiFetch(auth)("/api/me")
 
-    expect(res.status).toBe(401)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+    expect(res.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(auth.onSessionExpired).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it("treats a 403 as a normal error — no refresh, no session signal", async () => {

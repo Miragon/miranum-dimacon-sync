@@ -44,9 +44,13 @@ export function SessionExpiredOverlay({
   return (
     <div className="bg-ink/20 fixed inset-0 z-50 flex items-center justify-center p-6">
       <div className="border-rule bg-paper w-full max-w-md space-y-4 border p-6">
-        <MnAlert label="Sitzung abgelaufen">
-          Ihre Anmeldung konnte nicht erneuert werden. Ihre Eingaben bleiben erhalten — versuchen
-          Sie es erneut oder melden Sie sich neu an.
+        {/* NICHT „Sitzung abgelaufen": das Overlay öffnet auch bei einem
+            transienten Fehler des Refresh-Endpunkts, während die Sitzung
+            weiterläuft. Der Titel behauptete dann etwas, das nachweislich
+            falsch war — und schickte in die Neuanmeldung statt in den Retry. */}
+        <MnAlert label="Anmeldung nicht erneuert">
+          Der Anmeldedienst konnte die Sitzung gerade nicht erneuern. Ihre Eingaben bleiben erhalten
+          — versuchen Sie es erneut oder melden Sie sich neu an.
           {retryFailed ? (
             <span className="text-ink-2 mt-3 block text-sm">
               Erneuern fehlgeschlagen — bitte neu anmelden.

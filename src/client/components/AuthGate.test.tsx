@@ -102,13 +102,13 @@ describe("AuthGate — Abgelaufen-Overlay", () => {
     act(() => {
       notifySessionExpired()
     })
-    expect(screen.getByText("Sitzung abgelaufen")).toBeTruthy()
+    expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
     expect(screen.getByLabelText<HTMLInputElement>("cron").value).toBe("0 6 * * *")
 
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
     await waitFor(() => {
-      expect(screen.queryByText("Sitzung abgelaufen")).toBeNull()
+      expect(screen.queryByText("Anmeldung nicht erneuert")).toBeNull()
     })
     // Erzwungener Refresh — authkit steht nach dem Fehlschlag im ERROR-State
     // und refresht von sich aus nicht mehr.
@@ -134,12 +134,21 @@ describe("AuthGate — Abgelaufen-Overlay", () => {
     await waitFor(() => {
       expect(screen.getByText(/Erneuern fehlgeschlagen/)).toBeTruthy()
     })
-    expect(screen.getByText("Sitzung abgelaufen")).toBeTruthy()
+    expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
   })
 })
 
-describe("AuthGate — Organisation beim Retry (#5)", () => {
-  it("heilt die Sitzung nicht mit einem Token einer anderen Organisation", async () => {
+describe("AuthGate — Organisation beim Retry", () => {
+  /**
+   * REGRESSION: Eine frühere Fassung hat bei abweichender Organisation
+   * `false` zurückgegeben — das Overlay war damit unentrinnbar, obwohl die
+   * Sitzung gültig war und die App dahinter normal funktionierte. Die beiden
+   * Werte stammen aus verschiedenen Quellen (useAuth-Response vs. JWT-Claim)
+   * und dürfen nicht gegeneinander als Gate wirken; darüber entscheidet der
+   * Server mit 403 UNKNOWN_ORG.
+   */
+  it("heilt die Sitzung auch dann, wenn die Organisation abweicht", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined)
     stubs.organizationId = "org_original"
     render(
       <AuthGate>
@@ -150,61 +159,18 @@ describe("AuthGate — Organisation beim Retry (#5)", () => {
     act(() => {
       notifySessionExpired()
     })
-    // authkit hat beim Fehlschlag die gemerkte Organisation gelöscht; der
-    // erzwungene Refresh liefert deshalb ein Token der Default-Organisation.
     stubs.getAccessToken.mockResolvedValue(jwtFor("org_fremd"))
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
     await waitFor(() => {
-      expect(screen.getByText(/Erneuern fehlgeschlagen/)).toBeTruthy()
+      expect(screen.queryByText("Anmeldung nicht erneuert")).toBeNull()
     })
-    // Overlay bleibt — sonst arbeitete die UI still im falschen Mandanten.
-    expect(screen.getByText("Sitzung abgelaufen")).toBeTruthy()
+    // Die Abweichung ist nicht still — sie steht in der Konsole.
+    expect(warn).toHaveBeenCalledTimes(1)
     // Vor dem Refresh wird die erwartete Organisation zurückgeschrieben, damit
     // der POST überhaupt wieder ein `organization_id` trägt.
     expect(sessionStorage.getItem("workos-org-id:client_test")).toBe("org_original")
-  })
-
-  it("bleibt auch beim zweiten Versuch fail-closed, wenn authkit die Org umschreibt", async () => {
-    stubs.organizationId = "org_original"
-    const { rerender } = render(
-      <AuthGate>
-        <AppWithForm />
-      </AuthGate>,
-    )
-
-    act(() => {
-      notifySessionExpired()
-    })
-    stubs.getAccessToken.mockResolvedValue(jwtFor("org_fremd"))
-    fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
-    await waitFor(() => {
-      expect(screen.getByText(/Erneuern fehlgeschlagen/)).toBeTruthy()
-    })
-
-    // Das ist der Kern: der Falsch-Org-Refresh war auf authkit-Ebene
-    // ERFOLGREICH und schreibt den Provider-State über seinen eigenen
-    // `onRefresh`-Callback um — inklusive eines frischen `user`-Objekts.
-    // Genau das wird hier nachgestellt.
-    stubs.organizationId = "org_fremd"
-    stubs.user = { id: "user_1" }
-    act(() => {
-      rerender(
-        <AuthGate>
-          <AppWithForm />
-        </AuthGate>,
-      )
-    })
-
-    // Würde der Guard gegen `useAuth().organizationId` prüfen statt gegen den
-    // Latch, wäre die FALSCHE Organisation ab jetzt die „Erwartung" und dieser
-    // zweite Klick vollzöge den Mandantenwechsel still.
-    fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
-
-    await waitFor(() => {
-      expect(stubs.getAccessToken).toHaveBeenCalledTimes(2)
-    })
-    expect(screen.getByText("Sitzung abgelaufen")).toBeTruthy()
+    warn.mockRestore()
   })
 
   it("heilt normal, wenn der Refresh dieselbe Organisation liefert", async () => {
@@ -222,8 +188,28 @@ describe("AuthGate — Organisation beim Retry (#5)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
     await waitFor(() => {
-      expect(screen.queryByText("Sitzung abgelaufen")).toBeNull()
+      expect(screen.queryByText("Anmeldung nicht erneuert")).toBeNull()
     })
+  })
+
+  it("bleibt stehen, wenn der Refresh wirklich scheitert", async () => {
+    stubs.organizationId = "org_original"
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+
+    act(() => {
+      notifySessionExpired()
+    })
+    stubs.getAccessToken.mockRejectedValue(new Error("Missing refresh token"))
+    fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Erneuern fehlgeschlagen/)).toBeTruthy()
+    })
+    expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
   })
 })
 
@@ -245,13 +231,13 @@ describe("AuthGate — apiFetch-Identität (#17)", () => {
     act(() => {
       notifySessionExpired()
     })
-    expect(screen.getByText("Sitzung abgelaufen")).toBeTruthy()
+    expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
     expect(latestApiFetch()).toBe(initial)
 
     // …und zurück auf false: auch das Heilen erzeugt keine neue Identität.
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
     await waitFor(() => {
-      expect(screen.queryByText("Sitzung abgelaufen")).toBeNull()
+      expect(screen.queryByText("Anmeldung nicht erneuert")).toBeNull()
     })
     expect(latestApiFetch()).toBe(initial)
 
