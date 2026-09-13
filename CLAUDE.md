@@ -79,9 +79,9 @@ maskieren** — `CredentialCryptoError` ist ein eigener 500-Pfad (Meldung
 nennt die Abhilfe: Token neu speichern). Dev-Server NIE mit
 Inline-Zufallskey starten — `CREDENTIAL_KEYS` kommt stabil aus `.env`,
 sonst werden in der persistenten Dev-DB gespeicherte Tokens unbrauchbar.
-UI: Dimacon unter `/settings` (gemeinsames Quellsystem), Clockin/Lexware auf
-der Einstellungsseite ihrer Integration `/sync/<id>/settings` (Token-Feld
-immer leer; leer lassen = behalten). „Verbindung testen" POSTet die
+UI: Dimacon unter `/modules` (gemeinsames Quellsystem, Karte unter der
+System-Tabelle), Clockin/Lexware auf der Einstellungsseite ihrer Integration
+`/sync/<id>/settings` (Token-Feld immer leer; leer lassen = behalten). „Verbindung testen" POSTet die
 Formularwerte an `/api/credentials/:system/test` (Test VOR dem Speichern;
 leeres Token = gespeichertes Secret; Wegwerf-Client in
 `src/server/lib/connection-test.ts`) — Antwort ist 200 mit `ok:false` +
@@ -95,16 +95,24 @@ Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
   Fehler-/Skip-Läufe. Bewusst OHNE ElementBox-Hero — die Kacheln verlinkten
   nur, ohne etwas über den Zustand zu sagen
 - `/modules` — Die 3 angebundenen Systeme mit Konfigurations-Status des
-  aktiven Mandanten aus `GET /api/systems`
+  aktiven Mandanten aus `GET /api/systems`, plus die Dimacon-Zugangsdaten-Karte
+  (`#dimacon-zugangsdaten`). Jede Tabellenzeile hat IMMER einen
+  „bearbeiten"-Link (Dimacon → Anker auf derselben Seite, Zielsysteme →
+  `/sync/<id>/settings?tab=zugangsdaten`) — vorher erschien der Weg nur im
+  Fehlerzustand, ein hinterlegtes Token war von hier aus nicht änderbar. Die
+  Credential-Karte rendert erst nach erfolgreichem `GET /api/credentials`,
+  sonst behauptete sie bei einem Fehler „nicht konfiguriert"
 - `/sync` — Integrations-Übersicht (Tabelle aller Integrationen mit Status)
 - `/sync/$integrationId` — Detail: Run-Form (Datum, dryRun, Schritte —
   vorbelegt aus dem gespeicherten Umfang) + Result-View + Run-Historie;
   unbekannte Integrationen bekommen einen JSON-Fallback-Renderer
-- `/settings` — zentral: Dimacon-Zugangsdaten + Linkliste zu den
-  Integrations-Einstellungen
+- **Kein** globaler „Einstellungen"-Nav-Punkt mehr: die frühere Seite
+  `/settings` pflegte nur die Dimacon-Zugangsdaten und beantwortete damit
+  dieselbe Frage wie die System-Tabelle. Zugangsdaten leben jetzt dort, wo
+  auch ihr Status steht (`/modules` bzw. `/sync/<id>/settings`)
 - `/sync/$integrationId/settings` — je Integration, erreichbar über das
   Zahnrad in der /sync-Tabelle, den Header-Link auf `/sync/$integrationId` und
-  die Wegweiser-Liste auf `/settings`: Tab-Menü
+  die „bearbeiten"-Spalte auf `/modules`: Tab-Menü
   Zeitplan | Umfang | Zugangsdaten (Zielsystem) | Feld-Zuordnung
   (eingebetteter Editor); aktiver Tab als Search-Param `?tab=…`. Der
   Umfang-Tab erscheint nur für Integrationen mit Eintrag in
@@ -152,7 +160,7 @@ noch Env-Vars; Tests bauen ctx von Hand. Damit automatisch: Mutex je
 Run-Historie (`sync_runs`, letzte 50 je Mandant+Integration; `GET
 /api/integrations/:id/runs` liegt auf dem AUTHENTIFIZIERTEN Router und speist
 die Tabelle unter `/sync/<id>` mit Auslöser/Modus/Umfang),
-Routen `/api/integrations/:id/{run,healthz}` + Eintrag in `/sync`/`/settings`.
+Routen `/api/integrations/:id/{run,healthz}` + Eintrag in `/sync`.
 `requiredCredentials` (System-IDs) steuert den „konfiguriert"-Status je
 Mandant (kein Crash — Run liefert 503 mit `missing`). Der
 Dimacon→Clockin-Sync ist bewusst NICHT von Lexware abhängig.

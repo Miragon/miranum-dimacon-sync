@@ -12,11 +12,15 @@ export interface PageChromeProps {
 // Deutsch wie die gesamte Oberfläche, und mit denselben Wörtern wie die
 // Zielseiten: die Nav hieß „Sync“, die Kachel „Integrationen“ und die H1
 // ebenfalls „Integrationen“ — drei Namen für ein Ziel.
+//
+// „Einstellungen“ stand hier einmal als vierter Punkt und führte auf eine
+// Seite, die nur die Dimacon-Zugangsdaten pflegte — dieselbe Zeile, die
+// „Systeme“ ohnehin mit Status listet. Die Karte liegt jetzt dort, alles
+// Integrationsspezifische unter /sync/<id>/settings.
 const NAV = [
   { to: "/", label: "Übersicht" },
   { to: "/sync", label: "Integrationen" },
   { to: "/modules", label: "Systeme" },
-  { to: "/settings", label: "Einstellungen" },
 ] as const
 
 export function PageChrome({

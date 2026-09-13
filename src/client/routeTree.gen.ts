@@ -9,18 +9,12 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ModulesRouteImport } from './routes/modules'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SyncIndexRouteImport } from './routes/sync.index'
 import { Route as SyncIntegrationIdRouteImport } from './routes/sync.$integrationId'
 import { Route as SyncIntegrationIdSettingsRouteImport } from './routes/sync_.$integrationId.settings'
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ModulesRoute = ModulesRouteImport.update({
   id: '/modules',
   path: '/modules',
@@ -51,7 +45,6 @@ const SyncIntegrationIdSettingsRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/modules': typeof ModulesRoute
-  '/settings': typeof SettingsRoute
   '/sync/$integrationId': typeof SyncIntegrationIdRoute
   '/sync/': typeof SyncIndexRoute
   '/sync/$integrationId/settings': typeof SyncIntegrationIdSettingsRoute
@@ -59,7 +52,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/modules': typeof ModulesRoute
-  '/settings': typeof SettingsRoute
   '/sync/$integrationId': typeof SyncIntegrationIdRoute
   '/sync': typeof SyncIndexRoute
   '/sync/$integrationId/settings': typeof SyncIntegrationIdSettingsRoute
@@ -68,7 +60,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/modules': typeof ModulesRoute
-  '/settings': typeof SettingsRoute
   '/sync/$integrationId': typeof SyncIntegrationIdRoute
   '/sync/': typeof SyncIndexRoute
   '/sync_/$integrationId/settings': typeof SyncIntegrationIdSettingsRoute
@@ -78,7 +69,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/modules'
-    | '/settings'
     | '/sync/$integrationId'
     | '/sync/'
     | '/sync/$integrationId/settings'
@@ -86,7 +76,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/modules'
-    | '/settings'
     | '/sync/$integrationId'
     | '/sync'
     | '/sync/$integrationId/settings'
@@ -94,7 +83,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/modules'
-    | '/settings'
     | '/sync/$integrationId'
     | '/sync/'
     | '/sync_/$integrationId/settings'
@@ -103,7 +91,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ModulesRoute: typeof ModulesRoute
-  SettingsRoute: typeof SettingsRoute
   SyncIntegrationIdRoute: typeof SyncIntegrationIdRoute
   SyncIndexRoute: typeof SyncIndexRoute
   SyncIntegrationIdSettingsRoute: typeof SyncIntegrationIdSettingsRoute
@@ -111,13 +98,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/modules': {
       id: '/modules'
       path: '/modules'
@@ -159,7 +139,6 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ModulesRoute: ModulesRoute,
-  SettingsRoute: SettingsRoute,
   SyncIntegrationIdRoute: SyncIntegrationIdRoute,
   SyncIndexRoute: SyncIndexRoute,
   SyncIntegrationIdSettingsRoute: SyncIntegrationIdSettingsRoute,
