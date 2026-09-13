@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router"
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { CredentialCard } from "#/components/credentials/CredentialCard"
 import { RunDefaultsCard } from "#/components/integrations/RunDefaultsCard"
@@ -8,6 +8,7 @@ import { MnAlert } from "#/components/miranum/MnAlert"
 import { readJson, useApiFetch } from "#/lib/api"
 import { CREDENTIAL_SYSTEMS, EMPTY_STATUS, type CredentialStatus } from "#/lib/credentials"
 import type { IntegrationInfo } from "#/lib/integrations"
+import { Tabs, TabsList, TabsTrigger } from "#/components/ui/tabs"
 import { RUN_SCOPE_SPECS } from "#/lib/run-scope"
 
 export type SettingsTab = "zeitplan" | "umfang" | "zugangsdaten" | "mapping"
@@ -41,6 +42,7 @@ export const Route = createFileRoute("/sync_/$integrationId/settings")({
 function IntegrationSettingsPage() {
   const { integrationId } = Route.useParams()
   const { tab } = Route.useSearch()
+  const navigate = useNavigate()
   const apiFetch = useApiFetch()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -145,27 +147,30 @@ function IntegrationSettingsPage() {
         </p>
       </header>
 
-      <nav
-        className="border-rule mb-10 flex flex-wrap gap-3 border-b pb-4"
-        aria-label="Einstellungs-Tabs"
+      {/* Echte Tab-Semantik (role=tablist, Pfeiltasten-Navigation), aber die
+          Auswahl lebt weiter in der URL (?tab=…) — Reload und Deep-Link
+          behalten sie, und die bestehenden Links aus /modules und /sync
+          zeigen unverändert auf den richtigen Tab. */}
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) =>
+          void navigate({
+            to: "/sync/$integrationId/settings",
+            params: { integrationId: info.id },
+            search: { tab: value as SettingsTab },
+            replace: true,
+          })
+        }
+        className="mb-10"
       >
-        {tabs.map((t) => (
-          <Link
-            key={t}
-            to="/sync/$integrationId/settings"
-            params={{ integrationId: info.id }}
-            search={{ tab: t }}
-            replace
-            className={`border px-4 py-2 font-mono text-[0.75rem] tracking-[0.14em] uppercase transition-colors ${
-              t === activeTab
-                ? "border-ink text-ink"
-                : "border-rule text-ink-2 hover:border-ink hover:text-ink"
-            }`}
-          >
-            {TAB_LABELS[t]}
-          </Link>
-        ))}
-      </nav>
+        <TabsList aria-label="Einstellungs-Tabs">
+          {tabs.map((t) => (
+            <TabsTrigger key={t} value={t}>
+              {TAB_LABELS[t]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       {activeTab === "zeitplan" ? (
         schedule ? (

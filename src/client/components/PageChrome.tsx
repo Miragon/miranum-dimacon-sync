@@ -3,21 +3,24 @@ import { AUTH_ENABLED } from "../lib/auth-flag.js"
 import { UserMenu } from "./UserMenu.js"
 
 export interface PageChromeProps {
-  /** Top-left mono label, e.g. "MIRANUM · MN · 01 / WS · TEMPLATE" */
+  /** Top-left mono label, e.g. "MIRANUM · MN · 01 / WS · SYNC" */
   label?: string
   /** Bottom-right mono tagline */
   foot?: string
 }
 
+// Deutsch wie die gesamte Oberfläche, und mit denselben Wörtern wie die
+// Zielseiten: die Nav hieß „Sync“, die Kachel „Integrationen“ und die H1
+// ebenfalls „Integrationen“ — drei Namen für ein Ziel.
 const NAV = [
-  { to: "/", label: "Home" },
-  { to: "/modules", label: "Modules" },
-  { to: "/sync", label: "Sync" },
-  { to: "/settings", label: "Settings" },
+  { to: "/", label: "Übersicht" },
+  { to: "/sync", label: "Integrationen" },
+  { to: "/modules", label: "Systeme" },
+  { to: "/settings", label: "Einstellungen" },
 ] as const
 
 export function PageChrome({
-  label = "MIRANUM · MN · 01 / WS · TEMPLATE",
+  label = "MIRANUM · MN · 01 / WS · SYNC",
   foot = "Das fehlende Element fürs Handwerk.",
 }: PageChromeProps) {
   return (
@@ -31,7 +34,7 @@ export function PageChrome({
       <div className="text-ink-3 pointer-events-none fixed right-12 bottom-6 z-50 font-mono text-[10px] tracking-[0.18em] max-md:hidden">
         {foot}
       </div>
-      <nav className="fixed top-5 right-12 z-50 flex items-center gap-6 max-md:static max-md:justify-end max-md:pt-6 max-md:pr-6">
+      <nav className="fixed top-5 right-12 z-50 flex flex-wrap items-center justify-end gap-x-6 gap-y-2 max-md:static max-md:px-6 max-md:pt-6">
         {NAV.map((item) => (
           <Link
             key={item.to}

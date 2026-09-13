@@ -90,7 +90,10 @@ Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
 
 ## Pages-Konvention
 
-- `/` — Landing/Dashboard (Hero + ElementBox + Feature-Grid)
+- `/` — Dashboard: Zustand aller Integrationen (letzter Lauf, nächster Lauf,
+  Umfang) + Block „Braucht Aufmerksamkeit" für fehlende Zugangsdaten und
+  Fehler-/Skip-Läufe. Bewusst OHNE ElementBox-Hero — die Kacheln verlinkten
+  nur, ohne etwas über den Zustand zu sagen
 - `/modules` — Die 3 angebundenen Systeme mit Konfigurations-Status des
   aktiven Mandanten aus `GET /api/systems`
 - `/sync` — Integrations-Übersicht (Tabelle aller Integrationen mit Status)
@@ -100,7 +103,8 @@ Niemals API-Tokens als `VITE_*` exportieren — Browser-Bundle ist public.
 - `/settings` — zentral: Dimacon-Zugangsdaten + Linkliste zu den
   Integrations-Einstellungen
 - `/sync/$integrationId/settings` — je Integration, erreichbar über das
-  Zahnrad in der /sync-Tabelle (einziger Nav-Einstieg): Tab-Menü
+  Zahnrad in der /sync-Tabelle, den Header-Link auf `/sync/$integrationId` und
+  die Wegweiser-Liste auf `/settings`: Tab-Menü
   Zeitplan | Umfang | Zugangsdaten (Zielsystem) | Feld-Zuordnung
   (eingebetteter Editor); aktiver Tab als Search-Param `?tab=…`. Der
   Umfang-Tab erscheint nur für Integrationen mit Eintrag in
@@ -122,8 +126,19 @@ Kurz-Regeln: Square corners überall, 1px-Borders, kein Shadow/Gradient,
 Akzent-Rot maximal einmal pro Screen, Mono nur für Labels/Daten,
 Group-Farben nur auf ElementBox/MnFeature.
 
-ElementBox + Bereich-Kicker sind **Landing/Dashboard-Patterns** — nicht als
-Page-Header-Schmuck auf jeder Subpage.
+ElementBox + Bereich-Kicker sind **Landing-Patterns** — nicht als
+Page-Header-Schmuck auf jeder Subpage, und auch nicht auf dem Dashboard: dort
+zählt der Zustand, nicht die Dekoration.
+
+**Akzent-Rot ist der teuerste Token des Systems.** Es markiert auf
+`/sync/$integrationId` den Live-Lauf-Button — das einzige Signal für „dieser
+Klick schreibt in drei Produktivsysteme". Checkboxen, Badges und Karten daneben
+laufen auf Ink; jedes zusätzliche Rot entwertet genau dieses Signal. Gleiches
+auf `/`: der Akzent gehört dem Block „Braucht Aufmerksamkeit".
+
+**Kontrast:** `text-ink-3` (#9a9a96) liegt auf Weiß bei 2,82:1 und ist damit
+NUR für Mono-Labels und Metadaten zulässig, nie für Fließtext, den jemand
+lesen muss — Bedingungen und Warnhinweise gehören auf `text-ink-2` (5,33:1).
 
 ## Integrationen
 

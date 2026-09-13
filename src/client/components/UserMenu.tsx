@@ -1,5 +1,12 @@
 import { useAuth } from "@workos-inc/authkit-react"
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "#/components/ui/dropdown-menu"
 import { useTenant } from "#/lib/tenant"
 
 export function UserMenu() {
@@ -31,31 +38,18 @@ export function UserMenu() {
 function TenantChip() {
   const tenantCtx = useTenant()
   const { switchToOrganization } = useAuth()
-  const [open, setOpen] = useState(false)
   const [switching, setSwitching] = useState<string | null>(null)
   const [switchError, setSwitchError] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    function onClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", onClickOutside)
-    return () => document.removeEventListener("mousedown", onClickOutside)
-  }, [open])
 
   if (!tenantCtx) return null
   const { tenant, tenants, organizationId } = tenantCtx
   const switchable = tenants.filter((t) => t.orgId !== organizationId)
 
-  const chip = (
-    <span className="border-rule text-ink-2 border px-2 py-1 font-mono text-[11px] tracking-[0.18em] uppercase">
-      Mandant · {tenant.name}
-    </span>
-  )
+  const chipClass =
+    "border-rule text-ink-2 border px-2 py-1 font-mono text-[11px] tracking-[0.18em] uppercase"
 
-  if (switchable.length === 0) return chip
+  // Nur ein Mandant: nichts zum Wechseln, also auch kein Menü.
+  if (switchable.length === 0) return <span className={chipClass}>Mandant · {tenant.name}</span>
 
   async function switchTo(orgId: string) {
     setSwitching(orgId)
@@ -72,40 +66,34 @@ function TenantChip() {
   }
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="border-rule text-ink-2 hover:border-ink hover:text-ink border px-2 py-1 font-mono text-[11px] tracking-[0.18em] uppercase transition-colors"
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={`${chipClass} hover:border-ink hover:text-ink focus-visible:outline-mn-accent transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2`}
       >
         Mandant · {tenant.name} ▾
-      </button>
-      {open ? (
-        <div className="border-rule bg-paper absolute top-full right-0 z-20 mt-2 min-w-[220px] border">
-          <p className="text-ink-3 border-rule border-b px-3 py-2 font-mono text-[10px] tracking-[0.18em] uppercase">
-            Mandant wechseln
+      </DropdownMenuTrigger>
+      {/* Ersetzt ein handgebautes Popover: Escape, Pfeiltasten, Focus-Rückgabe
+          und aria-expanded kommen jetzt aus dem Primitive statt zu fehlen. */}
+      <DropdownMenuContent align="end" className="min-w-[220px]">
+        <DropdownMenuLabel className="text-ink-3 border-rule border-b font-mono text-[10px] tracking-[0.18em] uppercase">
+          Mandant wechseln
+        </DropdownMenuLabel>
+        {switchable.map((t) => (
+          <DropdownMenuItem
+            key={t.orgId}
+            disabled={switching !== null}
+            onClick={() => void switchTo(t.orgId)}
+            className="font-mono text-[11px] tracking-[0.1em]"
+          >
+            {switching === t.orgId ? "wechsle …" : t.name}
+          </DropdownMenuItem>
+        ))}
+        {switchError ? (
+          <p className="text-mn-accent border-rule border-t px-3 py-2 font-mono text-[10px]">
+            {switchError}
           </p>
-          <ul className="divide-rule divide-y">
-            {switchable.map((t) => (
-              <li key={t.orgId}>
-                <button
-                  type="button"
-                  disabled={switching !== null}
-                  onClick={() => void switchTo(t.orgId)}
-                  className="text-ink hover:bg-paper-3 block w-full px-3 py-2 text-left font-mono text-[11px] tracking-[0.1em] transition-colors disabled:opacity-50"
-                >
-                  {switching === t.orgId ? "wechsle …" : t.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {switchError ? (
-            <p className="text-mn-accent border-rule border-t px-3 py-2 font-mono text-[10px]">
-              {switchError}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

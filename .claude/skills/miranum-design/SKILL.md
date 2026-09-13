@@ -85,7 +85,28 @@ Bereits installiert und auf Miranum ge-themed:
 - `input.tsx` — `border-ink`, square, Focus-Ring rot.
 - `label.tsx` — Mono, uppercase, `text-ink-2`, tracking `0.18em`.
 - `card.tsx` — Border, square, no shadow.
-- `table.tsx` — 1px-Border, mono Header.
+- `table.tsx` — 1px-Border, mono Header, horizontal scrollbar auf Mobile.
+- `tabs.tsx` — Border-Kacheln, aktiv über `border-ink` (keine Füllfläche).
+  Die Einstellungsseite steuert sie über `value`/`onValueChange`, damit der
+  aktive Tab in der URL bleibt.
+- `dialog.tsx` — 1px-Border, kein Schatten/Ring, kein Backdrop-Blur.
+- `dropdown-menu.tsx` — 1px-Border, kein Schatten, keine Zoom/Slide-Animation.
+- `sonner.tsx` — Toaster, eckig, `border-ink`; bewusst ohne `next-themes`
+  (light-only).
+- `badge.tsx`, `tooltip.tsx`, `skeleton.tsx` — Basis, ge-themed.
+
+**Zwei Fallstricke bei `npx shadcn add`** (beide real aufgetreten):
+
+1. Die Registry überschreibt `button.tsx` als Registry-Dependency — vorher
+   sichern und danach zurückspielen, sonst sind Rundungen, Rings und
+   Dark-Mode-Klassen wieder drin.
+2. Sie installiert `cn` als npm-Paket (dupliziert `#/lib/utils`) und
+   `next-themes` — beides wieder entfernen und die Imports auf
+   `#/lib/utils` umbiegen.
+
+Danach IMMER prüfen: `shadow-*`, `ring-*`, `backdrop-blur`, `zoom-in`,
+`slide-in`. Rundungen sind unkritisch — `--radius-*` ist bis `4xl` auf `0`
+gemappt.
 
 **Beim Hinzufügen via `npx shadcn add <name>`** alle Rundungen, Shadows und
 Akzent-Farben prüfen und an Miranum anpassen, bevor verwendet wird.

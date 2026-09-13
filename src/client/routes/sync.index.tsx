@@ -52,8 +52,9 @@ function IntegrationsPage() {
         <span className="mn-mono">/sync · integrationen</span>
         <h1 className="text-h-1 text-ink mt-4">Integrationen</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[540px]">
-          Alle Sync-Abläufe zwischen Dimacon, Clockin und Lexware Office — Status einsehen, manuell
-          starten; Zeitplan, Zugangsdaten und Feld-Zuordnung über das Zahnrad je Integration.
+          Alle Sync-Abläufe zwischen Dimacon, Clockin und Lexware Office — Status einsehen und
+          manuell starten. Zeitplan, Umfang, Zugangsdaten und Feld-Zuordnung liegen je Integration
+          unter „Einstellungen".
         </p>
       </header>
 
@@ -73,10 +74,17 @@ function IntegrationsPage() {
               <TableHead className="w-56">Systeme</TableHead>
               <TableHead className="w-56">Status</TableHead>
               <TableHead className="w-48">Nächster Lauf</TableHead>
-              <TableHead className="w-24" />
+              <TableHead className="w-60" />
             </TableRow>
           </TableHeader>
           <TableBody>
+            {items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-ink-2 py-8">
+                  Keine Integrationen registriert.
+                </TableCell>
+              </TableRow>
+            ) : null}
             {items.map((i) => (
               <TableRow key={i.id}>
                 <TableCell>
@@ -113,15 +121,18 @@ function IntegrationsPage() {
                     >
                       öffnen
                     </Link>
+                    {/* Icon plus Textlabel: ein nacktes 16px-Zahnrad neben dem
+                        Wort „öffnen" ist weder als Ziel erkennbar noch gut zu
+                        treffen. Die Fläche ist jetzt 40px hoch. */}
                     <Link
                       to="/sync/$integrationId/settings"
                       params={{ integrationId: i.id }}
                       search={{ tab: "zeitplan" }}
                       aria-label={`Einstellungen für ${i.name}`}
-                      title="Einstellungen"
-                      className="text-ink-2 hover:text-ink transition-colors"
+                      className="text-ink-2 hover:text-ink focus-visible:outline-mn-accent -my-2 inline-flex h-10 items-center gap-2 font-mono text-[0.75rem] tracking-[0.12em] uppercase transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                     >
-                      <Settings size={16} aria-hidden="true" />
+                      <Settings size={14} aria-hidden="true" />
+                      einstellungen
                     </Link>
                   </span>
                 </TableCell>

@@ -3,7 +3,9 @@ import { type ComponentProps } from "react"
 
 function Table({ className, ...props }: ComponentProps<"table">) {
   return (
-    <div className="w-full overflow-auto">
+    // `overflow-auto` macht breite Tabellen am Handy wischbar — ohne Hinweis
+    // merkt das aber niemand. Die Kante rechts zeigt, dass es weitergeht.
+    <div className="w-full overflow-auto [scrollbar-width:thin] max-md:-mr-6 max-md:pr-6">
       <table
         data-slot="table"
         className={cn("border-ink w-full border-collapse border-y-[1.5px] text-sm", className)}

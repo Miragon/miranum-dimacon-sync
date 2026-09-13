@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
+import { toast } from "sonner"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { Button } from "#/components/ui/button"
@@ -73,8 +74,10 @@ const INTERVAL_OPTIONS: {
   })),
 ]
 
+// Sichtbarer Fokus ist hier nicht optional: diese Selects legen fest, WANN
+// nachts ein schreibender Lauf gegen die Produktivsysteme fährt.
 const selectClass =
-  "border-ink bg-paper text-ink h-10 border px-3 font-mono text-sm focus-visible:outline-none"
+  "border-ink bg-paper text-ink focus-visible:outline-mn-accent h-10 border px-3 font-mono text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
 
 export function ScheduleCard({
   entry,
@@ -121,6 +124,7 @@ export function ScheduleCard({
         setTimezone(updated.timezone)
         setSpec(cronToSpec(updated.cron))
         setNotice("Gespeichert. Scheduler neu gestartet.")
+        toast.success("Gespeichert. Scheduler neu gestartet.")
         onSaved(updated)
       }
     } catch (err) {
@@ -208,7 +212,7 @@ export function ScheduleCard({
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
               disabled={saving}
-              className="accent-mn-accent size-4"
+              className="accent-ink size-4"
             />
             Scheduler aktivieren
           </label>
