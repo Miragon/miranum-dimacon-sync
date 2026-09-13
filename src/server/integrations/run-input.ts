@@ -79,9 +79,11 @@ async function loadRunDefaults(
   return parseRunDefaults(def, stored ?? {})
 }
 
+// Kein Pfad-Platzhalter im Text: die Meldung landet 1:1 in der Run-Historie,
+// wo der Nutzer sonst wörtlich „/sync/<id>/settings" liest.
 export const INVALID_STORED_DEFAULTS_MESSAGE =
   "Der gespeicherte Umfang dieser Integration ist ungültig — " +
-  "bitte unter /sync/<id>/settings?tab=umfang neu speichern"
+  "bitte in den Einstellungen der Integration im Tab Umfang neu speichern"
 
 export type ScheduledInputResult =
   | { ok: true; input: Record<string, unknown> }

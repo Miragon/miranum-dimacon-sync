@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { RunForm } from "#/components/integrations/RunForm"
@@ -24,6 +24,9 @@ function IntegrationDetailPage() {
   // Zähler statt Reload-Callback: die Historie lädt nach jedem Lauf neu.
   const [runsVersion, setRunsVersion] = useState(0)
   const apiFetch = useApiFetch()
+  // Das Ergebnis erscheint unter dem Formular — nach 30-120 s Wartezeit sieht
+  // der Bildschirm sonst aus wie vorher, und der Nutzer klickt ein zweites Mal.
+  const resultRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -75,6 +78,8 @@ function IntegrationDetailPage() {
       // einer Exception die Fehlerzeile in `sync_runs` und wirft weiter (500) —
       // ohne Bump stünde diese Zeile erst nach einem Reload in der Historie.
       setRunsVersion((v) => v + 1)
+      // Nach dem Rendern scrollen, sonst existiert das Ziel noch nicht.
+      requestAnimationFrame(() => resultRef.current?.scrollIntoView({ block: "start" }))
     }
   }
 
@@ -103,16 +108,41 @@ function IntegrationDetailPage() {
         <span className="mn-mono">/sync/{info.id}</span>
         <h1 className="text-h-1 text-ink mt-4">{info.name}</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[540px]">{info.description}</p>
-        <p className="mt-4">
+        <p className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
           <BackLink />
+          {/* Die Seite zeigt Cron-Status, nächsten Lauf und Umfang an — alle
+              drei werden in den Einstellungen gepflegt. Ohne diesen Link führt
+              der Weg dorthin über die Übersichtstabelle zurück. */}
+          <Link
+            to="/sync/$integrationId/settings"
+            params={{ integrationId: info.id }}
+            search={{ tab: "zeitplan" }}
+            className="text-ink-2 hover:text-ink font-mono text-[0.7rem] tracking-[0.18em] uppercase transition-colors"
+          >
+            einstellungen →
+          </Link>
         </p>
       </header>
 
       <section className="mb-12">
         <dl className="border-rule grid grid-cols-2 border md:grid-cols-5">
           <StatusStat label="Systeme" value={info.systems.join(" → ")} />
-          <StatusStat label="Konfiguriert" value={info.configured ? "ja" : "nein"} />
-          <StatusStat label="Cron aktiv" value={info.cronActive ? "ja" : "nein"} />
+          {/* Badges statt „ja/nein": dieselbe Sprache wie die Übersichtstabelle,
+              und auf einen Blick scanbar. */}
+          <StatusStat label="Konfiguriert">
+            {info.configured ? (
+              <MnStatusBadge variant="ok">ja</MnStatusBadge>
+            ) : (
+              <MnStatusBadge variant="warn">nein</MnStatusBadge>
+            )}
+          </StatusStat>
+          <StatusStat label="Cron aktiv">
+            {info.cronActive ? (
+              <MnStatusBadge>aktiv</MnStatusBadge>
+            ) : (
+              <span className="text-ink-2 font-mono text-base">aus</span>
+            )}
+          </StatusStat>
           <StatusStat
             label="Nächster Lauf"
             value={info.nextRun ? formatRunDate(info.nextRun) : "—"}
@@ -145,6 +175,8 @@ function IntegrationDetailPage() {
           disabled={!info.configured}
           onRun={run}
           defaults={info.runDefaults}
+          integrationName={info.name}
+          systems={info.systems}
         />
         {info.running ? (
           <div className="mt-4">
@@ -158,7 +190,9 @@ function IntegrationDetailPage() {
         ) : null}
       </section>
 
-      {result != null ? <RunResultView integrationId={info.id} result={result} /> : null}
+      <div ref={resultRef} aria-live="polite">
+        {result != null ? <RunResultView integrationId={info.id} result={result} /> : null}
+      </div>
 
       <RunHistory integrationId={info.id} refreshKey={runsVersion} />
     </>
@@ -176,11 +210,19 @@ function BackLink() {
   )
 }
 
-function StatusStat({ label, value }: { label: string; value: string }) {
+function StatusStat({
+  label,
+  value,
+  children,
+}: {
+  label: string
+  value?: string
+  children?: ReactNode
+}) {
   return (
     <div className="border-rule border-r border-b p-4 last:border-r-0 md:border-b-0">
       <dt className="text-ink-3 font-mono text-[0.65rem] tracking-[0.18em] uppercase">{label}</dt>
-      <dd className="text-ink mt-1 font-mono text-base">{value}</dd>
+      <dd className="text-ink mt-1 font-mono text-base">{children ?? value}</dd>
     </div>
   )
 }

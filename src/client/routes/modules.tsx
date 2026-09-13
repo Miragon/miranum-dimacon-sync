@@ -162,6 +162,9 @@ function Modules() {
                               <Link
                                 to="/sync/$integrationId/settings"
                                 params={{ integrationId: s.integrations[0] }}
+                                // Ohne den Tab landet der einzige Weg aus dem
+                                // Fehlerzustand auf dem Zeitplan-Editor.
+                                search={{ tab: "zugangsdaten" }}
                                 className="text-ink-2 hover:text-ink font-mono text-[0.7rem] underline underline-offset-4"
                               >
                                 Zugangsdaten hinterlegen →

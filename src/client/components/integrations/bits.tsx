@@ -154,7 +154,14 @@ export function StepNotes({ steps }: { steps: readonly RunStepSpec[] }) {
           <dt className="text-ink-2 font-mono text-[0.7rem] tracking-[0.14em] uppercase">
             {step.label}
           </dt>
-          <dd className="text-ink-3 mt-1 font-mono text-[0.7rem] leading-relaxed">{step.note}</dd>
+          {/* Fließtext in Inter statt Mono, und ink-2 statt ink-3: ink-3 liegt
+              auf Weiß bei 2,82:1 und reißt in 11px die WCAG-AA-Grenze (4,5:1)
+              deutlich. Genau diese Zeilen sollen VOR dem Einschalten eines
+              schreibenden Schritts gelesen werden — sie dürfen nicht die am
+              schlechtesten lesbaren der Seite sein. */}
+          <dd className="text-ink-2 mt-1 max-w-[62ch] text-[0.8rem] leading-relaxed">
+            {step.note}
+          </dd>
         </div>
       ))}
     </dl>

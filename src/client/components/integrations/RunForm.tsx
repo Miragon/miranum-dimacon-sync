@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import type { ComponentType } from "react"
 import { StepNotes } from "#/components/integrations/bits"
+import { LiveRunDialog } from "#/components/integrations/LiveRunDialog"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
@@ -13,6 +14,9 @@ export interface RunFormProps {
   onRun: (input: unknown) => void
   /** Gespeicherter Umfang des Mandanten — belegt Modus + Schritte vor. */
   defaults?: Record<string, unknown>
+  /** Für die Live-Rückfrage: was der Lauf anfasst. */
+  integrationName?: string
+  systems?: string[]
 }
 
 /**
@@ -65,7 +69,7 @@ function CheckBox({
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         disabled={disabled}
-        className="accent-mn-accent size-4"
+        className="accent-ink size-4"
       />
       {label}
     </label>
@@ -93,6 +97,8 @@ function ScopeRunForm({
   disabled,
   onRun,
   defaults,
+  integrationName,
+  systems,
 }: RunFormProps & { integrationId: string; withDate?: boolean }) {
   const spec = RUN_SCOPE_SPECS[integrationId]
   // Lazy: der gespeicherte Umfang ist die Startbelegung, danach gehört der
@@ -101,8 +107,16 @@ function ScopeRunForm({
   const [date, setDate] = useState<string>(todayISO())
   const [dryRun, setDryRun] = useState<boolean>(initial.dryRun)
   const [steps, setSteps] = useState<Record<string, boolean>>(initial.steps)
+  const [confirming, setConfirming] = useState(false)
 
   const hints = spec.hints(steps)
+  const input = { ...(withDate ? { date } : {}), dryRun, steps }
+
+  // Nur der Live-Lauf fragt zurück — ein dry-run schreibt nichts.
+  function start() {
+    if (dryRun) onRun(input)
+    else setConfirming(true)
+  }
 
   return (
     <div className="border-rule space-y-6 border p-6">
@@ -134,11 +148,11 @@ function ScopeRunForm({
         </div>
         <div className="ml-auto">
           <Button
-            onClick={() => onRun({ ...(withDate ? { date } : {}), dryRun, steps })}
+            onClick={start}
             disabled={running || disabled}
             variant={dryRun ? "default" : "accent"}
           >
-            {running ? "läuft …" : dryRun ? "Dry-Run starten" : "Run starten"}
+            {running ? "läuft …" : dryRun ? "Dry-Run starten" : "Live-Lauf starten"}
           </Button>
         </div>
       </div>
@@ -160,13 +174,13 @@ function ScopeRunForm({
         {hints.length > 0 ? (
           <div className="mt-3 max-w-[520px] space-y-1">
             {hints.map((hint) => (
-              <p key={hint} className="text-ink-3 font-mono text-[0.7rem] leading-relaxed">
+              <p key={hint} className="text-ink-2 text-[0.8rem] leading-relaxed">
                 {hint}
               </p>
             ))}
           </div>
         ) : null}
-        <p className="text-ink-3 mt-3 font-mono text-[0.7rem] leading-relaxed">
+        <p className="text-ink-2 mt-3 text-[0.8rem] leading-relaxed">
           Vorbelegt aus dem gespeicherten Umfang — Abweichungen gelten nur für diesen Lauf.{" "}
           <Link
             to="/sync/$integrationId/settings"
@@ -178,6 +192,20 @@ function ScopeRunForm({
           </Link>
         </p>
       </div>
+
+      <LiveRunDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        onConfirm={() => {
+          setConfirming(false)
+          onRun(input)
+        }}
+        integrationName={integrationName ?? integrationId}
+        systems={systems ?? []}
+        spec={spec}
+        steps={steps}
+        date={withDate ? date : undefined}
+      />
     </div>
   )
 }
@@ -213,7 +241,7 @@ function DateDryRunForm({ running, disabled, onRun, defaults }: RunFormProps) {
             checked={dryRun}
             onChange={(e) => setDryRun(e.target.checked)}
             disabled={running}
-            className="accent-mn-accent size-4"
+            className="accent-ink size-4"
           />
           dry-run (nur loggen)
         </label>

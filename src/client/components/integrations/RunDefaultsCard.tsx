@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { toast } from "sonner"
 import type { ScheduleEntry } from "#/components/integrations/ScheduleCard"
 import { StepNotes } from "#/components/integrations/bits"
 import { MnAlert } from "#/components/miranum/MnAlert"
@@ -80,6 +81,7 @@ export function RunDefaultsCard({
         setDryRun(scope.dryRun)
         setSteps(scope.steps)
         setNotice("Gespeichert. Gilt ab sofort für geplante, manuelle und Webhook-Läufe.")
+        toast.success("Gespeichert. Gilt ab sofort für geplante, manuelle und Webhook-Läufe.")
         onSaved(updated)
       }
     } catch (err) {
@@ -113,7 +115,7 @@ export function RunDefaultsCard({
               checked={dryRun}
               onChange={(e) => setDryRun(e.target.checked)}
               disabled={saving}
-              className="accent-mn-accent size-4"
+              className="accent-ink size-4"
             />
             dauerhaft dry-run (nur loggen)
           </label>
@@ -143,7 +145,7 @@ export function RunDefaultsCard({
                     setSteps((prev) => toggleStep(integrationId, prev, step.key, e.target.checked))
                   }
                   disabled={saving || (step.requires ? !steps[step.requires] : false)}
-                  className="accent-mn-accent size-4"
+                  className="accent-ink size-4"
                 />
                 {step.label}
               </label>
@@ -153,7 +155,7 @@ export function RunDefaultsCard({
           {hints.length > 0 ? (
             <div className="mt-3 max-w-[520px] space-y-1">
               {hints.map((hint) => (
-                <p key={hint} className="text-ink-3 font-mono text-[0.7rem] leading-relaxed">
+                <p key={hint} className="text-ink-2 text-[0.8rem] leading-relaxed">
                   {hint}
                 </p>
               ))}
