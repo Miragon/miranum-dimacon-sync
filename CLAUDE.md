@@ -286,8 +286,22 @@ SDK die Route), `returnTo` gegen Open Redirects validiert
 (`lib/return-to.ts`), `onRefreshFailure` über die Modul-Bridge
 `lib/session-expiry.ts` (der Provider hängt außerhalb des Routers),
 `visibilitychange`-Refresh als Ersatz für das nicht durchgereichte
-`onBeforeAutoRefresh`, optionales `VITE_WORKOS_API_HOSTNAME`
-(AuthKit-Custom-Domain ⇒ First-Party-Cookies; leer = heutiges Verhalten).
+`onBeforeAutoRefresh`.
+
+**Wo der Refresh-Token liegt, entscheidet `VITE_WORKOS_API_HOSTNAME`**
+(`lib/auth-flag.ts`): Nur eine AuthKit-Domain auf der EIGENEN Site
+(`auth.example.com` neben der App auf `example.com`) macht die Cookies
+First-Party — eine WorkOS-Domain (`*.authkit.app`) ist gegenüber der
+App-Domain genauso Cross-Site wie `api.workos.com`, und auf `*.fly.dev` ist
+die Konstellation gar nicht herstellbar (Public Suffix List). Ist die Variable
+leer, setzt `main.tsx` deshalb `devMode` (= `WORKOS_KEEP_REFRESH_TOKEN_LOCALLY`):
+authkit legt den Refresh-Token dann im `localStorage` ab und schickt ihn im
+Request-Body. **Ohne das gibt es gar keinen Refresh** — authkit sendet den
+Token weder im Body noch als Cookie, WorkOS antwortet `Missing refresh token`,
+und die Sitzung stirbt, sobald das Access-Token abläuft (sie überlebt dann
+auch keinen Reload, weil der Token sonst nur im RAM liegt). Preis: per XSS
+auslesbar — der übliche SPA-Kompromiss; sicherer wäre ein eigenes
+Auth-Backend (BFF), das ist ein Umbau, kein Schalter.
 Serverseitig: `verifyAccessToken` liefert `valid | invalid | unavailable` —
 JWKS-/Netzfehler ⇒ 503 `AUTH_UNAVAILABLE`, nie 401; `clockTolerance: 30`;
 401 tragen `code` + `WWW-Authenticate`; die Run-Route antwortet bei gültigem

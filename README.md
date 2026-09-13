@@ -94,20 +94,20 @@ Beim Server-Start lädt `dotenv` die `.env` (gitignored) und reichert damit
 Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 [`env.example`](./env.example). Variablen:
 
-| Variable                   | Beschreibung                                                                                                                      | Pflicht |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `PORT`                     | Server-Port (default: 3020)                                                                                                       | nein    |
-| `DATABASE_URL`             | Postgres-URL (Dev-Default: docker-compose-DB)                                                                                     | prod    |
-| `CREDENTIAL_KEYS`          | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                                        | prod    |
-| `WORKOS_CLIENT_ID`         | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                                      | prod    |
-| `VITE_WORKOS_CLIENT_ID`    | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                                       | prod    |
-| `VITE_WORKOS_API_HOSTNAME` | AuthKit-Custom-Domain (z. B. `auth.example.com`, build-time). Macht Session-/Refresh-Cookie First-Party. Leer = `api.workos.com`. | nein    |
-| `WORKOS_API_KEY`           | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.             | nein    |
-| `WORKOS_ORG_SYNC`          | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`).          | nein    |
-| `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`). Defaults: 10 / 5 / 2 Requests pro Sekunde.                     | nein    |
-| `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2.                                                                           | nein    |
-| `CONCURRENCY_<SYS>`        | Parallele Tasks **je Phase**, nicht je Lauf (gemischte Tasks: strengstes System). Defaults: 8 / 5 / 2.                            | nein    |
-| `ARCHIVE_HORIZON_DAYS`     | Planungshorizont des Archiv-Schutzes (±, Default 14 Tage) um heute **und** um das Sync-Datum: was darin einen Termin hat, bleibt. | nein    |
+| Variable                   | Beschreibung                                                                                                                                      | Pflicht |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `PORT`                     | Server-Port (default: 3020)                                                                                                                       | nein    |
+| `DATABASE_URL`             | Postgres-URL (Dev-Default: docker-compose-DB)                                                                                                     | prod    |
+| `CREDENTIAL_KEYS`          | AES-Key-Ring `<id>=<base64-32B>,…` (links = aktueller Key)                                                                                        | prod    |
+| `WORKOS_CLIENT_ID`         | WorkOS Client ID (Backend, für JWKS). Leer = Auth aus (Dev).                                                                                      | prod    |
+| `VITE_WORKOS_CLIENT_ID`    | Gleicher Wert für SPA-Bundle (build-time). Leer = UI offen.                                                                                       | prod    |
+| `VITE_WORKOS_API_HOSTNAME` | AuthKit-Domain auf der EIGENEN Site (z. B. `auth.example.com`, build-time) ⇒ First-Party-Cookies. Leer ⇒ Refresh-Token im `localStorage` (s. u.). | nein    |
+| `WORKOS_API_KEY`           | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.                             | nein    |
+| `WORKOS_ORG_SYNC`          | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`).                          | nein    |
+| `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`). Defaults: 10 / 5 / 2 Requests pro Sekunde.                                     | nein    |
+| `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2.                                                                                           | nein    |
+| `CONCURRENCY_<SYS>`        | Parallele Tasks **je Phase**, nicht je Lauf (gemischte Tasks: strengstes System). Defaults: 8 / 5 / 2.                                            | nein    |
+| `ARCHIVE_HORIZON_DAYS`     | Planungshorizont des Archiv-Schutzes (±, Default 14 Tage) um heute **und** um das Sync-Datum: was darin einen Termin hat, bleibt.                 | nein    |
 
 ### Rate-Limits & Laufzeit
 

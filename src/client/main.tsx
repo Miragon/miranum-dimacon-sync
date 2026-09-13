@@ -1,7 +1,12 @@
 import ReactDOM from "react-dom/client"
 import { RouterProvider, createRouter } from "@tanstack/react-router"
 import { AuthKitProvider } from "@workos-inc/authkit-react"
-import { AUTH_ENABLED, WORKOS_API_HOSTNAME, WORKOS_CLIENT_ID } from "./lib/auth-flag"
+import {
+  AUTH_ENABLED,
+  WORKOS_API_HOSTNAME,
+  WORKOS_CLIENT_ID,
+  WORKOS_KEEP_REFRESH_TOKEN_LOCALLY,
+} from "./lib/auth-flag"
 import { safeReturnTo } from "./lib/return-to"
 import { notifySessionExpired } from "./lib/session-expiry"
 import { routeTree } from "./routeTree.gen"
@@ -40,8 +45,12 @@ if (!rootElement.innerHTML) {
     AUTH_ENABLED && WORKOS_CLIENT_ID ? (
       <AuthKitProvider
         clientId={WORKOS_CLIENT_ID}
-        // undefined = heutiges Verhalten (api.workos.com, Cross-Site-Cookie)
+        // undefined = api.workos.com (Cross-Site-Cookie)
         apiHostname={WORKOS_API_HOSTNAME}
+        // Ohne First-Party-Domain hält authkit den Refresh-Token im
+        // localStorage und schickt ihn im Body — sonst gäbe es gar keinen
+        // Refresh. Begründung und Preis: siehe lib/auth-flag.ts.
+        devMode={WORKOS_KEEP_REFRESH_TOKEN_LOCALLY}
         onRefreshFailure={() => notifySessionExpired()}
         onRedirectCallback={handleRedirect}
       >
