@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
+import { CredentialCard } from "#/components/credentials/CredentialCard"
 import { ElementBox } from "#/components/miranum/ElementBox"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
@@ -12,7 +13,9 @@ import {
   TableRow,
 } from "#/components/ui/table"
 import { readJson, useApiFetch } from "#/lib/api"
+import { CREDENTIAL_SYSTEMS, EMPTY_STATUS, type CredentialStatus } from "#/lib/credentials"
 import { findElementBySystem } from "#/lib/elements"
+import { useTenant } from "#/lib/tenant"
 
 export const Route = createFileRoute("/modules")({ component: Modules })
 
@@ -23,23 +26,49 @@ interface SystemStatus {
   integrations: string[]
 }
 
+/**
+ * Die drei angebundenen Systeme — Status UND Zugangsdaten an einem Ort.
+ *
+ * Die frühere Seite /settings beantwortete mit „wo hinterlege ich
+ * Zugangsdaten?" genau die Frage, für die es hier schon eine Statusspalte
+ * gab, und belegte dafür einen eigenen Nav-Eintrag direkt neben „Systeme".
+ * Dimacon (gemeinsames Quellsystem) wird jetzt hier gepflegt; die
+ * Zugangsdaten der Zielsysteme bleiben bei ihrer Integration, weil dort auch
+ * Zeitplan, Umfang und Feld-Zuordnung liegen — von hier aus verlinkt.
+ */
 function Modules() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [systems, setSystems] = useState<SystemStatus[]>([])
+  // null = noch nicht (erfolgreich) geladen. Bewusst kein leeres Array als
+  // Startwert: die Dimacon-Karte würde sonst bei einem Fehler des
+  // Credential-Endpunkts „nicht konfiguriert" behaupten.
+  const [statuses, setStatuses] = useState<CredentialStatus[] | null>(null)
   const apiFetch = useApiFetch()
+  const tenantCtx = useTenant()
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await apiFetch("/api/systems")
-      const json = await readJson<SystemStatus[] | { error: string }>(res)
-      if (!res.ok) {
-        setError("error" in json ? json.error : `HTTP ${res.status}`)
-      } else {
-        setSystems(json as SystemStatus[])
+      const [sysRes, credRes] = await Promise.all([
+        apiFetch("/api/systems"),
+        apiFetch("/api/credentials"),
+      ])
+
+      const sys = await readJson<SystemStatus[] | { error: string }>(sysRes)
+      if (!sysRes.ok) {
+        setError("error" in sys ? sys.error : `HTTP ${sysRes.status}`)
+        return
       }
+      setSystems(sys as SystemStatus[])
+
+      const creds = await readJson<CredentialStatus[] | { error: string }>(credRes)
+      if (!credRes.ok) {
+        setError("error" in creds ? (creds as { error: string }).error : `HTTP ${credRes.status}`)
+        return
+      }
+      setStatuses(creds as CredentialStatus[])
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -51,14 +80,24 @@ function Modules() {
     void load()
   }, [load])
 
+  const dimacon = CREDENTIAL_SYSTEMS.find((s) => s.id === "dimacon")!
+
   return (
     <>
       <header className="mb-12">
         <span className="mn-mono">/modules · systeme</span>
-        <h1 className="text-h-1 text-ink mt-4">Module</h1>
-        <p className="text-body text-ink-2 mt-3 max-w-[540px]">
-          Die drei angebundenen Systeme. Der Status kommt aus den hinterlegten Zugangsdaten des
-          aktiven Mandanten — die Sync-Abläufe dazwischen laufen unter{" "}
+        <h1 className="text-h-1 text-ink mt-4">Systeme</h1>
+        <p className="text-body text-ink-2 mt-3 max-w-[560px]">
+          Die drei angebundenen Systeme
+          {tenantCtx ? (
+            <>
+              {" "}
+              des Mandanten <strong className="text-ink">{tenantCtx.tenant.name}</strong>
+            </>
+          ) : null}{" "}
+          mit ihrem Konfigurations-Status. Dimacon ist das gemeinsame Quellsystem und wird hier
+          gepflegt, die Zugangsdaten der Zielsysteme liegen bei ihrer Integration. Die Sync-Abläufe
+          dazwischen laufen unter{" "}
           <Link to="/sync" className="text-ink underline underline-offset-4">
             Integrationen
           </Link>
@@ -118,7 +157,8 @@ function Modules() {
                   <TableHead className="w-20">Symbol</TableHead>
                   <TableHead>System</TableHead>
                   <TableHead>Integrationen</TableHead>
-                  <TableHead className="w-40">Status</TableHead>
+                  <TableHead className="w-44">Status</TableHead>
+                  <TableHead className="w-44" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -149,28 +189,33 @@ function Modules() {
                         {s.configured ? (
                           <MnStatusBadge variant="ok">konfiguriert</MnStatusBadge>
                         ) : (
-                          <span className="flex flex-col items-start gap-1.5">
-                            <MnStatusBadge variant="warn">zugangsdaten fehlen</MnStatusBadge>
-                            {s.id === "dimacon" || s.integrations.length === 0 ? (
-                              <Link
-                                to="/settings"
-                                className="text-ink-2 hover:text-ink font-mono text-[0.7rem] underline underline-offset-4"
-                              >
-                                Zugangsdaten hinterlegen →
-                              </Link>
-                            ) : (
-                              <Link
-                                to="/sync/$integrationId/settings"
-                                params={{ integrationId: s.integrations[0] }}
-                                // Ohne den Tab landet der einzige Weg aus dem
-                                // Fehlerzustand auf dem Zeitplan-Editor.
-                                search={{ tab: "zugangsdaten" }}
-                                className="text-ink-2 hover:text-ink font-mono text-[0.7rem] underline underline-offset-4"
-                              >
-                                Zugangsdaten hinterlegen →
-                              </Link>
-                            )}
-                          </span>
+                          <MnStatusBadge variant="warn">zugangsdaten fehlen</MnStatusBadge>
+                        )}
+                      </TableCell>
+                      {/* Der Weg zu den Zugangsdaten hängt am System, nicht am
+                          Status: vorher erschien er nur im Fehlerfall, ein
+                          hinterlegtes Token war von hier aus nicht änderbar. */}
+                      <TableCell>
+                        {s.id === "dimacon" ? (
+                          <a
+                            href="#dimacon-zugangsdaten"
+                            className="text-ink hover:text-ink-2 font-mono text-[0.75rem] tracking-[0.12em] uppercase underline underline-offset-4"
+                          >
+                            bearbeiten →
+                          </a>
+                        ) : s.integrations.length > 0 ? (
+                          <Link
+                            to="/sync/$integrationId/settings"
+                            params={{ integrationId: s.integrations[0] }}
+                            // Ohne den Tab landet der einzige Weg zu den
+                            // Zugangsdaten auf dem Zeitplan-Editor.
+                            search={{ tab: "zugangsdaten" }}
+                            className="text-ink hover:text-ink-2 font-mono text-[0.75rem] tracking-[0.12em] uppercase underline underline-offset-4"
+                          >
+                            bearbeiten →
+                          </Link>
+                        ) : (
+                          <span className="text-ink-3 font-mono text-[0.75rem]">—</span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -179,6 +224,36 @@ function Modules() {
               </TableBody>
             </Table>
           </section>
+
+          {statuses ? (
+            <section id="dimacon-zugangsdaten" className="mt-16 scroll-mt-24">
+              <h2 className="text-ink mb-4 font-mono text-[0.75rem] tracking-[0.18em] uppercase">
+                Dimacon-Zugangsdaten
+              </h2>
+              <p className="text-body-sm text-ink-2 mb-6 max-w-[560px]">
+                Dimacon ist das gemeinsame Quellsystem aller Integrationen. Das Token wird
+                verschlüsselt gespeichert und nie wieder angezeigt — leer lassen heißt: bestehendes
+                Token behalten.
+              </p>
+              <CredentialCard
+                system={dimacon}
+                status={statuses.find((s) => s.system === "dimacon") ?? EMPTY_STATUS.dimacon}
+                onSaved={(updated) => {
+                  setStatuses((prev) => [
+                    ...(prev ?? []).filter((s) => s.system !== updated.system),
+                    updated,
+                  ])
+                  // Die Statusspalte oben kommt aus /api/systems und wüsste
+                  // sonst bis zum nächsten Reload nichts vom neuen Token.
+                  setSystems((prev) =>
+                    prev.map((s) =>
+                      s.id === updated.system ? { ...s, configured: updated.configured } : s,
+                    ),
+                  )
+                }}
+              />
+            </section>
+          ) : null}
         </>
       )}
     </>

@@ -36,7 +36,7 @@ export const Route = createFileRoute("/sync_/$integrationId/settings")({
  * Einstellungen EINER Integration, erreichbar über das Zahnrad in der
  * /sync-Übersicht: Tabs für Zeitplan, Umfang (persistenter Sync-Umfang für
  * ALLE Auslöser), integrationsspezifische Zugangsdaten (ohne Dimacon — das
- * gemeinsame Quellsystem liegt zentral unter /settings) und die eingebettete
+ * gemeinsame Quellsystem liegt bei den Systemen unter /modules) und die eingebettete
  * Feld-Zuordnung.
  */
 function IntegrationSettingsPage() {
@@ -111,7 +111,8 @@ function IntegrationSettingsPage() {
     )
   }
 
-  // Integrationsspezifische Systeme — Dimacon wird zentral gepflegt.
+  // Integrationsspezifische Systeme — Dimacon wird zentral unter /modules
+  // gepflegt.
   const systems = CREDENTIAL_SYSTEMS.filter(
     (s) => s.id !== "dimacon" && info.systems.includes(s.id),
   )
@@ -219,8 +220,8 @@ function IntegrationSettingsPage() {
           </div>
           <p className="text-ink-3 mt-6 font-mono text-[0.7rem]">
             Dimacon-Zugangsdaten werden zentral gepflegt —{" "}
-            <Link to="/settings" className="text-ink-2 hover:text-ink underline underline-offset-4">
-              einstellungen →
+            <Link to="/modules" className="text-ink-2 hover:text-ink underline underline-offset-4">
+              systeme →
             </Link>
           </p>
         </>

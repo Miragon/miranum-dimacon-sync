@@ -55,7 +55,7 @@ Allowlist bleibt fail-closed. Semantik:
   eigener WorkOS-API-Key nur für diese App (Rate-Limit-/Rotations-Isolation).
 
 Alle Konfiguration liegt tenant-gescoped in Postgres: **API-Zugangsdaten**
-(AES-256-GCM-verschlüsselt; Dimacon unter `/settings`, Clockin/Lexware in den
+(AES-256-GCM-verschlüsselt; Dimacon unter `/modules`, Clockin/Lexware in den
 Integrations-Einstellungen `/sync/<id>/settings`), **Schedules**,
 **Feld-Zuordnungen** und die **Run-Historie** (`sync_runs`, letzte 50 je
 Mandant+Integration). Migrationen laufen automatisch beim Boot.
@@ -230,7 +230,7 @@ leere DB — danach entfernen, siehe [`env.example`](./env.example)):
 `LEXWARE_OFFICE_API_KEY`, `LEXWARE_OFFICE_BASE_URL`, `SETTINGS_PATH`,
 `SYNC_CRON`, `SYNC_TZ`, `SYNC_WEBHOOK_SECRET`, `SEED_TENANT_NAME`.
 Die Integrations-Zugangsdaten werden zur Laufzeit verschlüsselt aus der DB
-gelesen und je Mandant über die UI gepflegt (Dimacon: `/settings`,
+gelesen und je Mandant über die UI gepflegt (Dimacon: `/modules`,
 Zielsysteme: `/sync/<id>/settings`); jedes Mitglied einer freigeschalteten
 Org darf sie schreiben (bewusste Entscheidung — internes Ops-Tool).
 
@@ -335,7 +335,7 @@ Jede Integration ist ein in sich geschlossener Sync-Ablauf zwischen zwei der
 angebundenen Systeme (Dimacon, Clockin, Lexware Office). Registriert in
 `src/server/integrations/registry.ts` — damit bekommt sie automatisch eigenen
 Mutex (max. ein Lauf gleichzeitig, sonst HTTP 409), eigenen Cron-Slot,
-eigene HTTP-Routen und einen Eintrag in der UI (`/sync`, `/settings`).
+eigene HTTP-Routen und einen Eintrag in der UI (`/sync`).
 
 | Integration         | Ablauf                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -513,7 +513,7 @@ fly deploy -a <app> -i registry.fly.io/<app>:<git-sha> --ha=false
    (aus `WORKOS_REQUIRED_ORG_ID`), Env-Credentials (verschlüsselt),
    settings.json-Schedules/Zuordnungen und den `SYNC_WEBHOOK_SECRET`-Hash.
    Seed-Log prüfen (`legacy seed complete`).
-3. Verifizieren: Login (Chip „Mandant · …"), `/settings` (Dimacon) +
+3. Verifizieren: Login (Chip „Mandant · …"), `/modules` (Dimacon) +
    `/sync/<id>/settings` (Zielsysteme) — „hinterlegt am …" + 3× Verbindung
    testen, dryRun, Webhook mit altem `x-sync-token`.
 4. Nach Bake-Fenster: `fly secrets unset CLOCKIN_API_TOKEN DIMACON_API_TOKEN

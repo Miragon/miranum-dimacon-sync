@@ -245,7 +245,7 @@ describe("AuthGate — apiFetch-Identität (#17)", () => {
     // useMemo-Deps von `auth` stehen — weder direkt noch dadurch, dass der
     // Callback es liest. Sonst bekommt der Context bei jedem Ablauf/Heilen eine
     // neue Funktion und alle Consumer, die `apiFetch` in Hook-Deps haben
-    // (TenantGate, MappingPanel, RunHistory, routes/settings, routes/sync.index,
+    // (TenantGate, MappingPanel, RunHistory, routes/sync.index,
     // routes/sync.$integrationId, routes/modules, routes/sync_…settings), laden neu.
     //
     // Ein echter Wechsel von `user` (Org-Switch) DARF dagegen eine neue
