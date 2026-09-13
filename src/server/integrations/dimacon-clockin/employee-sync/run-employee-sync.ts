@@ -368,6 +368,10 @@ async function loadClockinEmployees(
     idOf: (r) => r.id,
     log,
     label: "clockin employees",
+    // Fail-closed (Issue #17): fehlt `meta.last_page`, ist unbekannt, ob
+    // weitere Seiten folgen — auf halber Vergleichsbasis legt der Lauf in
+    // KEINER Richtung Mitarbeiter an (Pendant zu customer-index.ts).
+    requireMeta: true,
   })
 
   return {

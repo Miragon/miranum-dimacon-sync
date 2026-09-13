@@ -16,7 +16,12 @@ export interface ClockinPage<T> {
 
 export interface ClockinPagesResult<T> {
   rows: T[]
-  /** false ⇒ die Liste ist nachweislich unvollständig — `reason` nennt den Grund */
+  /**
+   * false ⇒ die Liste ist nachweislich unvollständig — `reason` nennt den
+   * Grund. true heißt: alle laut `meta.last_page` angekündigten Seiten wurden
+   * gelesen. Fehlt `meta.last_page` ganz, gilt die Antwort per Default als
+   * EINE vollständige Seite — wer das nicht annehmen darf, setzt `requireMeta`.
+   */
   complete: boolean
   reason?: string
   /** tatsächlich gelesene Seiten (inkl. der abgebrochenen) */
@@ -45,6 +50,15 @@ export interface LoadAllClockinPagesOptions<T> {
    * Request auf Seite 1.
    */
   first?: ClockinPage<T>
+  /**
+   * true ⇒ eine Antwort ohne verwertbares `meta.last_page` gilt als
+   * unvollständig. Ohne `meta` ist die Seitenzahl UNBEKANNT, nicht „eins".
+   * Der Default bleibt bewusst permissiv: Aufrufer, die nur Zeilen
+   * verarbeiten (Archiv-Phase), tun auf einer Teilliste höchstens zu WENIG.
+   * Aufrufer, deren Korrektheit an der Vollständigkeit hängt — die Anlage von
+   * Mitarbeitern —, setzen das Flag und bekommen fail-closed `complete:false`.
+   */
+  requireMeta?: boolean
 }
 
 /**
@@ -56,7 +70,8 @@ export interface LoadAllClockinPagesOptions<T> {
  *
  * Drei Abbruchwächter: die API ignoriert `page` (`meta.current_page` passt
  * nicht), eine Folgeseite bringt keine neuen IDs, oder eine Folgeseite
- * schlägt fehl.
+ * schlägt fehl. Mit `requireMeta` kommt ein vierter dazu: eine erste Seite
+ * ohne verwertbares `meta.last_page` beweist keine Vollständigkeit.
  */
 export async function loadAllClockinPages<T>(
   options: LoadAllClockinPagesOptions<T>,
@@ -85,13 +100,21 @@ export async function loadAllClockinPages<T>(
   append(first)
   let pages = 1
 
-  const lastPage = first.meta?.last_page ?? 1
-  if (lastPage <= 1) return { rows, complete: true, pages }
-
   const incomplete = (reason: string): ClockinPagesResult<T> => {
     log?.warn("clockin pagination incomplete", { label, reason, pages, rows: rows.length })
     return { rows, complete: false, reason, pages }
   }
+
+  // Ohne verwertbares `meta.last_page` ist die Seitenzahl unbekannt — das ist
+  // KEIN Beweis für eine Einzelseite. Wer darauf Anlagen stützt, bekommt
+  // fail-closed. Kriterium identisch zu customer-index.ts, damit die beiden
+  // Wächter nicht auseinanderdriften (auch `null` zählt als unbekannt).
+  if (options.requireMeta && typeof first.meta?.last_page !== "number") {
+    return incomplete("Antwort ohne verwertbares meta.last_page — Seitenzahl unbekannt")
+  }
+
+  const lastPage = first.meta?.last_page ?? 1
+  if (lastPage <= 1) return { rows, complete: true, pages }
 
   const upTo = Math.min(lastPage, maxPages)
   for (let page = 2; page <= upTo; page++) {

@@ -167,8 +167,10 @@ Scheduler liest zur Feuerzeit. Regeln (alle in
 immer heute); der Request-Body wird ÜBER die Defaults gemerged (top-level
 gewinnt, `steps` eine Ebene tief) — Abweichungen gelten nur für den einen
 Lauf; ungültige gespeicherte Defaults sind **fail-closed** (Cron überspringt
-mit `log.error`, ausgelöste Läufe bekommen 400) statt auf die Schema-Defaults
-(= alles an, live) zurückzufallen. `updateScheduleSettings` fasst
+mit `log.error` + Historie-Zeile mit Status `skipped` = nie gestartet, daher
+ohne Modus/Umfang in der UI; ausgelöste Läufe bekommen 400) statt auf die
+Schema-Defaults (= alles an, live) zurückzufallen. Ein gespeicherter Wert, der
+gar kein Objekt ist, gilt ebenfalls als ungültig. `updateScheduleSettings` fasst
 `run_defaults` bewusst nicht an und umgekehrt. Feld-Zuordnungen: `field_mappings` (PK tenant+integration+entity),
 editierbar im Feld-Zuordnungs-Tab der Integrations-Einstellungen
 (`/sync/<id>/settings?tab=mapping`) via `/api/mappings/:id[/:entity]`.
@@ -179,8 +181,12 @@ employee-Namen/PN) sind fixiert und nie remappbar. Der dimacon-clockin-Sync
 akzeptiert `steps: { employees, customers, projects, assignments, archive,
 employeeCreateInDimacon }` im Run-Input (Default: alles an —
 **`employeeCreateInDimacon` ist die Ausnahme und per Default AUS**, Issue #17);
-die Archiv-Phase schützt nur Projekte, die der Lauf auflöst, deshalb läuft die
-Projekt-Auflösung auch bei deaktivierten Schritten.
+die Archiv-Phase schützt (a) Projekte, die der Lauf auflöst — deshalb läuft die
+Projekt-Auflösung auch bei deaktivierten Schritten —, (b) alles mit Termin im
+Fenster ±`ARCHIVE_HORIZON_DAYS` um **heute UND** um das Sync-Datum
+(`run.ts`/`archive.ts`) und (c) Projekte ohne Dimacon-Nummer (die stammen nicht
+aus dem Sync). Ist der Horizont unbekannt oder die Clockin-Projektliste
+unvollständig geladen, archiviert der Lauf gar nichts und meldet den Grund.
 
 Zwei load-bearing Regeln des Mitarbeiter-Abgleichs: Dimacon-PUTs sind
 Voll-Replace — jeder Update-Body spiegelt ALLE geladenen Felder zurück
@@ -225,7 +231,8 @@ Fehlerdetails nur ins Log, typisierte 4xx/503-Pfade bleiben deutsch.
 Docker-Build-Arg!) und
 mountet `<AuthKitProvider>` + `<AuthGate>` + `<TenantGate>` nur dann. Alle
 UI-Fetches gehen über `useApiFetch()` in `src/client/lib/api.ts` (Bearer-Header,
-401 → PKCE-Neustart). Mandanten-Switcher im `UserMenu` nutzt
+401 → EIN Force-Refresh + Retry, danach das Abgelaufen-Overlay — kein
+automatischer Redirect, s. u.). Mandanten-Switcher im `UserMenu` nutzt
 `switchToOrganization` + Hard-Reload; seine Liste kommt aus dem
 membership-gefilterten `/api/tenants` (s. Mandanten-Modell).
 **Session-Robustheit (load-bearing):** `useApiFetch()` liefert den von

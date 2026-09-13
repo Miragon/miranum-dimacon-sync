@@ -106,8 +106,8 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 | `WORKOS_ORG_SYNC`          | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`).          | nein    |
 | `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`). Defaults: 10 / 5 / 2 Requests pro Sekunde.                     | nein    |
 | `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2.                                                                           | nein    |
-| `CONCURRENCY_<SYS>`        | Obergrenze paralleler Tasks je Lauf; maßgeblich ist das strengste beteiligte System. Defaults: 8 / 5 / 2.                         | nein    |
-| `ARCHIVE_HORIZON_DAYS`     | Planungshorizont des Archiv-Schutzes in Tagen (±, Default 14): was in diesem Fenster einen Termin hat, wird nie archiviert.       | nein    |
+| `CONCURRENCY_<SYS>`        | Parallele Tasks **je Phase**, nicht je Lauf (gemischte Tasks: strengstes System). Defaults: 8 / 5 / 2.                            | nein    |
+| `ARCHIVE_HORIZON_DAYS`     | Planungshorizont des Archiv-Schutzes (±, Default 14 Tage) um heute **und** um das Sync-Datum: was darin einen Termin hat, bleibt. | nein    |
 
 ### Rate-Limits & Laufzeit
 
@@ -118,12 +118,31 @@ Log (`integration run metrics`) und als `metrics` im Ergebnis in
 Größen-Kürzung großer Ergebnisse.
 
 Gedrosselt wird proaktiv: ein Token-Bucket **je (Mandant, System)**
-(`src/server/lib/rate-limit.ts`) hängt im Request-Interceptor der Clients
-(`src/server/lib/client-instrumentation.ts`), damit ein Mandant die anderen
+(`src/server/lib/rate-limit.ts`) hängt im Request-Interceptor von Dimacon und
+Clockin bzw. im Lexware-Wrapper (`src/server/lib/client-instrumentation.ts`),
+damit ein Mandant die anderen
 nicht ausbremst. Die Defaults sind bewusst konservativ (Lexware Office
 erlaubt laut Doku 2 Requests/Sekunde; die Limits von Dimacon und Clockin sind
 nicht dokumentiert) und über die Variablen oben übersteuerbar — die Metriken
 zeigen, ob mehr geht.
+
+`CONCURRENCY_<SYS>` wirkt dagegen **je Phase**, nicht je Lauf: `createLimit`
+baut an jeder Aufrufstelle ein eigenes `p-limit`, und Phasen, die der Lauf
+bewusst nebeneinander fährt, addieren ihre Töpfe. Im dimacon-clockin-Lauf
+läuft der Mitarbeiter-Abgleich neben der Tagesplanung — gleichzeitig offen
+sind dort bis zu 2 × `CONCURRENCY_CLOCKIN` + 1 Clockin-Requests
+(Stammdaten-Abgleich, Projekt-Vorabladung und die seitenweise
+Kunden-Paginierung). Die Töpfe addieren sich auch ÜBER Systemgrenzen, weil
+eine Task in Topf A Requests an System B absetzen darf: der
+Personalnummer-Backfill sitzt im Clockin-Topf und schreibt nach Dimacon (er
+hängt an keinem Schalter), also bis zu `CONCURRENCY_DIMACON` +
+`CONCURRENCY_CLOCKIN` offene Dimacon-Requests auch ohne Opt-in — mit dem
+Schritt „Mitarbeiter in Dimacon anlegen" kommt ein weiteres
+`CONCURRENCY_DIMACON` dazu. Dazu die Sammelabrufe, die an keinem Limit
+hängen. Die Phasen nach dem Zusammenführen (Projekt-Upserts, Archivierung)
+laufen allein — dort gilt der Wert direkt. Laufweit bremst allein der
+Token-Bucket: wer ein Zielsystem hart begrenzen muss, dreht an
+`RATE_LIMIT_<SYS>_RPS`.
 
 Bei einem Fehler hängt der Error-Interceptor `status`, `statusText`,
 `retryAfterMs` und die (query-freie) URL an den geworfenen Fehler. Damit
@@ -131,7 +150,8 @@ wartet `withRetry` genau den vom Server genannten `Retry-After`-Wert
 (gedeckelt auf 60 s) statt der früheren Pauschale von 20 s; ohne bzw. bei
 unbrauchbarem Header (`0`, negativ, Datum in der Vergangenheit) greift eine
 gestaffelte 5/10/20/30-s-Treppe mit Jitter. Ein 429 pausiert zusätzlich den
-ganzen Bucket dieses Systems.
+ganzen Bucket dieses Systems. Beides gilt nur für Dimacon und Clockin — der
+handgeschriebene Lexware-Client hat keine Interceptoren.
 
 Zwei bewusste Ausnahmen von der Wiederholung, beide in
 `src/server/lib/concurrency.ts`: `NON_IDEMPOTENT_RETRY` an den `create*`-Aufrufen
@@ -141,6 +161,14 @@ Lexware-Lookups (der Lexware-Client wiederholt 429 selbst; ohne die Ausnahme
 werden aus einem logischen Aufruf ~20 HTTP-Calls). Weil diese client-internen
 Wiederholungen am Wrapper vorbeilaufen, zählt `requests.lexoffice` sie nicht
 mit — die Zahl ist die der logischen Aufrufe.
+
+Lexware hängt deshalb allein an der proaktiven Drosselung
+(`RATE_LIMIT_LEXOFFICE_RPS`, Default 2/s = das dokumentierte Limit) und an den
+clienteigenen Wiederholungen: `wrapLexofficeClient` drosselt und zählt nur VOR
+dem Request, ein 429 kommt als nackter `Error("Lexoffice API 429: …")` an und
+pausiert den Bucket nicht. Erkannt wird er dort nur am Meldungstext
+(`isRateLimited`, `src/server/lib/concurrency.ts`) — ein `status`-Feld gibt es
+an diesem Fehler nicht.
 
 ### Bündelung statt Einzelabrufe
 
@@ -160,9 +188,13 @@ Beide Syncs lösen ihre Gegenstücke seit #15 über wenige Sammelabrufe statt
 
 Alle Bündelungen sind defensiv gebaut, weil das Verhalten der APIs an diesen
 Stellen nicht dokumentiert ist: jede hat einen Einzelabruf-Fallback, die
-Team-Zuweisungen werden einmal je Lauf gegen `getJobById` geprobt, und die
-gebündelte Projektsuche schaltet auf Einzelanfragen um, wenn `byNumber`
-mehrere Parameter offenbar nicht als ODER auswertet. Welcher Weg tatsächlich
+Team-Zuweisungen werden je Lauf gegen `getJobById` geprobt (an einem zweiten
+Auftrag, wenn der erste am Sync-Datum niemanden eingeplant hat — ist der Join
+gar nicht belegbar, laufen die Einzelabrufe), und die gebündelte Projektsuche
+schaltet auf Einzelanfragen um, wenn `byNumber` mehrere Parameter offenbar
+nicht als ODER auswertet. Bleibt die ODER-Semantik dort mangels Treffer ganz
+unbelegt, gilt eine Fehlanzeige nicht als Beweis: sie wird einzeln
+nachgefragt, damit der Upsert kein Duplikat anlegt. Welcher Weg tatsächlich
 genommen wurde, steht als `lookups` im Ergebnis (`sync_runs.result`) und im
 Log. Indizes sind grundsätzlich **mehrwertig**: mehrere Kandidaten zu einem
 Schlüssel bleiben sichtbar und führen wie bisher zu einer gemeldeten
@@ -180,8 +212,12 @@ Zwei fachlich sichtbare Änderungen aus #15:
 - Die **Archiv-Phase** liest jetzt alle Seiten der unarchivierten Projekte
   (vorher nur die erste) und schreibt parallel. Damit das nicht in einer
   Massen-Archivierung endet, ist der Horizont-Schutz Pflicht: archiviert wird
-  nur, was im Fenster ±`ARCHIVE_HORIZON_DAYS` (Default 14) um das Sync-Datum
-  **keinen** Termin hat. Kann der Horizont nicht ermittelt werden, archiviert
+  nur, was ±`ARCHIVE_HORIZON_DAYS` (Default 14) um **heute und** um das
+  Sync-Datum **keinen** Termin hat — das Fenster reicht also von N Tagen vor
+  dem früheren bis N Tage nach dem späteren der beiden Daten. Dass es immer
+  auch über heute spannt, ist Absicht: `date` ist frei wählbar, und ein Lauf
+  für ein vergangenes Datum würde sonst den heute eingeplanten Bestand
+  archivieren. Kann der Horizont nicht ermittelt werden, archiviert
   der Lauf gar nichts und meldet das als Fehlerzeile — lieber zu wenig
   archivieren als auf halber Datenbasis. Denselben Fail-Safe gibt es bei
   unvollständiger Paginierung. **Vor dem ersten Live-Lauf nach diesem Update
@@ -215,7 +251,11 @@ Dimacon). Das **Datum wird nie persistiert** (geplante Läufe sind immer
 „heute"), der Umfang wird zur Feuerzeit gelesen (kein Cron-Restart nötig).
 Sind gespeicherte Defaults ungültig (z. B. nach einer Schema-Änderung), wird
 der Lauf **fail-closed übersprungen** statt mit vollem Umfang zu feuern —
-`scheduled run skipped: invalid stored run defaults` im Log. Deaktivierte
+`scheduled run skipped: invalid stored run defaults` im Log UND als Zeile mit
+Status `skipped` in der Run-Historie. `skipped` heißt „nie gestartet" — der
+geplante Lauf ist damit **ausgefallen**, die Ursache steht als Fehlermeldung in
+derselben Zeile; Modus und Umfang sind NOT-NULL-Platzhalter und stehen unter
+`/sync/<id>` deshalb als „—". Deaktivierte
 Mandanten und fehlende Zugangsdaten werden zur Feuerzeit geprüft (Lauf wird
 übersprungen, Warnung im Log).
 

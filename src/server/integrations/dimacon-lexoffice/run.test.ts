@@ -109,14 +109,32 @@ describe("runDimaconLexofficeSync (Orchestrierung)", () => {
       customer({ id: "cust-2", customerNumber: "1001", name: "Fremd AG" }),
     ])
 
+    // Ein Lexware-Kontakt trägt genau diese Nummer, heißt aber anders. Nur wenn
+    // die Nummernstufe gesperrt ist, bleibt er unbeachtet — sonst liefert die
+    // Nummer diesen fremden Kontakt und beide Kunden enden als `conflict`
+    // statt als `created`.
+    lexGet.mockResolvedValue({
+      content: [
+        {
+          id: "lex-fremd",
+          version: 1,
+          company: { name: "Nummern-Zwilling GmbH" },
+          roles: { customer: { number: "1001" } },
+        },
+      ],
+      last: true,
+    })
+
     const result = await runDimaconLexofficeSync(testCtx(), {})
 
-    // Der Voll-Index löst beide Namen lokal auf — kein Request je Kunde,
-    // und die Nummernstufe wird (wie bisher) gar nicht erst angefragt.
+    // Aufgelöst wird komplett aus dem Voll-Index — kein Request je Kunde.
+    // (Die Nummernstufe liefe lokal, sie ist an den Requests NICHT ablesbar —
+    // gesperrt ist sie allein am Status unten erkennbar.)
     expect(lexQueries()).toEqual([INDEX_PAGE])
-    // Namen sind eindeutig ⇒ beide werden normal angelegt
+    // Nummer gesperrt, Namen eindeutig ⇒ beide werden normal angelegt
     expect(rowFor(result, "cust-1").status).toBe("created")
     expect(rowFor(result, "cust-2").status).toBe("created")
+    expect(lexPost).toHaveBeenCalledTimes(2)
   })
 
   it("nutzt die Nummernstufe für eindeutige numerische Kundennummern", async () => {

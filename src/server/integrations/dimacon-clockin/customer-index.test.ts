@@ -147,6 +147,42 @@ describe("loadClockinCustomerIndex", () => {
     expect(getAListOfCustomersMock).toHaveBeenCalledTimes(1)
   })
 
+  it("skips the bulk fetch when the inventory exceeds the page cap", async () => {
+    // 120 Seiten > MAX_CLOCKIN_PAGES (50): `loadAllClockinPages` holte bisher
+    // erst die Seiten 2–50 und verwarf den Index danach wegen des Deckels.
+    // Der Deckel steht aber schon nach Seite 1 fest.
+    getAListOfCustomersMock.mockImplementation((args: { query?: { page?: number } }) => {
+      const current = args.query?.page ?? 1
+      return Promise.resolve(page([row(current, `Seite ${current} GmbH`)], current, 120))
+    })
+
+    const index = await loadClockinCustomerIndex(stubClient, {
+      neededCustomers: 500,
+      log: silentLog,
+    })
+
+    expect(index).toBeUndefined()
+    expect(getAListOfCustomersMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("still uses the bulk fetch when the inventory sits exactly on the page cap", async () => {
+    // Grenze: 50 Seiten sind NOCH vollständig ladbar. Ohne diesen Test bliebe
+    // ein `>=` statt `>` im Deckel-Check unentdeckt und schaltete den Index
+    // für 50-Seiten-Bestände still ab.
+    getAListOfCustomersMock.mockImplementation((args: { query?: { page?: number } }) => {
+      const current = args.query?.page ?? 1
+      return Promise.resolve(page([row(current, `Seite ${current} GmbH`)], current, 50))
+    })
+
+    const index = await loadClockinCustomerIndex(stubClient, {
+      neededCustomers: 500,
+      log: silentLog,
+    })
+
+    expect(index).toBeDefined()
+    expect(getAListOfCustomersMock).toHaveBeenCalledTimes(50)
+  })
+
   it("still builds the index when the run needs more customers than the inventory has pages", async () => {
     // Gegenprobe: 3 Seiten gegen 20 Kunden — hier lohnt der Vollabruf.
     getAListOfCustomersMock.mockImplementation((args: { query?: { page?: number } }) => {

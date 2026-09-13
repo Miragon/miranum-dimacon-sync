@@ -191,6 +191,25 @@ describe("runEmployeeSync — Paginierung des Clockin-Bestands", () => {
     ])
   })
 
+  it("creates nothing when the response carries no meta.last_page", async () => {
+    // Ohne `meta` ist unbekannt, ob weitere Seiten folgen — dieselbe
+    // fail-closed-Entscheidung wie beim Kunden-Index.
+    getAListOfEmployeesMock.mockResolvedValue({ data: [row(1)] })
+    loadEmployeesWithEmailMock.mockResolvedValue([dim()])
+
+    const outcome = await run({ createInDimacon: true })
+
+    expect(outcome.errors).toHaveLength(1)
+    expect(outcome.errors[0]).toMatchObject({ scope: "load", refId: "clockin" })
+    expect(outcome.errors[0].message).toContain("unvollständig geladen")
+    expect(clockinCreateEmployeeMock).not.toHaveBeenCalled()
+    expect(dimaconCreateEmployeeMock).not.toHaveBeenCalled()
+    // Die user-sichtbaren Sammelzeilen: keine stille Nicht-Anlage.
+    expect(outcome.rows.map((r) => r.status)).toEqual(["skipped", "skipped"])
+    // Die eine geladene Seite zählt weiterhin mit
+    expect(outcome.counts.clockin).toBe(1)
+  })
+
   it("keeps running but creates nothing when a follow-up page fails", async () => {
     getAListOfEmployeesMock.mockImplementation(async ({ query }: { query?: { page?: number } }) => {
       if (query?.page === 2) throw new Error("boom 400")

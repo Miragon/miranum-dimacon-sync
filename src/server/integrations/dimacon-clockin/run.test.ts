@@ -12,6 +12,9 @@ const updateProjectMock = vi.fn()
 const attachEmployeesMock = vi.fn()
 const detachEmployeesMock = vi.fn()
 const getAListOfProjectEmployeesMock = vi.fn()
+// Fallback-Suche des EmployeeMatcher: greift nur für Mitarbeiter, die der
+// Stammdaten-Abgleich NICHT als Paar geliefert hat.
+const searchForEmployeesMock = vi.fn()
 const searchForCustomersMock = vi.fn()
 const createCustomerMock = vi.fn()
 const getAListOfCustomersMock = vi.fn()
@@ -24,6 +27,7 @@ vi.mock("@miragon/client-clockin", () => ({
     attachEmployees: attachEmployeesMock,
     detachEmployees: detachEmployeesMock,
     getAListOfProjectEmployees: getAListOfProjectEmployeesMock,
+    searchForEmployees: searchForEmployeesMock,
     searchForCustomers: searchForCustomersMock,
     createCustomer: createCustomerMock,
     getAListOfCustomers: getAListOfCustomersMock,
@@ -451,6 +455,66 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     const result = await promise
     expect(result.employeeSync).toBeDefined()
     expect(result.projects).toHaveLength(1)
+  })
+
+  it("seeds the employee matcher from the master sync before the daily plan", async () => {
+    // LOAD-BEARING: `await settleEmployeeSync()` steht VOR `new EmployeeMatcher(...)`.
+    // Der Matcher bekommt die Paar-Map beim Bau übergeben — eine spätere
+    // Zuweisung an `employeePairs` erreicht ihn nicht mehr. Ohne den await
+    // liefe jede Tages-Zuordnung in die byLastName-Fallbacksuche.
+    const SEEDED_ID = 77
+    const SEARCHED_ID = 999
+
+    // Phase 1 löst erst einen Makrotask später auf. Alle übrigen Mocks sind
+    // sofort erfüllt, der Lauf bis zum Matcher-Bau ist also eine
+    // ununterbrochene Microtask-Kette — der 0-ms-Timer feuert erst, wenn der
+    // Lauf wirklich an `await settleEmployeeSync()` an den Event-Loop
+    // zurückgibt. Damit pinnt der Test die REIHENFOLGE, nicht nur die
+    // Referenz auf die Paar-Map.
+    runEmployeeSyncMock.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+      return {
+        counts: { dimacon: 1, clockin: 1, matched: 1 },
+        rows: [],
+        errors: [],
+        pairs: new Map([["e-1", SEEDED_ID]]),
+      }
+    })
+
+    // Ein Mitarbeiter mit Zuordnung am Sync-Datum — sonst fragt der Matcher nie.
+    enrichMock.mockResolvedValue({
+      ...enrichedData(),
+      jobs: new Map([
+        [
+          "job-1",
+          {
+            jobId: "job-1",
+            projectId: "proj-1",
+            customerId: "cust-1",
+            teamAssignments: [
+              { employeeId: "e-1", date: `${DATE}T07:00:00`, teamId: "team-1", isFixed: true },
+            ],
+          },
+        ],
+      ]),
+      employees: new Map([["e-1", { id: "e-1", firstName: "Anna", lastName: "Muster" }]]),
+    })
+    // Die Fallbacksuche liefert bewusst eine ANDERE Clockin-Id — damit ist im
+    // Ergebnis sichtbar, welcher Weg genommen wurde.
+    searchForEmployeesMock.mockResolvedValue({
+      data: [{ id: SEARCHED_ID, first_name: "Anna", last_name: "Muster" }],
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(searchForEmployeesMock).not.toHaveBeenCalled()
+    expect(attachEmployeesMock).toHaveBeenCalledTimes(1)
+    expect(attachEmployeesMock.mock.calls[0][0]).toMatchObject({
+      path: { project: CLOCKIN_PROJECT_ID },
+      body: { resources: [SEEDED_ID] },
+    })
+    expect(result.projects[0].employeesAttached).toEqual([SEEDED_ID])
+    expect(result.errors).toEqual([])
   })
 
   it("awaits the parallel employee sync even when it rejects on an early exit", async () => {

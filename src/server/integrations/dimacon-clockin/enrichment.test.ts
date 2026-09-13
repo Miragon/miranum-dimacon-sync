@@ -249,6 +249,116 @@ describe("enrich — Sammelabrufe", () => {
     expect(getAllJobAppointmentsInPeriodMock).not.toHaveBeenCalled()
   })
 
+  // getJobById kennt für job-0 (den ersten Probe-Auftrag) keine Zuordnung —
+  // ein legitimer Normalfall, der den Vergleich aussagelos macht.
+  const probeJobWithoutAssignment = () =>
+    getJobByIdMock.mockImplementation(async (req: { path: { jobId: string } }) => {
+      const i = Number(req.path.jobId.split("-")[1])
+      return {
+        job: { id: `job-${i}`, projectId: `proj-${i}`, customerId: `cust-${i}` },
+        teamAssignments:
+          i === 1
+            ? [{ teamId: "team-1", employeeId: "e-2", date: `${DATE}T00:00:00`, isFixed: true }]
+            : [],
+      }
+    })
+
+  it("falls back to per-job lookups when the join matches no job at all", async () => {
+    probeJobWithoutAssignment()
+    // Der Join läuft ins Leere (hier: Zeilen ohne teamId). Ohne Guard bestätigt
+    // der leere Vergleich am zuordnungslosen job-0 die Bündelung — und der Lauf
+    // hängt die Belegschaft JEDES Tagesprojekts ab.
+    getCurrentTeamAssignmentsMock.mockResolvedValue([
+      { employeeId: "e-2", date: `${DATE}T00:00:00`, isFixed: true },
+    ])
+
+    const enriched = await enrich(stubClient, bulkOptions())
+
+    expect(enriched.sources.teamAssignments).toBe("per-job")
+    expect(warnings).toContain(
+      "team assignment join could not be verified — falling back to per-job lookups",
+    )
+    expect(enriched.jobs.get("job-1")?.teamAssignments.map((a) => a.employeeId)).toEqual(["e-2"])
+    // Probe (1) + die übrigen 9 — der Probe-Auftrag wird nicht doppelt geladen
+    expect(getJobByIdMock).toHaveBeenCalledTimes(10)
+  })
+
+  it("falls back to per-job lookups when the period dates use another format", async () => {
+    probeJobWithoutAssignment()
+    // Zweite reale Ursache eines leeren Joins: das Datum passt nicht zum Filter.
+    getCurrentTeamAssignmentsMock.mockResolvedValue([
+      { teamId: "team-1", employeeId: "e-2", date: "14.08.2026", isFixed: true },
+    ])
+
+    const enriched = await enrich(stubClient, bulkOptions())
+
+    expect(enriched.sources.teamAssignments).toBe("per-job")
+    expect(enriched.jobs.get("job-1")?.teamAssignments.map((a) => a.employeeId)).toEqual(["e-2"])
+  })
+
+  it("probes a second job when the first one has no assignment", async () => {
+    probeJobWithoutAssignment()
+    getCurrentTeamAssignmentsMock.mockResolvedValue([
+      { teamId: "team-1", employeeId: "e-2", date: `${DATE}T00:00:00`, isFixed: true },
+    ])
+
+    const enriched = await enrich(stubClient, bulkOptions())
+
+    // OHNE den Fix ist allein die Aufrufliste rot (nur ["job-0"]) — die beiden
+    // anderen Erwartungen sind Regressionsschutz gegen einen pauschalen
+    // per-job-Fallback bei zuordnungslosem Erst-Auftrag.
+    expect(getJobByIdMock.mock.calls.map((c) => c[0].path.jobId)).toEqual(["job-0", "job-1"])
+    expect(enriched.sources.teamAssignments).toBe("period")
+    expect(enriched.jobs.get("job-1")?.teamAssignments.map((a) => a.employeeId)).toEqual(["e-2"])
+    expect(enriched.jobs.get("job-0")?.teamAssignments).toEqual([])
+  })
+
+  it("falls back to per-id project lookups when the bulk fetch fails", async () => {
+    // Non-transient halten ("400"): withRetry darf nicht ins Backoff laufen
+    getAllProjectsMock.mockRejectedValue(new Error("boom 400"))
+
+    const enriched = await enrich(stubClient, bulkOptions())
+
+    expect(enriched.sources.projects).toBe("per-id")
+    expect(warnings).toContain("dimacon project bulk fetch failed — falling back to per-id lookups")
+    expect(getAllProjectsMock).toHaveBeenCalledTimes(1)
+    expect(getProjectByIdMock).toHaveBeenCalledTimes(10)
+    expect(enriched.projects.get("proj-3")?.name).toBe("Projekt 3")
+    // Der Rest des Laufs bleibt vollständig — sonst fiele die Tagesplanung samt
+    // Zuordnungen und Archiv-Schutz komplett aus.
+    expect(enriched.jobs.size).toBe(10)
+    expect(enriched.horizon.complete).toBe(true)
+  })
+
+  it("falls back to per-id customer lookups when the bulk fetch fails", async () => {
+    // `customers: undefined` = run.ts konnte den Bestand nicht laden
+    // (loadCustomerInventory ist fail-soft); der zweite Versuch scheitert auch.
+    allCustomersMock.mockRejectedValue(new Error("boom 400"))
+
+    const enriched = await enrich(stubClient, bulkOptions({ customers: undefined }))
+
+    expect(enriched.sources.customers).toBe("per-id")
+    expect(warnings).toContain(
+      "dimacon customer bulk fetch failed — falling back to per-id lookups",
+    )
+    // Genau EIN zweiter Versuch, danach die Einzelabrufe des Tages
+    expect(allCustomersMock).toHaveBeenCalledTimes(1)
+    expect(getCustomerByIdMock).toHaveBeenCalledTimes(10)
+    expect(enriched.customers.get("cust-3")?.name).toBe("cust-3")
+    expect(enriched.jobs.size).toBe(10)
+  })
+
+  it("still aborts when the per-id fallback fails too", async () => {
+    // LOAD-BEARING für die Archiv-Phase: `loadProjectsById` liefert entweder
+    // ALLE Projekte oder wirft. Käme eine Teilmenge durch, meldete run.ts die
+    // fehlenden als „nicht gefunden", ohne sie in `syncedClockinIds` zu legen —
+    // und die Archiv-Phase archivierte ein heute eingeplantes Projekt.
+    getAllProjectsMock.mockRejectedValue(new Error("boom 400"))
+    getProjectByIdMock.mockRejectedValue(new Error("boom 400"))
+
+    await expect(enrich(stubClient, bulkOptions())).rejects.toThrow()
+  })
+
   it("loads the employees itself when nothing is preloaded", async () => {
     const enriched = await enrich(stubClient, bulkOptions({ employees: undefined }))
 

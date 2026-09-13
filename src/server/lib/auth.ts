@@ -120,12 +120,30 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenCheck
   }
 }
 
+/**
+ * Code-Set aller 401-Antworten — Pendant zu `TenantErrorCode` (403) in
+ * lib/tenant.ts. README und CLAUDE.md nennen genau diese drei.
+ */
+export type AuthErrorCode = "TOKEN_MISSING" | "TOKEN_EXPIRED" | "TOKEN_INVALID"
+
+/**
+ * Challenge-Wert für JEDES 401. RFC 9110 verlangt bei einem 401 ein
+ * `WWW-Authenticate`; RFC 6750 §3.1 verlangt umgekehrt, dass eine Anfrage ganz
+ * OHNE Anmeldeinformation KEINEN `error`-Parameter zurückbekommt —
+ * `invalid_token` beschreibt nur ein vorgelegtes, aber untaugliches Token.
+ * Einzige Quelle des Strings, damit kein 401-Pfad ihn wieder vergisst.
+ */
+export function bearerChallenge(code: AuthErrorCode): string {
+  return code === "TOKEN_MISSING" ? "Bearer" : 'Bearer error="invalid_token"'
+}
+
 export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
   if (!isAuthConfigured()) return next()
 
   const auth = c.req.header("authorization")
   const match = auth?.match(/^Bearer\s+(.+)$/i)
   if (!match) {
+    c.header("WWW-Authenticate", bearerChallenge("TOKEN_MISSING"))
     return c.json({ error: "missing bearer token", code: "TOKEN_MISSING" }, 401)
   }
 
@@ -134,7 +152,7 @@ export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
     return c.json({ error: AUTH_UNAVAILABLE_MESSAGE, code: "AUTH_UNAVAILABLE" }, 503)
   }
   if (result.status === "invalid") {
-    c.header("WWW-Authenticate", 'Bearer error="invalid_token"')
+    c.header("WWW-Authenticate", bearerChallenge(result.code))
     return c.json({ error: "invalid token", code: result.code }, 401)
   }
   c.set("user", result.claims)

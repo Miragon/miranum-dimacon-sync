@@ -94,12 +94,19 @@ export async function runScheduledIntegration(
       // Der fail-closed übersprungene Lauf MUSS in der Historie auftauchen —
       // sonst sieht ein Mandant nur, dass nichts passiert, und hat keinen
       // Hinweis auf die Ursache. recordRun wirft nie.
+      //
+      // Status "skipped" statt "error": hier lief NICHTS. `dryRun`/`input`
+      // sind nur Platzhalter für die NOT-NULL-Spalten und beschreiben weder
+      // Modus noch Umfang — die Historie blendet beides an genau diesem
+      // Status aus, statt „live · voller Umfang" für einen nie gestarteten
+      // Lauf zu behaupten. Der geplante Lauf ist trotzdem ausgefallen; die
+      // Ursache steht als Fehlermeldung in derselben Zeile.
       const skippedAt = new Date()
       await recordRun({
         tenantId,
         integrationId,
         trigger: "cron",
-        status: "error",
+        status: "skipped",
         dryRun: false,
         input: {},
         error: resolved.message,

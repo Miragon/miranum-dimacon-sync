@@ -270,8 +270,9 @@ export async function loadJobsInPeriod(
  * Alle Team-Zuweisungen eines Zeitraums in EINEM Request. `TeamAssignmentTo`
  * trägt KEINE jobId — die Zuordnung zum Auftrag läuft deshalb über
  * (teamId, Datum) seiner Termine. Genau deshalb probt `enrich` das Ergebnis
- * einmalig gegen `getJobById` und fällt bei Abweichung komplett auf die
- * Einzelabrufe zurück.
+ * gegen `getJobById` (an einem zweiten Auftrag, wenn der erste am Sync-Datum
+ * keine Zuordnung hat) und fällt bei Abweichung ODER unbelegbarem Join
+ * komplett auf die Einzelabrufe zurück.
  */
 export async function loadTeamAssignmentsInPeriod(
   client: DimaconClient,

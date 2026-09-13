@@ -153,7 +153,7 @@ export async function enrich(
   // Genau EIN Einzelabruf-Durchgang: Aufträge, die der Zeitraum-Abruf nicht
   // kennt, plus — bei Einzelabruf-Modus der Zuweisungen — alle übrigen.
   const bundleById = new Map<string, DimaconJobBundle>()
-  if (assignments.probed) bundleById.set(assignments.probed.jobId, assignments.probed)
+  for (const bundle of assignments.probed) bundleById.set(bundle.jobId, bundle)
   const bundleIds = (assignments.source === "per-job" ? jobIds : missingJobIds).filter(
     (id) => !bundleById.has(id),
   )
@@ -183,8 +183,8 @@ export async function enrich(
   const customerIds = unique([...jobs.values()].map((j) => j.customerId))
 
   const [projects, customers, employees] = await Promise.all([
-    loadProjects(client, projectIds, limit),
-    loadCustomers(client, customerIds, options.customers, limit),
+    loadProjects(client, projectIds, limit, log),
+    loadCustomers(client, customerIds, options.customers, limit, log),
     employeesPromise,
   ])
 
@@ -228,16 +228,18 @@ type Limit = ReturnType<typeof createLimit>
 interface TeamAssignmentPlan {
   forJob: (jobId: string) => DimaconTeamAssignment[]
   source: EnrichSources["teamAssignments"]
-  /** Auftrag der Probe — wird oben wiederverwendet statt neu geladen. */
-  probed?: DimaconJobBundle
+  /** Aufträge der Proben — werden oben wiederverwendet statt neu geladen. */
+  probed: DimaconJobBundle[]
 }
 
 /**
  * Team-Zuweisungen des Tages. `TeamAssignmentTo` trägt keine jobId — der
  * Join läuft über (teamId, Datum) der Termine. Weil diese Äquivalenz zu
- * `getJobById().teamAssignments` nicht dokumentiert ist, wird sie EINMAL je
- * Lauf gegen einen echten Auftrag geprobt; weicht sie ab, fällt der ganze
- * Lauf auf die Einzelabrufe zurück.
+ * `getJobById().teamAssignments` nicht dokumentiert ist, wird sie je Lauf
+ * gegen einen echten Auftrag geprobt — und, wenn dieser am Sync-Datum
+ * niemanden eingeplant hat, gegen einen zweiten, für den der Join etwas
+ * liefert. Weicht eine Probe ab oder lässt sich der Join gar nicht belegen,
+ * fällt der ganze Lauf auf die Einzelabrufe zurück.
  */
 async function planTeamAssignments(
   client: DimaconClient,
@@ -252,10 +254,10 @@ async function planTeamAssignments(
   },
 ): Promise<TeamAssignmentPlan> {
   const { jobIds, appointments, date, needsTeamAssignments, canBundle, log } = opts
-  const perJob: TeamAssignmentPlan = { forJob: () => [], source: "per-job" }
+  const perJob: TeamAssignmentPlan = { forJob: () => [], source: "per-job", probed: [] }
 
   if (!needsTeamAssignments || jobIds.length === 0) {
-    return { forJob: () => [], source: "none" }
+    return { forJob: () => [], source: "none", probed: [] }
   }
 
   // Unter der Schwelle bzw. ohne Zeitraum-Auflösung sind die Einzelabrufe
@@ -287,43 +289,105 @@ async function planTeamAssignments(
     return forDate.filter((a) => a.teamId !== undefined && a.teamId !== null && teams.has(a.teamId))
   }
 
-  // Probe gegen den ersten Auftrag — ein Request, der die Annahme belegt.
-  const probeJobId = jobIds[0]
-  let probeBundle: DimaconJobBundle
-  try {
-    ;[probeBundle] = await loadJobBundles(client, [probeJobId], limit)
-  } catch (err) {
-    log?.warn("team assignment probe failed — falling back to per-job lookups", {
-      error: formatError(err),
-    })
-    return perJob
+  /** Liefert der Join für diesen Auftrag überhaupt etwas? (ohne Allokation) */
+  const hasJoin = (jobId: string): boolean => {
+    const teams = teamsByJob.get(jobId)
+    if (!teams || teams.size === 0) return false
+    return forDate.some((a) => a.teamId !== undefined && a.teamId !== null && teams.has(a.teamId))
   }
 
-  const expected = employeeSet(probeBundle.teamAssignments.filter((a) => a.date.startsWith(date)))
-  const actual = employeeSet(joined(probeJobId))
-  if (!sameSet(expected, actual)) {
-    log?.warn("team assignment join differs from getJobById — falling back to per-job lookups", {
-      jobId: probeJobId,
-      expected: expected.size,
-      actual: actual.size,
-    })
-    return { ...perJob, probed: probeBundle }
+  // Geprobt wird IMMER zuerst gegen `jobIds[0]` — unvoreingenommen, und damit
+  // die einzige Chance zu bemerken, dass der Join einen Auftrag ÜBERSIEHT
+  // (das ist die Richtung, die in den Detach läuft). Bleibt dieser Vergleich
+  // aussagelos, weil der Auftrag am Sync-Datum niemanden eingeplant hat, wird
+  // ein zweiter Auftrag geprobt, den der Join selbst als Treffer ausweist.
+  //
+  // Ohne diese Rotation bestünde die Probe trivial: erwartete und gejointe
+  // Menge sind beide leer, `sameSet` passt — ein Join, der GENERELL ins Leere
+  // läuft (teamId null, abweichendes Datumsformat), sähe exakt genauso aus.
+  // Der Blast-Radius wäre der gesamte Tagesbestand: `forJob()` gäbe überall []
+  // zurück, und die Projekt-Phase liest das als „niemand eingeplant" und hängt
+  // die komplette Belegschaft jedes Tagesprojekts ab (projects.ts, toRemove).
+  //
+  // NICHT abgedeckt (bewusst): Übersieht der Join nur EINZELNE Aufträge und
+  // ist `jobIds[0]` zufällig ein Treffer, bleibt das unentdeckt — die
+  // unvoreingenommene erste Probe ist die einzige Chance darauf. Und hat ein
+  // Mandant real gar keine Team-Zuweisungen, detacht auch die Ground Truth.
+  // Der Guard schützt vor dem UNBELEGTEN Bündelungs-Pfad, nicht vor dem
+  // Detach an sich.
+  const joinHitId = jobIds.find(hasJoin)
+  const candidates =
+    joinHitId === undefined || joinHitId === jobIds[0] ? [jobIds[0]] : [jobIds[0], joinHitId]
+
+  const probed: DimaconJobBundle[] = []
+  for (const jobId of candidates) {
+    let bundle: DimaconJobBundle
+    try {
+      ;[bundle] = await loadJobBundles(client, [jobId], limit)
+    } catch (err) {
+      log?.warn("team assignment probe failed — falling back to per-job lookups", {
+        error: formatError(err),
+      })
+      return { ...perJob, probed }
+    }
+    probed.push(bundle)
+
+    const expected = employeeSet(bundle.teamAssignments.filter((a) => a.date.startsWith(date)))
+    const actual = employeeSet(joined(jobId))
+    if (!sameSet(expected, actual)) {
+      log?.warn("team assignment join differs from getJobById — falling back to per-job lookups", {
+        jobId,
+        expected: expected.size,
+        actual: actual.size,
+      })
+      return { ...perJob, probed }
+    }
+    // Gleich UND nicht leer ⇒ belegt. (Nach `sameSet` ist expected.size > 0
+    // genau dann, wenn auch actual.size > 0 ist.)
+    if (expected.size > 0) return { forJob: joined, source: "period", probed }
   }
 
-  return { forJob: joined, source: "period", probed: probeBundle }
+  // Kein Kandidat konnte den Join belegen: er trifft keinen einzigen Auftrag,
+  // und der geprobte Auftrag hat keine Zuordnung. Das kann legitim sein (an
+  // diesem Tag ist niemand eingeplant) — nur belegen lässt es sich nicht, und
+  // die teure Richtung des Irrtums ist der Massen-Detach. Der Fallback kostet
+  // N `getJobById` und liefert dasselbe Ergebnis aus der autoritativen Quelle.
+  log?.warn("team assignment join could not be verified — falling back to per-job lookups", {
+    jobs: jobIds.length,
+    periodRows: periodAssignments.length,
+    rowsForDate: forDate.length,
+  })
+  return { ...perJob, probed }
 }
 
 async function loadProjects(
   client: DimaconClient,
   projectIds: string[],
   limit: Limit,
+  log?: Logger,
 ): Promise<{ rows: Map<string, DimaconProjectInfo>; source: EnrichSources["projects"] }> {
-  if (projectIds.length < BULK_FETCH_THRESHOLD) {
+  // Der Sammelabruf ist eine Optimierung, kein Muss — wie der Zeitraum-Abruf
+  // der Aufträge und der Team-Zuweisungen oben. Ohne diesen Fallback riss ein
+  // dauerhafter Fehler den GANZEN Lauf ab (`enrichment failed` in run.ts): es
+  // gäbe weder Upserts noch Zuordnungen noch Archivierung.
+  let all: DimaconProjectInfo[] | undefined
+  if (projectIds.length >= BULK_FETCH_THRESHOLD) {
+    try {
+      all = await loadAllProjects(client)
+    } catch (err) {
+      log?.warn("dimacon project bulk fetch failed — falling back to per-id lookups", {
+        error: formatError(err),
+      })
+    }
+  }
+
+  if (all === undefined) {
+    // Höchstens ein Request je Projekt des Tages — dieselbe Größenordnung,
+    // die der per-job-Fallback der Aufträge ohnehin feuert.
     const rows = await loadProjectsById(client, projectIds, limit)
     return { rows: new Map(rows.map((p) => [p.id, p])), source: "per-id" }
   }
 
-  const all = await loadAllProjects(client)
   const byId = new Map(all.map((p) => [p.id, p]))
   const missing = projectIds.filter((id) => !byId.has(id))
   const extra = missing.length > 0 ? await loadProjectsById(client, missing, limit) : []
@@ -341,6 +405,7 @@ async function loadCustomers(
   customerIds: string[],
   preloaded: readonly DimaconCustomerInfo[] | undefined,
   limit: Limit,
+  log?: Logger,
 ): Promise<{ rows: Map<string, DimaconCustomerInfo>; source: EnrichSources["customers"] }> {
   const collect = async (
     byId: Map<string, DimaconCustomerInfo>,
@@ -362,11 +427,32 @@ async function loadCustomers(
   if (preloaded !== undefined) {
     return collect(new Map(preloaded.map((c) => [c.id, c])), "preloaded")
   }
-  if (customerIds.length < BULK_FETCH_THRESHOLD) {
+  // Ohne vorgeladenen Bestand heißt das in der Praxis: `loadCustomerInventory`
+  // (run.ts) ist fail-soft gescheitert. Der Sammelabruf hier ist damit ein
+  // zweiter Versuch — ein transienter Fehler kann inzwischen weg sein.
+  //
+  // Dass der Lauf danach weiterläuft statt abzubrechen, hat einen Preis: für
+  // die Kunden-Angleichung gilt `inventoryLoaded: false`, der Clockin-Namens-
+  // Fallback ist damit aus (customers.ts) und es kann eher ein zusätzlicher
+  // Clockin-Kunde entstehen. Genau diese Abwägung trifft `loadCustomerInventory`
+  // bereits — ein sichtbarer Kunde zu viel ist besser als ein Lauf, der nichts
+  // schreibt.
+  let all: DimaconCustomerInfo[] | undefined
+  if (customerIds.length >= BULK_FETCH_THRESHOLD) {
+    try {
+      all = await loadAllCustomers(client)
+    } catch (err) {
+      log?.warn("dimacon customer bulk fetch failed — falling back to per-id lookups", {
+        error: formatError(err),
+      })
+    }
+  }
+
+  if (all === undefined) {
     const rows = await loadCustomersById(client, customerIds, limit)
     return { rows: new Map(rows.map((c) => [c.id, c])), source: "per-id" }
   }
-  return collect(new Map((await loadAllCustomers(client)).map((c) => [c.id, c])), "bulk")
+  return collect(new Map(all.map((c) => [c.id, c])), "bulk")
 }
 
 /**

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { RouterProvider, createMemoryHistory, createRouter } from "@tanstack/react-router"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { routeTree } from "#/routeTree.gen"
 
@@ -97,7 +97,40 @@ describe("Umfang-Tab der Integrations-Einstellungen", () => {
     await renderScopeTab()
 
     await waitFor(() => expect(screen.getByText(/Gespeicherter Umfang/)).toBeTruthy())
-    expect(screen.getByText("4 von 6 Schritten · dry-run")).toBeTruthy()
+    expect(screen.getByText("4 von 5 Schritten · dry-run")).toBeTruthy()
+    // Die zweite Kachel zählt nicht mehr selbst — gleiche Regel, gleiche Zahl.
+    expect(screen.getByText("4 von 5 Schritten")).toBeTruthy()
     expect(screen.getByRole("button", { name: /Speichern/ })).toBeTruthy()
+  })
+})
+
+/**
+ * LOAD-BEARING (Issue #17): der Opt-in „Mitarbeiter in Dimacon anlegen" darf
+ * nicht scharf stehen bleiben, wenn sein Basisschritt abgewählt wird — sonst
+ * schreibt die UI genau den Zustand, den sie selbst nur ausgegraut anzeigt.
+ * (Der Schutz gegen das ungefragte Wiederscharfschalten sitzt zusätzlich
+ * serverseitig in `normalizeSyncSteps`.)
+ */
+describe("Schritt-Abhängigkeiten im Umfang-Tab", () => {
+  it("switches the dimacon creation opt-in off with the employee step", async () => {
+    stubApi(() =>
+      json([
+        {
+          ...SCHEDULE,
+          runDefaults: { dryRun: true, steps: { employees: true, employeeCreateInDimacon: true } },
+        },
+      ]),
+    )
+    await renderScopeTab()
+
+    await waitFor(() => expect(screen.getByText(/Gespeicherter Umfang/)).toBeTruthy())
+    const employees = screen.getByLabelText(/Mitarbeiter-Abgleich/) as HTMLInputElement
+    const create = screen.getByLabelText(/Mitarbeiter in Dimacon anlegen/) as HTMLInputElement
+    expect(create.checked).toBe(true)
+
+    fireEvent.click(employees)
+
+    expect(employees.checked).toBe(false)
+    expect(create.checked).toBe(false)
   })
 })

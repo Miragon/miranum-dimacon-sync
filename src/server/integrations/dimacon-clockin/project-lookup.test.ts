@@ -180,6 +180,47 @@ describe("loadClockinProjectsByNumber", () => {
     expect(lookup.get("proj-1").map((r) => r.id)).toEqual([9])
   })
 
+  it("re-checks every miss per number when no chunk proves the bundling", async () => {
+    // Der teure Fall (#1): `byNumber` wertet real nur den ERSTEN Parameter aus
+    // UND das erste Element JEDES Chunks ist neu. Die Probe sieht 0 Zeilen und
+    // widerlegt damit nichts — ohne Gegenprobe bliebe der Index löchrig und
+    // der Upserter legte für jedes übersehene Bestandsprojekt ein Duplikat an.
+    const ids = Array.from({ length: 30 }, (_, i) => `proj-${i}`)
+    const known = new Set(ids.filter((id) => id !== "proj-0" && id !== "proj-25"))
+    searchForProjectsMock.mockImplementation(async (req: unknown) => {
+      const parameters = (req as { body: { scopes: { parameters: string[] }[] } }).body.scopes[0]
+        .parameters
+      // Verhalten ohne ODER: nur der erste Parameter wird ausgewertet
+      const first = parameters[0]
+      return { data: known.has(first) ? [{ id: 900, number: first }] : [] }
+    })
+
+    const lookup = await loadClockinProjectsByNumber(stubClient, ids, { log: silentLog })
+
+    // proj-1 existiert in Clockin — die Sammelabfragen haben es übersehen, die
+    // Gegenprobe holt es nach. Das ist die eigentliche Zusicherung.
+    expect(lookup.get("proj-1").map((r) => r.id)).toEqual([900])
+    expect(lookup.get("proj-0")).toEqual([])
+    expect(lookup.bundled).toBe(false)
+    // 2 Sammel-Chunks + 30 Gegenproben
+    expect(searchForProjectsMock).toHaveBeenCalledTimes(32)
+    expect(warnings).toContain(
+      "clockin byNumber bundling unverified — per-id lookups for the misses",
+    )
+  })
+
+  it("asks exactly once for a single unknown number", async () => {
+    // Eine Anfrage mit EINEM Parameter ist die Einzelsuche — ihre Fehlanzeige
+    // braucht keine Gegenprobe.
+    searchForProjectsMock.mockResolvedValue({ data: [] })
+
+    const lookup = await loadClockinProjectsByNumber(stubClient, ["proj-1"], { log: silentLog })
+
+    expect(searchForProjectsMock).toHaveBeenCalledTimes(1)
+    expect(lookup.bundled).toBe(true)
+    expect(warnings).toEqual([])
+  })
+
   it("makes no request at all without ids", async () => {
     const lookup = await loadClockinProjectsByNumber(stubClient, [])
 

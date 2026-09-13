@@ -2,7 +2,11 @@ import { sdk as clockin } from "@miragon/client-clockin"
 import type { Client as ClockInClient } from "@miragon/client-clockin"
 import { withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
-import { clockinPageQuery, loadAllClockinPages } from "../shared/clockin-pages.js"
+import {
+  MAX_CLOCKIN_PAGES,
+  clockinPageQuery,
+  loadAllClockinPages,
+} from "../shared/clockin-pages.js"
 import type { ClockinPage } from "../shared/clockin-pages.js"
 import { BULK_FETCH_THRESHOLD } from "../shared/dimacon.js"
 import { normalizeName } from "../shared/matching.js"
@@ -51,7 +55,9 @@ export interface CustomerIndexOptions {
  * - mehrseitiger Bestand, aber nur wenige Kunden im Lauf ⇒ Einzelsuchen sind
  *   billiger (genau ein Request wurde dann verbraucht),
  * - unvollständige Paginierung ⇒ ein fehlender Zwilling auf einer nicht
- *   geladenen Seite ließe eine Mehrdeutigkeit als „eindeutig" durchgehen.
+ *   geladenen Seite ließe eine Mehrdeutigkeit als „eindeutig" durchgehen,
+ * - Bestand über dem Seiten-Deckel (`MAX_CLOCKIN_PAGES`) ⇒ der Vollabruf
+ *   könnte nie vollständig werden, also gar nicht erst anfangen.
  */
 export async function loadClockinCustomerIndex(
   client: ClockInClient,
@@ -72,11 +78,23 @@ export async function loadClockinCustomerIndex(
   // gibt. Ein halber Index sähe einen Zwilling auf der nicht geladenen Seite
   // nicht und machte aus einer Mehrdeutigkeit (#16) still einen eindeutigen
   // Treffer. Dann lieber die Serversuche wie bisher.
-  if (first.meta?.last_page === undefined) {
+  if (typeof first.meta?.last_page !== "number") {
     log?.warn("skipping clockin customer index — Antwort ohne meta.last_page")
     return undefined
   }
   const lastPage = first.meta.last_page
+
+  // Der Deckel steht schon nach Seite 1 fest: `loadAllClockinPages` bricht bei
+  // mehr als MAX_CLOCKIN_PAGES Seiten ab — holt vorher aber die Seiten 2 bis
+  // 50, und der Index wird danach doch verworfen. Pendant zum Vorab-Check in
+  // dimacon-lexoffice/contact-index.ts.
+  if (lastPage > MAX_CLOCKIN_PAGES) {
+    log?.warn("clockin customer index discarded — page cap reached", {
+      maxPages: MAX_CLOCKIN_PAGES,
+      lastPage,
+    })
+    return undefined
+  }
 
   // Der Vollabruf kostet `lastPage` Requests, der Einzelweg höchstens zwei je
   // nachgeschlagenem Kunden. Gegen die Konstante allein zu prüfen kippt die

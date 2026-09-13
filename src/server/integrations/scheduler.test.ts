@@ -151,8 +151,14 @@ describe("runScheduledIntegration", () => {
     // Mandant nur, dass nichts passiert, ohne Hinweis auf die Ursache.
     const runs = await listRuns(tenantId, CLOCKIN, 5)
     expect(runs).toHaveLength(1)
-    expect(runs[0]).toMatchObject({ status: "error", trigger: "cron" })
+    // "skipped", NICHT "error": an diesem Status blendet die Historie Modus
+    // und Umfang aus. Mit "error" stünde dort „live" plus ein voller Umfang
+    // für einen Lauf, der nie gestartet ist.
+    expect(runs[0]).toMatchObject({ status: "skipped", trigger: "cron" })
     expect(runs[0].error).toMatch(/Umfang/)
+    // Die Platzhalter der NOT-NULL-Spalten bleiben bewusst stehen — sie
+    // dürfen nur nicht als echter Lauf gelesen werden.
+    expect(runs[0].input).toEqual({})
   })
 
   it("skips deactivated tenants", async () => {

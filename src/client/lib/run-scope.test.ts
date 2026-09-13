@@ -84,7 +84,38 @@ describe("describeScope / isDefaultScope", () => {
           archive: false,
         },
       }),
-    ).toBe("3 von 6 Schritten · dry-run")
+    ).toBe("3 von 5 Schritten · dry-run")
+  })
+
+  it("reads the untouched default scope as the full scope", () => {
+    // LOAD-BEARING: der Opt-in-Schritt (Default aus) ist kein abgeschalteter
+    // Schritt — sonst läse der Normalzustand als „5 von 6" und widerspräche
+    // isDefaultScope und den Badges aus step-badges.ts (Issue #17).
+    expect(describeScope(CLOCKIN, {})).toBe("voll · live")
+    expect(isDefaultScope(CLOCKIN, {})).toBe(true)
+  })
+
+  it("names an enabled opt-in step instead of folding it into the full scope", () => {
+    const scope = { dryRun: false, steps: { employeeCreateInDimacon: true } }
+    expect(describeScope(CLOCKIN, scope)).toBe("voll + 1 Zusatzschritt · live")
+    expect(isDefaultScope(CLOCKIN, scope)).toBe(false)
+  })
+
+  it("ignores an enabled opt-in step whose prerequisite is off", () => {
+    // Ohne `employees` führt der Server die Dimacon-Anlage nicht aus
+    // (dimacon-clockin/run.ts) und `hints` meldet sie nicht — dann darf das
+    // Label sie auch nicht behaupten (Altdaten/API-PUT, siehe Issue #12).
+    const scope = { steps: { employees: false, employeeCreateInDimacon: true } }
+    expect(describeScope(CLOCKIN, scope)).toBe("4 von 5 Schritten · live")
+  })
+
+  it("combines a reduced scope with an enabled opt-in step", () => {
+    expect(
+      describeScope(CLOCKIN, {
+        dryRun: true,
+        steps: { archive: false, employeeCreateInDimacon: true },
+      }),
+    ).toBe("4 von 5 Schritten + 1 Zusatzschritt · dry-run")
   })
 
   it("treats an unset scope as the default", () => {

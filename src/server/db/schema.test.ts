@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Db } from "./client.js"
-import { appMeta, scheduleSettings, tenantCredentials, tenants } from "./schema.js"
+import { appMeta, scheduleSettings, syncRuns, tenantCredentials, tenants } from "./schema.js"
 import { createTestDb } from "./test-db.js"
 
 let db: Db
@@ -80,5 +80,27 @@ describe("schema via migration 0000 (PGlite)", () => {
     await db.insert(appMeta).values({ key: "legacy-seed", value: { seededAt: "2026-08-18" } })
     const rows = await db.select().from(appMeta)
     expect(rows[0].value).toEqual({ seededAt: "2026-08-18" })
+  })
+
+  it("akzeptiert den Run-Status 'skipped' (nie gestarteter Lauf)", async () => {
+    const [tenant] = await db
+      .insert(tenants)
+      .values({ workosOrgId: "org_test_skipped", displayName: "Skipped" })
+      .returning()
+
+    // Migrations-Smoke des Enum-Werts aus 0003: fehlt er in der DB, schluckt
+    // `recordRun` den Insert-Fehler still (nur log.warn) und der fail-closed
+    // übersprungene Cron-Lauf verschwindet aus der Historie.
+    const [row] = await db
+      .insert(syncRuns)
+      .values({
+        tenantId: tenant.id,
+        integrationId: "dimacon-clockin",
+        trigger: "cron",
+        status: "skipped",
+        startedAt: new Date(),
+      })
+      .returning()
+    expect(row.status).toBe("skipped")
   })
 })

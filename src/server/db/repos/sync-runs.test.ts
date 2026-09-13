@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { setDbForTests, type Db } from "../client.js"
 import { syncRuns, tenants } from "../schema.js"
 import { createTestDb } from "../test-db.js"
-import { listRuns, recordRun } from "./sync-runs.js"
+import { recordRun } from "./sync-runs.js"
 
 let db: Db
 let close: () => Promise<void>
@@ -93,7 +93,9 @@ describe("recordRun (PGlite)", () => {
     for (let i = 0; i < 55; i++) {
       await record(tenantA, { i }, new Date(base + i * 1_000))
     }
-    expect(await listRuns(tenantA, "dimacon-clockin", 50)).toHaveLength(50)
+    // Direkt gegen die Tabelle zählen: `listRuns` klemmt selbst auf
+    // MAX_LIST_LIMIT=50 und könnte die Retention deshalb nie widerlegen.
+    expect((await results(tenantA)).length).toBe(50)
     // Die Läufe des anderen Mandanten bleiben unangetastet.
     expect((await results(tenantB)).length).toBe(2)
   })

@@ -19,8 +19,11 @@ interface ClockinProjectRow {
 type ProjectSearchQuery = NonNullable<Parameters<typeof clockin.searchForProjects>[0]>["query"]
 
 /**
- * Planungshorizont des Archiv-Schutzes in Tagen — VORWÄRTS UND RÜCKWÄRTS um
- * das Sync-Datum. Ein Projekt wird nur archiviert, wenn es in diesem ganzen
+ * Planungshorizont des Archiv-Schutzes in Tagen — VORWÄRTS UND RÜCKWÄRTS.
+ * Das Fenster spannt `run.ts` über BEIDE Bezugsdaten: von N Tagen vor dem
+ * früheren bis N Tage nach dem späteren von `heute` und `Sync-Datum` (sonst
+ * archivierte ein Lauf für ein vergangenes Datum den heute eingeplanten
+ * Bestand). Ein Projekt wird nur archiviert, wenn es in diesem ganzen
  * Fenster keinen Termin hat.
  *
  * Pflicht, nicht Kür: die Phase liest seit #15 ALLE Seiten des Clockin-

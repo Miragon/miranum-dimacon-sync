@@ -33,14 +33,29 @@ export async function getScheduleSettings(
 }
 
 /**
- * Persistierter Run-Umfang je (Mandant, Integration). `{}` = keine Zeile bzw.
- * nie gespeichert und damit exakt das alte Verhalten (Zod-Defaults). Der Wert
- * wird zur FEUERZEIT gelesen, nicht beim Cron-Start eingefroren.
+ * jsonb liefert zur Laufzeit alles, was in der Spalte steht — nur ein echtes
+ * Objekt taugt als Umfang. Die Kopie verhindert, dass eine Mutation beim
+ * Aufrufer in einen späteren Lauf durchschlägt.
  */
-export async function getRunDefaults(
+function asScopeObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { ...value }
+    : undefined
+}
+
+/**
+ * ROHWERT der Spalte `run_defaults` je (Mandant, Integration) — Basis der
+ * Lauf-Auflösung und deshalb bewusst `unknown`: ein per SQL eingeschleustes
+ * Nicht-Objekt (Array, Zahl, String, jsonb `null`) darf NICHT zu `{}`
+ * geglättet werden, sonst liefe der Lauf mit den vollen Schema-Defaults
+ * („alles an, live") statt fail-closed abzubrechen. Nur „keine Zeile" ergibt
+ * `undefined` — der Normalfall, der nichts blockieren darf. Wird zur
+ * FEUERZEIT gelesen, nicht beim Cron-Start eingefroren.
+ */
+export async function getStoredRunDefaults(
   tenantId: string,
   integrationId: string,
-): Promise<Record<string, unknown>> {
+): Promise<unknown> {
   const rows = await getDb()
     .select({ runDefaults: scheduleSettings.runDefaults })
     .from(scheduleSettings)
@@ -51,9 +66,23 @@ export async function getRunDefaults(
       ),
     )
     .limit(1)
-  // Kopie statt geteiltem Objekt: eine Mutation beim Aufrufer darf nie in
-  // einen späteren Lauf durchschlagen.
-  return { ...(rows[0]?.runDefaults ?? {}) }
+  const row = rows[0]
+  if (!row) return undefined
+  // Nicht-Objekte gehen UNVERÄNDERT raus, damit der Aufrufer sie ablehnen kann.
+  return asScopeObject(row.runDefaults) ?? row.runDefaults
+}
+
+/**
+ * Anzeigeform für die Status-/Settings-API: `{}` = keine Zeile bzw. nie
+ * gespeichert (exakt das alte Verhalten, Zod-Defaults) und defensiv auch für
+ * einen kaputten Wert — Läufe blockiert `loadRunDefaults` fail-closed, die
+ * Statusliste soll daran nicht scheitern. NICHT für Läufe verwenden.
+ */
+export async function getRunDefaults(
+  tenantId: string,
+  integrationId: string,
+): Promise<Record<string, unknown>> {
+  return asScopeObject(await getStoredRunDefaults(tenantId, integrationId)) ?? {}
 }
 
 /**

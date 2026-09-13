@@ -91,6 +91,33 @@ describe("parseRunDefaults", () => {
   it("keeps an empty object empty (identical to the previous parse({}))", () => {
     expect(parseRunDefaults(dimaconLexofficeIntegration, {})).toEqual({ ok: true, value: {} })
   })
+
+  // Issue #17: der Opt-in greift nur zusätzlich zu `employees`. Bliebe er ohne
+  // ihn gespeichert, würde ein späterer Body `{steps:{employees:true}}` (eine
+  // Ebene tief gemerged) die Dimacon-Anlage ungefragt wieder scharf schalten.
+  it("switches the dimacon creation opt-in off when the employee step is off", () => {
+    const parsed = parseRunDefaults(dimaconClockinIntegration, {
+      steps: { employees: false, employeeCreateInDimacon: true },
+    })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.value.steps).toMatchObject({
+      employees: false,
+      employeeCreateInDimacon: false,
+    })
+  })
+
+  it("keeps the opt-in when the employee step stays on", () => {
+    const parsed = parseRunDefaults(dimaconClockinIntegration, {
+      steps: { employees: true, employeeCreateInDimacon: true },
+    })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.value.steps).toMatchObject({
+      employees: true,
+      employeeCreateInDimacon: true,
+    })
+  })
 })
 
 describe("resolveScheduledInput / resolveRunInput (PGlite)", () => {
@@ -164,6 +191,41 @@ describe("resolveScheduledInput / resolveRunInput (PGlite)", () => {
     expect(resolved.ok).toBe(false)
     if (resolved.ok) return
     expect(resolved.message).toMatch(/gespeicherte Umfang/)
+  })
+
+  it("stays fail-closed for a stored non-object scope", async () => {
+    // Nur per SQL erreichbar — der PUT-Pfad erzwingt via z.record ein Objekt.
+    // Zu `{}` geglättet liefe der Lauf mit allen Schritten live.
+    await db.execute(
+      sql`insert into schedule_settings (tenant_id, integration_id, run_defaults)
+          values (${tenantId}, ${dimaconClockinIntegration.id}, '[1,2]'::jsonb)`,
+    )
+    const cron = await resolveScheduledInput(dimaconClockinIntegration, tenantId)
+    expect(cron.ok).toBe(false)
+    if (cron.ok) return
+    expect(cron.message).toMatch(/gespeicherte Umfang/)
+
+    const manual = await resolveRunInput(dimaconClockinIntegration, tenantId, {})
+    expect(manual.ok).toBe(false)
+  })
+
+  it("stays fail-closed for a stored scalar scope", async () => {
+    // `"x"` wurde früher zu {"0":"x"} und vom nicht-strikten Schema akzeptiert.
+    await db.execute(
+      sql`insert into schedule_settings (tenant_id, integration_id, run_defaults)
+          values (${tenantId}, ${dimaconClockinIntegration.id}, '"kaputt"'::jsonb)`,
+    )
+    expect((await resolveScheduledInput(dimaconClockinIntegration, tenantId)).ok).toBe(false)
+  })
+
+  it("stays fail-closed for a stored json null", async () => {
+    // jsonb `null` ist genauso per Hand eingeschleust wie `42` — die Spalte ist
+    // NOT NULL mit Default `'{}'`. „Kein Wert" heißt: keine Zeile.
+    await db.execute(
+      sql`insert into schedule_settings (tenant_id, integration_id, run_defaults)
+          values (${tenantId}, ${dimaconClockinIntegration.id}, 'null'::jsonb)`,
+    )
+    expect((await resolveScheduledInput(dimaconClockinIntegration, tenantId)).ok).toBe(false)
   })
 
   it("merges the request body over the stored defaults", async () => {

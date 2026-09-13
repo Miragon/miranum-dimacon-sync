@@ -12,6 +12,11 @@
 export interface RunStepSpec {
   key: string
   label: string
+  /**
+   * Schema-Default des Servers — und zugleich der Marker für Opt-in-Schritte:
+   * `false` heißt „aus ist der Normalfall". Solche Schritte zählt
+   * `describeStepCount` weder in den Zähler noch in den Nenner.
+   */
   default: boolean
   /** Schritt greift nur zusätzlich zu diesem Schritt (UI: disabled). */
   requires?: string
@@ -134,6 +139,42 @@ export function toRunDefaults(scope: RunScope): Record<string, unknown> {
   return { dryRun: scope.dryRun, steps: { ...scope.steps } }
 }
 
+/**
+ * Einen Schritt umschalten und dabei die `requires`-Kette mitführen: wird ein
+ * Basisschritt abgewählt, gehen alle Schritte mit aus, die nur zusätzlich zu
+ * ihm greifen. Ohne das bliebe ein Opt-in wie `employeeCreateInDimacon` auf
+ * „an" stehen, obwohl die UI ihn nur noch ausgegraut zeigt. Beim EINschalten
+ * bleibt der Opt-in bewusst aus: „an" ist immer eine bewusste Einzelentscheidung.
+ *
+ * Der eigentliche Schutz gegen das ungefragte Wiederscharfschalten sitzt
+ * serverseitig (`normalizeSyncSteps` im inputSchema) — hier geht es darum,
+ * dass die UI gar nicht erst einen Zustand schreibt, den sie selbst nur
+ * ausgegraut anzeigt.
+ */
+export function toggleStep(
+  integrationId: string,
+  steps: Record<string, boolean>,
+  key: string,
+  value: boolean,
+): Record<string, boolean> {
+  const next = { ...steps, [key]: value }
+  const spec = RUN_SCOPE_SPECS[integrationId]
+  if (value || !spec) return next
+  // Fixpunkt statt einem Durchlauf: ein abhängiger Schritt darf selbst Basis
+  // weiterer Schritte sein, unabhängig von der Reihenfolge in `spec.steps`.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const step of spec.steps) {
+      if (step.requires && !next[step.requires] && next[step.key]) {
+        next[step.key] = false
+        changed = true
+      }
+    }
+  }
+  return next
+}
+
 /** true, wenn der gespeicherte Umfang exakt den Schema-Defaults entspricht. */
 export function isDefaultScope(integrationId: string, runDefaults: unknown): boolean {
   const spec = RUN_SCOPE_SPECS[integrationId]
@@ -143,13 +184,39 @@ export function isDefaultScope(integrationId: string, runDefaults: unknown): boo
   return spec.steps.every((step) => scope.steps[step.key] === step.default)
 }
 
-/** Kurzlabel wie „voll · live" oder „3 von 6 Schritten · dry-run". */
+/**
+ * „voll", „3 von 5 Schritten" — und, falls ein Opt-in-Schritt an ist,
+ * zusätzlich „+ 1 Zusatzschritt".
+ *
+ * Opt-in-Schritte (Schema-Default `false`) stehen bewusst WEDER im Zähler NOCH
+ * im Nenner: „aus" ist ihr dokumentierter Normalfall (Issue #17) — sonst läse
+ * der unveränderte Umfang als eingeschränkt und widerspräche `isDefaultScope`
+ * und den Badges aus step-badges.ts. Eingeschaltet werden sie separat
+ * ausgewiesen; ein zusätzlich schreibender Schritt darf nie hinter „voll"
+ * verschwinden.
+ *
+ * Für Integrationen MIT Spec gilt danach: `describeScope(x) === "voll · live"`
+ * genau dann, wenn `isDefaultScope(x)` true ist.
+ */
+export function describeStepCount(spec: RunScopeSpec, steps: Record<string, boolean>): string {
+  const core = spec.steps.filter((step) => step.default)
+  const active = core.filter((step) => steps[step.key]).length
+  // Ein Opt-in ohne seinen `requires`-Schritt führt der Server nicht aus
+  // (dimacon-clockin/run.ts: `steps.employees ? … createInDimacon …`) — und
+  // `hints` meldet ihn genau deshalb auch nur zusammen mit `employees`. Sonst
+  // behauptet das Label einen Schreib-Schritt, den kein Lauf ausführt
+  // (Altdaten bzw. API-PUT).
+  const optIn = spec.steps.filter(
+    (step) => !step.default && steps[step.key] && (!step.requires || steps[step.requires]),
+  ).length
+  const base = active === core.length ? "voll" : `${active} von ${core.length} Schritten`
+  return optIn === 0 ? base : `${base} + ${optIn} Zusatzschritt${optIn === 1 ? "" : "e"}`
+}
+
+/** Kurzlabel wie „voll · live" oder „3 von 5 Schritten · dry-run". */
 export function describeScope(integrationId: string, runDefaults: unknown): string {
   const spec = RUN_SCOPE_SPECS[integrationId]
   if (!spec) return "—"
   const scope = readScope(integrationId, runDefaults, { dryRunFallback: false })
-  const active = spec.steps.filter((step) => scope.steps[step.key]).length
-  const scopeLabel =
-    active === spec.steps.length ? "voll" : `${active} von ${spec.steps.length} Schritten`
-  return `${scopeLabel} · ${scope.dryRun ? "dry-run" : "live"}`
+  return `${describeStepCount(spec, scope.steps)} · ${scope.dryRun ? "dry-run" : "live"}`
 }

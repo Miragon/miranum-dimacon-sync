@@ -66,12 +66,15 @@ function IntegrationDetailPage() {
         setRunError(message)
       } else {
         setResult(json)
-        setRunsVersion((v) => v + 1)
       }
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
+      // Immer neu laden, nicht nur bei res.ok: die Registry schreibt auch bei
+      // einer Exception die Fehlerzeile in `sync_runs` und wirft weiter (500) —
+      // ohne Bump stünde diese Zeile erst nach einem Reload in der Historie.
+      setRunsVersion((v) => v + 1)
     }
   }
 

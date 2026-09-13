@@ -1,17 +1,36 @@
 import { useAuth } from "@workos-inc/authkit-react"
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { SessionExpiredOverlay } from "#/components/SessionExpiredOverlay"
 import { TenantGate } from "#/components/TenantGate"
 import { Button } from "#/components/ui/button"
-import { ApiFetchContext, createApiFetch } from "#/lib/api"
+import { ApiFetchContext, createApiFetch, isSameOrganization } from "#/lib/api"
 import { currentReturnTo } from "#/lib/return-to"
 import { subscribeSessionExpired } from "#/lib/session-expiry"
+import { pinOrganization } from "#/lib/workos-org-pin"
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, isLoading, signIn, getAccessToken } = useAuth()
+  const { user, isLoading, signIn, getAccessToken, organizationId } = useAuth()
   const [signInError, setSignInError] = useState<string | null>(null)
   const [sessionExpired, setSessionExpired] = useState(false)
+
+  /**
+   * Organisation, in der diese Sitzung begonnen hat — EINMAL gemerkt.
+   *
+   * LOAD-BEARING, dass das ein Ref und kein State ist: Liefert ein Refresh ein
+   * Token der falschen Organisation, ruft authkit noch im Erfolgspfad seinen
+   * `onRefresh`-Callback und der Provider schreibt `organizationId` sofort auf
+   * den falschen Wert um. Ein Vergleich gegen `useAuth().organizationId` wäre
+   * damit nur EINEN Zyklus lang fail-closed und danach fail-open — der zweite
+   * Klick auf „Erneut versuchen" bestätigte den Mandantenwechsel.
+   *
+   * Nebeneffekt (gewollt): der Wert steht NICHT in den useMemo-Deps unten, die
+   * apiFetch-Identität bleibt damit bitgenau so stabil wie bisher. Zurückgesetzt
+   * wird der Latch durch den Hard-Reload des Mandanten-Switchers.
+   */
+  const expectedOrg = useRef<string | null>(null)
+  if (organizationId && expectedOrg.current === null) expectedOrg.current = organizationId
+  const getExpectedOrganizationId = useCallback(() => expectedOrg.current, [])
 
   const startSignIn = useCallback(() => {
     setSignInError(null)
@@ -41,7 +60,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
    */
   const retrySession = useCallback(async () => {
     try {
-      await getAccessToken({ forceRefresh: true })
+      // Organisation zurückschreiben, BEVOR der Refresh rausgeht: authkit hat
+      // sie beim Fehlschlag zusammen mit dem Memory-Token gelöscht und
+      // schickte sonst kein `organization_id` mit.
+      pinOrganization(expectedOrg.current)
+      const token = await getAccessToken({ forceRefresh: true })
+      // Fail-closed, falls der Pin ins Leere lief: ein Token einer anderen
+      // Organisation heilt die Sitzung NICHT — es schöbe die UI still in einen
+      // fremden Mandanten. Overlay bleibt stehen, „Neu anmelden" hilft.
+      if (!isSameOrganization(token, expectedOrg.current)) return false
       setSessionExpired(false)
       return true
     } catch {
@@ -68,8 +95,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // laufen in eine Refetch-Schleife.
   const auth = useMemo(
     () =>
-      user ? { getToken: getAccessToken, onSessionExpired: () => setSessionExpired(true) } : null,
-    [user, getAccessToken],
+      user
+        ? {
+            getToken: getAccessToken,
+            getExpectedOrganizationId,
+            onSessionExpired: () => setSessionExpired(true),
+          }
+        : null,
+    [user, getAccessToken, getExpectedOrganizationId],
   )
   const apiFetch = useMemo(() => createApiFetch(auth), [auth])
 

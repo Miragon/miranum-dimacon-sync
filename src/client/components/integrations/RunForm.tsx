@@ -5,7 +5,7 @@ import { StepNotes } from "#/components/integrations/bits"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { Label } from "#/components/ui/label"
-import { readScope, RUN_SCOPE_SPECS } from "#/lib/run-scope"
+import { readScope, RUN_SCOPE_SPECS, toggleStep } from "#/lib/run-scope"
 
 export interface RunFormProps {
   running: boolean
@@ -151,7 +151,7 @@ function ScopeRunForm({
               id={`${integrationId}-step-${step.key}`}
               label={step.label}
               checked={Boolean(steps[step.key])}
-              onChange={(v) => setSteps((prev) => ({ ...prev, [step.key]: v }))}
+              onChange={(v) => setSteps((prev) => toggleStep(integrationId, prev, step.key, v))}
               disabled={running || (step.requires ? !steps[step.requires] : false)}
             />
           ))}

@@ -98,12 +98,48 @@ describe("loadAllClockinPages", () => {
     expect(fetchPage).toHaveBeenCalledTimes(3)
   })
 
-  it("tolerates rows without an id and missing meta", async () => {
+  it("tolerates rows without an id and treats missing meta as one page by default", async () => {
+    // Permissiver Default mit Absicht: Aufrufer, die nur Zeilen verarbeiten,
+    // tun auf einer Teilliste höchstens zu wenig (siehe requireMeta).
     const fetchPage = vi.fn(async () => ({ data: [{}, { id: 5 }] }) as ClockinPage<Row>)
 
     const result = await loadAllClockinPages<Row>({ fetchPage, idOf: (r) => r.id })
 
     expect(result).toMatchObject({ complete: true, pages: 1 })
     expect(result.rows).toHaveLength(2)
+  })
+
+  it("reports a response without meta.last_page as incomplete with requireMeta", async () => {
+    // Ohne meta ist die Seitenzahl unbekannt — Aufrufer, die darauf Anlagen
+    // stützen, dürfen das nicht als „eine Seite" geschenkt bekommen.
+    const fetchPage = vi.fn(async () => ({ data: [{ id: 5 }] }) as ClockinPage<Row>)
+
+    const result = await loadAllClockinPages<Row>({
+      fetchPage,
+      idOf: (r) => r.id,
+      requireMeta: true,
+    })
+
+    expect(result.complete).toBe(false)
+    expect(result.reason).toContain("meta.last_page")
+    // Die geladene Seite bleibt nutzbar — gesperrt ist nur die Anlage.
+    expect(result.rows).toHaveLength(1)
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+  })
+
+  it("treats a null meta.last_page as unknown too", async () => {
+    // Gleiches Kriterium wie in customer-index.ts — sonst driften die beiden
+    // fail-closed-Wächter auseinander.
+    const fetchPage = vi.fn(
+      async () => ({ data: [{ id: 5 }], meta: { last_page: null } }) as unknown as ClockinPage<Row>,
+    )
+
+    const result = await loadAllClockinPages<Row>({
+      fetchPage,
+      idOf: (r) => r.id,
+      requireMeta: true,
+    })
+
+    expect(result.complete).toBe(false)
   })
 })

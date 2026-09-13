@@ -24,7 +24,12 @@ export interface SystemTuning {
   ratePerSec: number
   /** Token-Bucket: maximaler Vorrat (Sofort-Burst). */
   burst: number
-  /** Parallele Requests je Lauf (p-limit) für dieses System. */
+  /**
+   * Parallele Requests dieses Systems JE PHASE (p-limit) — NICHT je Lauf:
+   * `createLimit` baut an jeder Aufrufstelle ein eigenes Limit, parallel
+   * laufende Phasen addieren ihre Töpfe (README → Rate-Limits & Laufzeit).
+   * Laufweit bremst allein der Token-Bucket.
+   */
   concurrency: number
 }
 
@@ -83,7 +88,13 @@ export const env = {
     return {
       ratePerSec: positiveNumber(`RATE_LIMIT_${key}_RPS`, defaults.ratePerSec),
       burst: positiveNumber(`RATE_LIMIT_${key}_BURST`, defaults.burst),
-      concurrency: Math.floor(positiveNumber(`CONCURRENCY_${key}`, defaults.concurrency)),
+      // Untergrenze 1 wie bei `archiveHorizonDays`: ein Bruchwert wie "0.5"
+      // würde sonst auf 0 gefloort, und `createLimit` wirft mit `pLimit(0)`
+      // mitten im Lauf — jeder Lauf der betroffenen Integration schlüge fehl.
+      concurrency: Math.max(
+        1,
+        Math.floor(positiveNumber(`CONCURRENCY_${key}`, defaults.concurrency)),
+      ),
     }
   },
 }

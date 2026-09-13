@@ -20,6 +20,15 @@ const TRIGGER_LABELS: Record<RunHistoryEntry["trigger"], string> = {
   mcp: "mcp",
 }
 
+const STATUS_LABELS: Record<RunHistoryEntry["status"], string> = {
+  running: "läuft",
+  success: "ok",
+  error: "fehler",
+  // Nie gestartet (fail-closed übersprungener Cron). Der geplante Lauf ist
+  // damit ausgefallen — die Ursache steht als Fehlermeldung darunter.
+  skipped: "übersprungen",
+}
+
 /**
  * Run-Historie eines Mandanten (letzte Läufe, neueste zuerst). Zeigt vor
  * allem, MIT WELCHEM UMFANG ein Lauf lief — der ist bei geplanten Läufen
@@ -96,23 +105,23 @@ export function RunHistory({
                 <TableCell className="font-mono text-[0.8rem]">
                   {TRIGGER_LABELS[entry.trigger] ?? entry.trigger}
                 </TableCell>
+                {/* Ein nie gestarteter Lauf hat weder Modus noch Umfang:
+                    `dry_run`/`input` sind NOT NULL und tragen dort nur
+                    Platzhalter. Sie anzuzeigen behauptete einen Live-Lauf
+                    mit vollem Umfang, den es nie gab. */}
                 <TableCell className="font-mono text-[0.8rem]">
-                  {entry.dryRun ? "dry-run" : "live"}
+                  {entry.status === "skipped" ? "—" : entry.dryRun ? "dry-run" : "live"}
                 </TableCell>
                 <TableCell className="font-mono text-[0.8rem]">
-                  {describeScope(integrationId, entry.input)}
+                  {entry.status === "skipped" ? "—" : describeScope(integrationId, entry.input)}
                 </TableCell>
                 <TableCell>
                   {/* Akzent-Rot (warn) bleibt dem Run-Button bzw. der
                       Fehlermeldung des Screens vorbehalten — hier reicht der
                       Kontrast ok (gefüllt) ↔ default (Outline). */}
-                  {entry.status === "success" ? (
-                    <MnStatusBadge variant="ok">ok</MnStatusBadge>
-                  ) : (
-                    <MnStatusBadge variant="default">
-                      {entry.status === "error" ? "fehler" : entry.status}
-                    </MnStatusBadge>
-                  )}
+                  <MnStatusBadge variant={entry.status === "success" ? "ok" : "default"}>
+                    {STATUS_LABELS[entry.status] ?? entry.status}
+                  </MnStatusBadge>
                   {entry.error ? (
                     <div className="text-ink-2 mt-1 max-w-[320px] text-[0.75rem]">
                       {entry.error}

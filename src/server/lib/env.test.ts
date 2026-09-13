@@ -57,6 +57,16 @@ describe("env.tuning", () => {
     process.env.CONCURRENCY_DIMACON = "-4"
     expect(env.tuning("dimacon").concurrency).toBe(8)
   })
+
+  // Regression: "0.5" ist positiv und rutscht damit durch positiveNumber, wurde
+  // aber still auf 0 gefloort — `createLimit` wirft dann mit `pLimit(0)` mitten
+  // im Lauf. Untergrenze 1 = so streng gedrosselt wie überhaupt möglich.
+  it("klemmt einen Bruchwert unter 1 auf 1 statt auf 0", () => {
+    process.env.CONCURRENCY_DIMACON = "0.5"
+    expect(env.tuning("dimacon").concurrency).toBe(1)
+    process.env.CONCURRENCY_CLOCKIN = "0.999"
+    expect(env.tuning("clockin").concurrency).toBe(1)
+  })
 })
 
 describe("env.archiveHorizonDays", () => {

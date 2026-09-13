@@ -24,6 +24,25 @@ export const SyncStepsSchema = z.object({
 
 export type SyncSteps = z.infer<typeof SyncStepsSchema>
 
+/**
+ * Feldübergreifend normalisieren statt ablehnen: `employeeCreateInDimacon`
+ * greift nur ZUSÄTZLICH zu `employees` — ohne den Stammdaten-Abgleich liest
+ * der Lauf den Schalter ohnehin nie (run.ts startet `runEmployeeSync` nur bei
+ * `steps.employees`). Bliebe er trotzdem auf `true` stehen, würde er
+ * mitgespeichert, in Anzeige und Badges als aktiver Schritt gezählt und beim
+ * späteren Wiedereinschalten von `employees` ungefragt wieder scharf — ein
+ * Run-Body `{steps:{employees:true}}` wird eine Ebene tief über die
+ * gespeicherten Defaults gemerged (Issue #17).
+ *
+ * LOAD-BEARING: das läuft als `.transform` NACH der Validierung. Es kann keine
+ * bisher abgelehnte Eingabe retten — „ungültige gespeicherte Defaults sind
+ * fail-closed" bleibt unverändert — und schaltet ausschließlich in die
+ * schreibärmere Richtung ab.
+ */
+export function normalizeSyncSteps(steps: SyncSteps): SyncSteps {
+  return steps.employees ? steps : { ...steps, employeeCreateInDimacon: false }
+}
+
 export const DEFAULT_STEPS: SyncSteps = {
   employees: true,
   customers: true,
@@ -39,7 +58,7 @@ export const SyncRunInputSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD")
     .optional(),
   dryRun: z.boolean().optional(),
-  steps: SyncStepsSchema.optional(),
+  steps: SyncStepsSchema.transform(normalizeSyncSteps).optional(),
 })
 
 export type SyncRunInput = z.infer<typeof SyncRunInputSchema>

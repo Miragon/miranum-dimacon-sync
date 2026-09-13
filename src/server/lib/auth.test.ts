@@ -43,6 +43,9 @@ describe("requireAuth", () => {
 
     const res = await appWithAuth().request("/x")
     expect(res.status).toBe(401)
+    // RFC 9110: auch dieses 401 trägt eine Challenge — ohne vorgelegte
+    // Anmeldeinformation aber ohne error-Parameter (RFC 6750 §3.1).
+    expect(res.headers.get("www-authenticate")).toBe("Bearer")
     expect(await res.json()).toEqual({ error: "missing bearer token", code: "TOKEN_MISSING" })
   })
 
@@ -53,6 +56,7 @@ describe("requireAuth", () => {
       headers: { authorization: "Basic abc" },
     })
     expect(res.status).toBe(401)
+    expect(res.headers.get("www-authenticate")).toBe("Bearer")
     expect(await res.json()).toEqual({ error: "missing bearer token", code: "TOKEN_MISSING" })
   })
 

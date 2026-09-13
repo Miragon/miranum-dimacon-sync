@@ -125,7 +125,10 @@ describe("webhook tenant auth (fail-closed)", () => {
     const app = createApp()
     const res = await app.request("/api/sync/run", { method: "POST" })
     expect(res.status).toBe(401)
-    expect(await res.json()).toEqual({ error: "unauthorized" })
+    // RFC 9110: jedes 401 trägt eine Challenge. Ohne vorgelegte
+    // Anmeldeinformation aber ohne error-Parameter (RFC 6750 §3.1).
+    expect(res.headers.get("www-authenticate")).toBe("Bearer")
+    expect(await res.json()).toEqual({ error: "unauthorized", code: "TOKEN_MISSING" })
   })
 
   it("rejects a wrong x-sync-token with 401", async () => {
@@ -135,6 +138,8 @@ describe("webhook tenant auth (fail-closed)", () => {
       headers: { "x-sync-token": "nope" },
     })
     expect(res.status).toBe(401)
+    expect(res.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"')
+    expect(await res.json()).toMatchObject({ code: "TOKEN_INVALID" })
   })
 
   it("rejects a Bearer token that is neither a secret nor a valid JWT with 401", async () => {
@@ -144,6 +149,7 @@ describe("webhook tenant auth (fail-closed)", () => {
       headers: { authorization: "Bearer not-a-jwt" },
     })
     expect(res.status).toBe(401)
+    expect(res.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"')
   })
 
   it("accepts the tenant webhook secret and proceeds to the credentials check", async () => {

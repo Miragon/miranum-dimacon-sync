@@ -5,7 +5,10 @@ import { getDb } from "../client.js"
 import { syncRuns } from "../schema.js"
 
 export type RunTrigger = "manual" | "cron" | "webhook" | "mcp"
-export type RunStatus = "success" | "error"
+// "skipped": aufgezeichnet, aber NIE gestartet (fail-closed übersprungener
+// Cron). `dryRun`/`input` solcher Zeilen sind nur NOT-NULL-Platzhalter und
+// beschreiben weder Modus noch Umfang — die Historie blendet beides aus.
+export type RunStatus = "success" | "error" | "skipped"
 
 const KEEP_RUNS = 50
 // Ergebnisse jenseits dieser Größe werden nicht persistiert (jsonb-Bloat).
@@ -28,7 +31,7 @@ export interface RunRecord {
 export interface RunSummary {
   id: string
   trigger: RunTrigger
-  status: "running" | "success" | "error"
+  status: "running" | "success" | "error" | "skipped"
   dryRun: boolean
   input: unknown
   error: string | null

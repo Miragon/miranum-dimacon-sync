@@ -1,7 +1,13 @@
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { CredentialCryptoError } from "../lib/crypto.js"
-import { AUTH_UNAVAILABLE_MESSAGE, isAuthConfigured, verifyAccessToken } from "../lib/auth.js"
+import {
+  AUTH_UNAVAILABLE_MESSAGE,
+  bearerChallenge,
+  isAuthConfigured,
+  verifyAccessToken,
+  type AuthErrorCode,
+} from "../lib/auth.js"
 import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import { getCachedTenantByOrgId, type AppEnv } from "../lib/tenant.js"
@@ -119,6 +125,10 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
 
   let tenant: Tenant | undefined
   let trigger: RunTrigger = "webhook"
+  // Grund des 401 am Ende, im dokumentierten Code-Set: ohne jede
+  // Anmeldeinformation TOKEN_MISSING, mit untauglichem Secret/Token
+  // TOKEN_INVALID — der JWT-Pfad verfeinert das ggf. auf TOKEN_EXPIRED.
+  let authFailure: AuthErrorCode = token ? "TOKEN_INVALID" : "TOKEN_MISSING"
 
   if (token) {
     tenant = await findTenantBySecret(token)
@@ -133,6 +143,8 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
         // JWKS-Ausfall darf keinen Re-Login provozieren.
         return c.json({ error: AUTH_UNAVAILABLE_MESSAGE, code: "AUTH_UNAVAILABLE" }, 503)
       }
+      // Abgelaufen vs. kaputt für die 401-Antwort unten festhalten.
+      if (result.status === "invalid") authFailure = result.code
       if (result.status === "valid") {
         // Ab hier ist der Aufrufer identifiziert — fachlich dieselben
         // 403-Fälle wie in resolveTenant, damit der Client im TenantGate
@@ -159,8 +171,12 @@ export async function handleIntegrationRun(def: IntegrationDefinition, c: Contex
   }
 
   if (!tenant) {
-    log.warn("integration run unauthorized", { integration: def.id })
-    return c.json({ error: "unauthorized" }, 401)
+    log.warn("integration run unauthorized", { integration: def.id, code: authFailure })
+    c.header("WWW-Authenticate", bearerChallenge(authFailure))
+    // Das Feld `error` bleibt "unauthorized" — die UI zeigt genau das an. Der
+    // `code` ist keine neue Preisgabe: dieselbe expired/invalid-Unterscheidung
+    // liefert `requireAuth` unauthentifiziert an jeder anderen /api/*-Route.
+    return c.json({ error: "unauthorized", code: authFailure }, 401)
   }
   if (!tenant.active) {
     return c.json({ error: "forbidden: organization deactivated", code: "ORG_INACTIVE" }, 403)

@@ -58,21 +58,34 @@ describe("readJson", () => {
 
 interface AuthStub {
   getToken: ReturnType<typeof vi.fn>
+  getExpectedOrganizationId: () => string | null
   onSessionExpired: ReturnType<typeof vi.fn>
 }
 
-/** Token-Quelle wie authkit: ohne Argument das Bestandstoken, mit forceRefresh ein frisches. */
-function authStub(getToken?: AuthStub["getToken"]): AuthStub {
+/**
+ * Token-Quelle wie authkit: ohne Argument das Bestandstoken, mit forceRefresh
+ * ein frisches. `expectedOrg` bleibt per Default `null` — dann ist die
+ * Organisationsprüfung aus und die Tests messen nur den Refresh-Pfad.
+ */
+function authStub(getToken?: AuthStub["getToken"], expectedOrg: string | null = null): AuthStub {
   return {
     getToken:
       getToken ??
       vi.fn(async (opts?: { forceRefresh?: boolean }) => (opts?.forceRefresh ? "new" : "old")),
+    getExpectedOrganizationId: () => expectedOrg,
     onSessionExpired: vi.fn(),
   }
 }
 
 function authHeaderOfCall(call: unknown[]): string | null {
   return new Headers((call[1] as RequestInit | undefined)?.headers).get("authorization")
+}
+
+/** Signaturloses JWT — `getClaims` dekodiert nur, es verifiziert nichts. */
+function jwtFor(orgId: string | null): string {
+  const seg = (o: unknown) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  return `${seg({ alg: "none" })}.${seg(orgId ? { org_id: orgId } : {})}.sig`
 }
 
 describe("createApiFetch", () => {
@@ -176,6 +189,79 @@ describe("createApiFetch", () => {
     await expect(createApiFetch(auth)("/api/me")).rejects.toThrow(/Sitzung abgelaufen/)
     expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  // #5: authkit löscht beim RefreshError zusammen mit dem Token auch die
+  // gespeicherte Organisation. Ein danach erzwungener Refresh geht ohne
+  // `organization_id` raus und kann ein Token einer FREMDEN Organisation
+  // liefern — das darf nie still als geheilte Sitzung durchgehen.
+  it("refuses a refreshed token that belongs to another organization", async () => {
+    fetchMock.mockResolvedValue(response('{"ok":true}', { status: 200 }))
+    const auth = authStub(
+      vi.fn(async (opts?: { forceRefresh?: boolean }) => {
+        if (!opts?.forceRefresh) throw new LoginRequiredError()
+        return jwtFor("org_fremd")
+      }),
+      "org_original",
+    )
+
+    await expect(createApiFetch(auth)("/api/me")).rejects.toThrow(/anderen Organisation/)
+    // Kein Request mit dem fremden Token — sonst arbeitete die UI im falschen
+    // Mandanten weiter, ohne dass es jemand merkt.
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+  })
+
+  it("accepts a refreshed token of the same organization", async () => {
+    fetchMock.mockResolvedValue(response('{"ok":true}', { status: 200 }))
+    const auth = authStub(
+      vi.fn(async (opts?: { forceRefresh?: boolean }) => {
+        if (!opts?.forceRefresh) throw new LoginRequiredError()
+        return jwtFor("org_original")
+      }),
+      "org_original",
+    )
+
+    const res = await createApiFetch(auth)("/api/me")
+
+    expect(res.status).toBe(200)
+    expect(authHeaderOfCall(fetchMock.mock.calls[0])).toBe(`Bearer ${jwtFor("org_original")}`)
+    expect(auth.onSessionExpired).not.toHaveBeenCalled()
+  })
+
+  it("does not block an undecodable token — the server is the real gate", async () => {
+    fetchMock.mockResolvedValue(response('{"ok":true}', { status: 200 }))
+    const auth = authStub(
+      vi.fn(async (opts?: { forceRefresh?: boolean }) => {
+        if (!opts?.forceRefresh) throw new LoginRequiredError()
+        return "kein-jwt"
+      }),
+      "org_original",
+    )
+
+    const res = await createApiFetch(auth)("/api/me")
+
+    expect(res.status).toBe(200)
+    expect(auth.onSessionExpired).not.toHaveBeenCalled()
+  })
+
+  // Derselbe Guard auf dem 401-Replay-Pfad. In Produktion entsteht die
+  // Abweichung dort nicht (authkit liest die Org aus dem noch vorhandenen
+  // Memory-Token) — der Test isoliert den Guard, nicht das Szenario.
+  it("does not replay a 401 with a token of another organization", async () => {
+    fetchMock.mockResolvedValue(response("", { status: 401 }))
+    const auth = authStub(
+      vi.fn(async (opts?: { forceRefresh?: boolean }) =>
+        opts?.forceRefresh ? jwtFor("org_fremd") : "old",
+      ),
+      "org_original",
+    )
+
+    const res = await createApiFetch(auth)("/api/me")
+
+    expect(res.status).toBe(401)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
   })
 
   it("treats a 403 as a normal error — no refresh, no session signal", async () => {

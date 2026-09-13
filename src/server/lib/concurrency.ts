@@ -11,9 +11,16 @@ export const DEFAULT_CONCURRENCY = 3
  * Lexware-Writes (2 req/s laut Doku). Ohne Argument bleibt es bei der
  * bisherigen globalen 3.
  *
+ * JE AUFRUFSTELLE ein eigenes Limit: der Wert gilt je Phase, NICHT je Lauf.
+ * Phasen, die ein Lauf nebeneinander fährt (der Mitarbeiter-Abgleich neben
+ * der Tagesplanung in dimacon-clockin/run.ts), addieren ihre Töpfe — und das
+ * auch über Systemgrenzen hinweg, weil eine Task in Topf A Requests an
+ * System B absetzen darf (der Personalnummer-Backfill sitzt im Clockin-Topf
+ * und schreibt nach Dimacon). Laufweit bremst nur der Token-Bucket.
+ *
  * Fasst eine Task mehrere Systeme an (die Kunden-Angleichung schreibt nach
  * Lexware UND Dimacon), gibt das STRENGSTE beteiligte System den Wert vor —
- * `CONCURRENCY_<SYS>` ist eine Obergrenze, keine Garantie.
+ * `CONCURRENCY_<SYS>` ist eine Obergrenze je Phase, keine Garantie.
  */
 export function createLimit(system?: RateLimitedSystem | number) {
   if (typeof system === "number") return pLimit(system)

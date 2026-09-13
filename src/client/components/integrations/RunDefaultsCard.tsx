@@ -6,7 +6,14 @@ import { MnStatusBadge } from "#/components/miranum/MnStatusBadge"
 import { Button } from "#/components/ui/button"
 import { Label } from "#/components/ui/label"
 import { readJson, useApiFetch } from "#/lib/api"
-import { describeScope, readScope, RUN_SCOPE_SPECS, toRunDefaults } from "#/lib/run-scope"
+import {
+  describeScope,
+  describeStepCount,
+  readScope,
+  RUN_SCOPE_SPECS,
+  toggleStep,
+  toRunDefaults,
+} from "#/lib/run-scope"
 
 /**
  * Umfang-Tab: der persistente Sync-Umfang je (Mandant, Integration). Gilt
@@ -88,10 +95,9 @@ export function RunDefaultsCard({
     <section>
       <dl className="border-rule mb-6 grid grid-cols-2 border md:grid-cols-2">
         <Stat label="Gespeicherter Umfang" value={describeScope(integrationId, saved)} />
-        <Stat
-          label="Schritte aktiv"
-          value={`${spec.steps.filter((s) => steps[s.key]).length} von ${spec.steps.length}`}
-        />
+        {/* Gleiche Zählung wie im Kurzlabel — Opt-in-Schritte stehen nicht im
+            Nenner, eingeschaltet werden sie separat ausgewiesen. */}
+        <Stat label="Schritte aktiv" value={describeStepCount(spec, steps)} />
       </dl>
 
       <div className="border-rule space-y-6 border p-6">
@@ -133,7 +139,9 @@ export function RunDefaultsCard({
                   id={fieldId(step.key)}
                   type="checkbox"
                   checked={Boolean(steps[step.key])}
-                  onChange={(e) => setSteps((prev) => ({ ...prev, [step.key]: e.target.checked }))}
+                  onChange={(e) =>
+                    setSteps((prev) => toggleStep(integrationId, prev, step.key, e.target.checked))
+                  }
                   disabled={saving || (step.requires ? !steps[step.requires] : false)}
                   className="accent-mn-accent size-4"
                 />

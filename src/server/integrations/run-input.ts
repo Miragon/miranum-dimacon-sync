@@ -1,4 +1,4 @@
-import { getRunDefaults } from "../db/repos/schedules.js"
+import { getStoredRunDefaults } from "../db/repos/schedules.js"
 import type { IntegrationDefinition } from "./types.js"
 
 /**
@@ -62,12 +62,21 @@ export function parseRunDefaults(def: IntegrationDefinition, raw: unknown): RunD
 /**
  * Gespeicherte Defaults des Mandanten in normalisierter Form. Keine Zeile /
  * `{}` ⇒ `{}` — bit-identisch zum früheren `inputSchema.parse({})`.
+ *
+ * Ein gespeichertes NICHT-Objekt (nur per SQL erreichbar — der PUT-Pfad
+ * erzwingt via `z.record` ein Objekt) wird abgelehnt statt zu `{}` geglättet:
+ * geglättet fiele der Lauf auf die vollen Schema-Defaults zurück („alles an,
+ * live") — genau der Massen-Write, den fail-closed ausschließt.
  */
 async function loadRunDefaults(
   def: IntegrationDefinition,
   tenantId: string,
 ): Promise<RunDefaultsParse> {
-  return parseRunDefaults(def, await getRunDefaults(tenantId, def.id))
+  const stored = await getStoredRunDefaults(tenantId, def.id)
+  if (stored !== undefined && !isPlainObject(stored)) {
+    return { ok: false, details: { formErrors: ["stored run defaults must be an object"] } }
+  }
+  return parseRunDefaults(def, stored ?? {})
 }
 
 export const INVALID_STORED_DEFAULTS_MESSAGE =

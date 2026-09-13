@@ -6,6 +6,7 @@ import { updateRunDefaults } from "../db/repos/schedules.js"
 import { scheduleSettings, tenantCredentials, tenants } from "../db/schema.js"
 import { setWebhookSecret } from "../db/repos/webhook-secrets.js"
 import { createTestDb } from "../db/test-db.js"
+import type * as AuthModule from "../lib/auth.js"
 import type { AccessTokenCheck } from "../lib/auth.js"
 import type { IntegrationDefinition, IntegrationRunContext } from "../integrations/types.js"
 
@@ -13,11 +14,14 @@ const verifyMock = vi.fn<(token: string) => Promise<AccessTokenCheck>>()
 
 // Eigene Datei (statt app.test.ts), damit dort die Haltung „kein jose-Mock
 // nötig" erhalten bleibt.
-vi.mock("../lib/auth.js", () => ({
+// PARTIAL-Mock: nur die JWT-Prüfung wird ersetzt. Ein Voll-Mock würde jeden
+// später hinzukommenden Export des Moduls (z. B. `bearerChallenge`) beim
+// Zugriff werfen — und die Assertions prüften den im Test nachgebauten Wert
+// statt den echten.
+vi.mock("../lib/auth.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthModule>()),
   verifyAccessToken: verifyMock,
   isAuthConfigured: () => true,
-  AUTH_UNAVAILABLE_MESSAGE:
-    "Anmeldedienst nicht erreichbar — bitte in einer Minute erneut versuchen",
 }))
 
 // Nur `runIntegration` wird ersetzt — der Test nagelt fest, WELCHER Input den
@@ -131,7 +135,18 @@ describe("handleIntegrationRun auth", () => {
 
     const res = await run({ authorization: "Bearer jwt" })
     expect(res.status).toBe(401)
-    expect(await res.json()).toMatchObject({ error: "unauthorized" })
+    expect(res.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"')
+    expect(await res.json()).toMatchObject({ error: "unauthorized", code: "TOKEN_INVALID" })
+  })
+
+  // Der Befund der JWT-Prüfung erreicht den Aufrufer — dieselbe Unterscheidung
+  // liefert requireAuth an jeder anderen /api/*-Route bereits unauthentifiziert.
+  it("passes TOKEN_EXPIRED through to the 401 body", async () => {
+    verifyMock.mockResolvedValue({ status: "invalid", code: "TOKEN_EXPIRED" })
+
+    const res = await run({ authorization: "Bearer jwt" })
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ error: "unauthorized", code: "TOKEN_EXPIRED" })
   })
 
   it("answers 503 AUTH_UNAVAILABLE when the auth backend is down", async () => {

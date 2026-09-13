@@ -29,7 +29,7 @@ export interface ClockinProjectRow {
 export interface ClockinProjectLookup {
   /** ALLE Zeilen zu dieser Dimacon-Projektnummer — nie nur die erste. */
   get(dimaconProjectId: string): ClockinProjectRow[]
-  /** false ⇒ `byNumber` akzeptierte keine Sammelparameter, Einzel-Fallback lief */
+  /** false ⇒ es liefen Einzelsuchen je Nummer (widerlegte oder unbelegte Bündelung) */
   readonly bundled: boolean
   /** Zeilen im Index (Diagnose/Log) */
   readonly size: number
@@ -60,11 +60,24 @@ interface SearchResponse {
  * gebündelten `searchForProjects`-Aufrufen (statt einer Suche je Projekt).
  *
  * Ob der `byNumber`-Scope mehrere Parameter als ODER auswertet, ist NICHT
- * dokumentiert. Deshalb probt der erste gebündelte Aufruf das Verhalten:
- * trifft er Zeilen zu höchstens einer der angefragten Nummern, gilt die
- * Bündelung als nicht unterstützt und der gesamte Lauf schaltet auf
- * Einzelanfragen je Nummer um (`bundled: false`). Der Pfad ist damit in
- * beiden Fällen korrekt — nur unterschiedlich schnell.
+ * dokumentiert (die SDK-Beschreibung nennt einen einzelnen `value`). Deshalb
+ * kennt der Loader DREI Zustände statt zwei:
+ *
+ *   - widerlegt — eine Sammelanfrage bringt Zeilen, aber zu höchstens einer
+ *     der angefragten Nummern ⇒ Einzelanfragen je Nummer (`bundled: false`);
+ *   - belegt — irgendeine Sammelanfrage bringt Zeilen zu MINDESTENS ZWEI
+ *     angefragten Nummern ⇒ weiter bündeln, Fehlanzeigen sind belastbar;
+ *   - unbelegt — gar kein Treffer, typisch im Erstlauf mit lauter neuen
+ *     Projekten. Dann ist nichts bewiesen und nichts widerlegt: die bereits
+ *     gefundenen Zeilen bleiben, aber jede FEHLANZEIGE wird einzeln
+ *     nachgefragt.
+ *
+ * Der letzte Fall ist load-bearing: wertet `byNumber` real nur den ERSTEN
+ * Parameter aus und ist das erste Element eines Chunks ein neues Projekt,
+ * bliebe der Index sonst löchrig — und `ProjectUpserter` liest eine
+ * Fehlanzeige als „gibt es in Clockin nicht" und legt für jedes übersehene
+ * Bestandsprojekt ein Duplikat an. Die Invariante `get() === []` heißt
+ * „existiert nicht" gilt deshalb IMMER, wenn diese Funktion zurückkehrt.
  */
 export async function loadClockinProjectsByNumber(
   client: ClockInClient,
@@ -120,14 +133,18 @@ export async function loadClockinProjectsByNumber(
   const chunks: string[][] = []
   for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize))
 
+  // Eine Anfrage mit nur EINEM Parameter ist per Definition belastbar — sie
+  // ist identisch zur Einzelsuche. Sonst muss die ODER-Semantik erst belegt
+  // werden: Zeilen zu mindestens zwei angefragten Nummern.
+  let proven = chunkSize <= 1 || ids.length === 1
+
   // Probe: der erste Sammel-Chunk belegt (oder widerlegt), dass `byNumber`
   // mehrere Parameter auswertet.
   const probeChunk = chunks[0]
   const probeRows = await search(probeChunk)
   const distinct = assign(probeChunk, probeRows)
-  // Keine Zeile heißt: nichts belegt und nichts widerlegt — typisch beim
-  // Erstlauf, wenn fast alle Projekte neu sind. Dann weiter bündeln, sonst
-  // fällt genau der Lauf mit den meisten Projekten auf Einzelsuchen zurück.
+  if (distinct >= 2) proven = true
+
   if (probeChunk.length > 1 && probeRows.length > 0 && distinct <= 1) {
     log?.warn("clockin byNumber does not appear to accept multiple parameters — per-id lookups", {
       probed: probeChunk.length,
@@ -140,10 +157,39 @@ export async function loadClockinProjectsByNumber(
 
   const limit = createLimit("clockin")
   await Promise.all(
-    chunks.slice(1).map((chunk) => limit(async () => void assign(chunk, await search(chunk)))),
+    chunks.slice(1).map((chunk) =>
+      // Jeder weitere Chunk kann die Bündelung nachträglich belegen — dieselbe
+      // API, dieselbe Semantik. Ohne diese Aggregation zahlte ein Lauf, dessen
+      // Probe-Chunk zufällig nur neue Projekte enthielt, die Gegenprobe für
+      // JEDE Fehlanzeige.
+      limit(async () => {
+        if (assign(chunk, await search(chunk)) >= 2) proven = true
+      }),
+    ),
   )
 
-  return lookup(index, true)
+  if (proven) return lookup(index, true)
+
+  // Kein Chunk hat Zeilen zu zwei Nummern gebracht: weder belegt noch
+  // widerlegt. Die Treffer bleiben gültig (sie tragen ihre eigene `number`),
+  // nur die Fehlanzeigen sind nicht belastbar — die werden einzeln
+  // nachgefragt, damit der Aufrufer ein `[]` weiterhin als „existiert nicht"
+  // lesen darf. Bezahlt wird das je NUMMER, nicht je Auftrag, und nur in
+  // Läufen, die ohnehin fast jedes Projekt neu anlegen.
+  //
+  // RESTUNSCHÄRFE: `byNumber` erlaubt Wildcards. Matcht der Scope real als
+  // Präfix, kann schon ein einzelner Parameter Zeilen zu zwei angefragten
+  // Nummern liefern und die Bündelung damit vortäuschen. Starkes Indiz, kein
+  // Beweis — mehr gibt die undokumentierte API nicht her.
+  const misses = ids.filter((id) => !index.has(normalizeName(id)))
+  if (misses.length === 0) return lookup(index, true)
+
+  log?.warn("clockin byNumber bundling unverified — per-id lookups for the misses", {
+    probed: probeChunk.length,
+    misses: misses.length,
+  })
+  await runSingles(misses, search, assign)
+  return lookup(index, false)
 }
 
 async function runSingles(

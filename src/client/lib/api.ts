@@ -1,9 +1,21 @@
-import { AuthKitError } from "@workos-inc/authkit-react"
+import { AuthKitError, getClaims } from "@workos-inc/authkit-react"
 import { createContext, useContext } from "react"
+import { pinOrganization } from "#/lib/workos-org-pin"
 
 export interface AuthTokenContext {
   /** Signatur von authkit `getAccessToken` — `forceRefresh` erzwingt einen Refresh. */
   getToken: (opts?: { forceRefresh?: boolean }) => Promise<string>
+  /**
+   * Organisation, in der die Sitzung BEGONNEN hat — als Funktion, weil der Wert
+   * aus einem Ref kommt.
+   *
+   * LOAD-BEARING, dass hier NICHT der laufend aktualisierte `organizationId`
+   * aus `useAuth()` steht: ein Refresh, der ein Token der falschen Organisation
+   * liefert, schreibt diesen State über seinen eigenen `onRefresh`-Callback
+   * sofort um. Der Vergleich unten hätte dann ab dem zweiten Versuch die
+   * FALSCHE Organisation als Erwartung und liefe ins Leere.
+   */
+  getExpectedOrganizationId: () => string | null
   /**
    * Signal (KEIN Redirect): die Session ist endgültig abgelaufen. Der AuthGate
    * zeigt daraufhin ein Overlay — offene Formulareingaben bleiben erhalten.
@@ -81,6 +93,37 @@ function transientAuthError(cause: unknown): Error {
 }
 
 /**
+ * Gehört das frische Token noch zur erwarteten Organisation?
+ *
+ * Zweites Netz hinter `pinOrganization`: schreibt der Pin ins Leere (Storage
+ * gesperrt, Schlüsselname in einer neuen authkit-Version umbenannt), liefert
+ * der Refresh ein Token einer anderen Organisation. Das darf NIE still
+ * durchgehen — sonst arbeitet die UI im falschen Mandanten weiter.
+ *
+ * Ein nicht dekodierbares Token blockieren wir NICHT: das eigentliche Gate ist
+ * der Server (`resolveTenant` aus dem JWT), hier wäre eine Sperre nur Lärm.
+ */
+export function isSameOrganization(token: string, expected: string | null): boolean {
+  if (!expected) return true
+  try {
+    return (getClaims(token).org_id ?? null) === expected
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Abweichende Organisation nach dem Refresh — eigener terminaler Grund.
+ * Eigene Klasse, damit der Aufrufer „abgelaufen" von „falscher Mandant"
+ * unterscheiden kann: die Meldungen führen zu unterschiedlichem Handeln.
+ */
+export class WrongOrganizationError extends Error {
+  constructor() {
+    super("Die Sitzung gehört zu einer anderen Organisation — bitte neu anmelden")
+  }
+}
+
+/**
  * Ergebnis eines erzwungenen Refresh. `terminal` entscheidet, ob der Aufrufer
  * das Abgelaufen-Signal geben darf oder nur einen transienten Fehler meldet.
  */
@@ -105,13 +148,22 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
 
   function refreshOnce(): Promise<RefreshResult> {
     if (!auth) return Promise.resolve({ ok: false, terminal: true, cause: null })
+    // Lokale Kopie: die Prüfung läuft in einer Closure, in der `auth` nicht
+    // mehr eingeengt ist.
+    const expectedOrg = auth.getExpectedOrganizationId()
+    // Organisation zurückschreiben, BEVOR der Refresh rausgeht — authkit hat
+    // sie beim Fehlschlag gelöscht und schickte sonst kein `organization_id`.
+    pinOrganization(expectedOrg)
     // LOAD-BEARING: das `= null` im finally macht den Single-Flight-Slot wieder
     // frei. Ohne das liefert jeder spätere Zyklus dasselbe (längst veraltete)
     // Ergebnis — apiFetch lebt über `useMemo` die ganze Sitzung lang.
     pendingRefresh ??= auth
       .getToken({ forceRefresh: true })
       .then<RefreshResult, RefreshResult>(
-        (token) => ({ ok: true, token }),
+        (token) =>
+          isSameOrganization(token, expectedOrg)
+            ? { ok: true, token }
+            : { ok: false, terminal: true, cause: new WrongOrganizationError() },
         (cause: unknown) => ({ ok: false, terminal: isSessionTerminal(cause), cause }),
       )
       .finally(() => {
@@ -136,6 +188,7 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
       if (!refreshed.ok && !refreshed.terminal) throw transientAuthError(refreshed.cause)
       if (!refreshed.ok) {
         auth.onSessionExpired()
+        if (refreshed.cause instanceof WrongOrganizationError) throw refreshed.cause
         throw new Error("Sitzung abgelaufen — bitte neu anmelden")
       }
       token = refreshed.token

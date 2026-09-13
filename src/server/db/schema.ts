@@ -14,7 +14,10 @@ import {
 
 export const credentialSystem = pgEnum("credential_system", ["dimacon", "clockin", "lexoffice"])
 export const runTrigger = pgEnum("run_trigger", ["manual", "cron", "webhook", "mcp"])
-export const runStatus = pgEnum("run_status", ["running", "success", "error"])
+// "skipped" = der Lauf wurde NIE gestartet (fail-closed übersprungener Cron).
+// Neue Werte IMMER ans Ende: drizzle-kit erzeugt daraus ein additives
+// `ALTER TYPE ... ADD VALUE`; ein Einschub in der Mitte baut den Typ neu.
+export const runStatus = pgEnum("run_status", ["running", "success", "error", "skipped"])
 
 /** Ein Mandant = eine WorkOS-Organisation. Die Tabelle IST die Zugangs-Allowlist. */
 export const tenants = pgTable(
