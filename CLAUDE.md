@@ -296,6 +296,54 @@ SDK die Route), `returnTo` gegen Open Redirects validiert
 `visibilitychange`-Refresh als Ersatz für das nicht durchgereichte
 `onBeforeAutoRefresh`.
 
+**Schleifenschutz um den Callback (load-bearing).** Scheitert der
+Code-Tausch, fängt authkit-js den `CodeExchangeError` in `#handleCallback`
+ab, meldet ihn NUR per `console.error` und lässt `user` auf `null` — die App
+sah bisher einen normalen Abgemeldet-Zustand und leitete sofort wieder um
+(Redirect → 500 → Redirect, leere Seite, keine Meldung). `lib/auth-callback.ts`
+erfasst deshalb **beim Modul-Load** (`main.tsx` importiert es zusätzlich
+explizit), ob die Seite mit `?code=` kam: authkit räumt die URL am Ende von
+`#handleCallback` per `history.replaceState` selbst ab — ausserhalb des
+try/catch —, im Render ist der Beleg also weg. Marker gesetzt + kein `user`
+⇒ Fehlerzustand mit Button, **kein** Auto-signIn. Dazu zwei Bremsen: ein
+`sessionStorage`-Zähler über Seitenaufrufe hinweg
+(`MAX_AUTO_SIGN_IN_ATTEMPTS`, Serie = Abstand zum LETZTEN Versuch; Reset bei
+jedem Erfolg und bei jedem Nutzer-Klick) und ein Ref je Seitenaufruf, damit
+nie zwei Redirects parallel laufen (der zweite überschriebe den
+PKCE-Verifier). Und **kein Dauerfeuer bei 401**: `createApiFetch` fragt vor
+jedem Force-Refresh `auth.isSessionExpired()` (Ref im AuthGate, NICHT in den
+useMemo-Deps und NICHT im Closure der Fabrik — ein geglückter Refresh
+erzeugt in authkit-react ein neues `user`-Objekt und damit eine neue
+apiFetch-Instanz, genau darüber lief die 401-Schleife). Freigabe nur durch
+„Erneut versuchen" oder Reload — beide Richtungen des Refs sind in
+`AuthGate.test.tsx` über den ECHTEN `apiFetch` aus dem Context gepinnt, weil
+`api.test.ts` die Bremse nur gegen einen eigenen Stub prüfen kann. Der
+Overlay-Text verspricht nichts über den Inhalt dahinter — bei dauerhaftem 401
+steht dort nur der Ladezustand des TenantGate.
+
+**Das Overlay nennt die Ursache, nicht die Wirkung.** `onSessionExpired`
+trägt einen `SessionExpiredReason`: `refresh-failed` (Anmeldedienst — von
+`onRefreshFailure` und von terminalen `getToken`-Fehlern) gegen
+`server-rejected` (Refresh gelang, unser Backend weist das frische Token
+trotzdem mit 401 ab — live gemessen: WorkOS 200, `/api/*` 401). Beide Fälle
+haben eigenen Titel und Text; „Anmeldung nicht erneuert" im zweiten Fall war
+nachweislich falsch und schickte den Betreiber zum falschen System. Der ZUERST
+gemeldete Grund gewinnt (`markSessionExpired` kehrt bei gesetztem Ref sofort
+zurück), sonst überschriebe ihn die Bremse selbst: die liefert ohne jeden
+Refresh `terminal` und damit `refresh-failed`.
+
+**Wachhund über den authkit-Start** (`AUTH_INIT_TIMEOUT_MS`): `isLoading` kann
+für immer `true` bleiben — authkit-react 0.16.1 ruft `createClient(...).then(...)`
+OHNE `.catch()`, `isLoading: false` steht nur im Erfolgspfad. Lehnt
+`createClient` ab (`JSON.parse(stateParam)` in `#handleCallback` liegt
+ausserhalb des try/catch; gesperrter Site-Storage in `getRefreshToken`), greift
+kein einziger Guard: der Callback-Befund oben hängt an `!isLoading`, der
+Auto-signIn kehrt bei `isLoading` sofort zurück, und ein Reload reproduziert
+alles, weil die URL-Bereinigung nie lief. Nach dem Timeout zeigt der AuthGate
+deshalb einen Rückweg — und zwar `reloadWithoutAuthParams` (Seite ohne
+Query-String neu), NICHT `signIn()`: der Provider liefert in dem Zustand noch
+seinen NOOP-Client, dessen `signIn` ein leeres `async () => {}` ist.
+
 **Wo der Refresh-Token liegt, entscheidet `VITE_WORKOS_API_HOSTNAME`**
 (`lib/auth-flag.ts`): Nur eine AuthKit-Domain auf der EIGENEN Site
 (`auth.example.com` neben der App auf `example.com`) macht die Cookies

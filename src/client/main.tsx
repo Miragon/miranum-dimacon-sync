@@ -1,6 +1,14 @@
 import ReactDOM from "react-dom/client"
 import { RouterProvider, createRouter } from "@tanstack/react-router"
 import { AuthKitProvider } from "@workos-inc/authkit-react"
+// Nur wegen des Seiteneffekts: das Modul liest beim Load fest, ob diese Seite
+// mit einem `?code=` aus WorkOS geladen wurde. Das muss passieren, BEVOR der
+// AuthKitProvider seinen Effekt fährt — authkit-js bereinigt die URL in
+// `#handleCallback` per `history.replaceState` selbst, auch wenn der
+// Code-Tausch scheitert. Der AuthGate importiert dasselbe Modul; der Import
+// hier hält die Reihenfolge explizit und überlebt ein späteres Lazy-Loading
+// des Gates.
+import "./lib/auth-callback"
 import {
   AUTH_ENABLED,
   WORKOS_API_HOSTNAME,

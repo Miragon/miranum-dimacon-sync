@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useContext } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ApiFetch } from "#/lib/api"
+import { MAX_AUTO_SIGN_IN_ATTEMPTS, registerSignInAttempt } from "#/lib/auth-callback"
 import { notifySessionExpired } from "#/lib/session-expiry"
 
 // Der Org-Pin hängt an VITE_WORKOS_CLIENT_ID (Modul-Konstante in auth-flag.ts),
@@ -17,7 +18,7 @@ const stubs = vi.hoisted(() => ({
    * frisches Literal je `useAuth()`-Aufruf invalidierte die useMemo-Deps in
    * AuthGate bei JEDEM Render — der Identitäts-Test unten wäre dann wertlos.
    */
-  user: { id: "user_1" },
+  user: { id: "user_1" } as { id: string } | null,
   organizationId: null as string | null,
   getAccessToken: vi.fn<(opts?: { forceRefresh?: boolean }) => Promise<string>>(),
   signIn: vi.fn<() => Promise<void>>(),
@@ -71,6 +72,11 @@ function ApiFetchProbe() {
 
 /** Letzter aufgezeichneter Wert — der Consumer rendert nur bei Context-Wechsel neu. */
 const latestApiFetch = () => seenApiFetch[seenApiFetch.length - 1]
+
+/** Wie oft ist ein erzwungener Refresh gegen WorkOS gefahren worden? */
+function forcedRefreshCount(): number {
+  return stubs.getAccessToken.mock.calls.filter((c) => c[0]?.forceRefresh).length
+}
 
 afterEach(() => {
   cleanup()
@@ -252,5 +258,169 @@ describe("AuthGate — apiFetch-Identität (#17)", () => {
     // Identität erzeugen — `stubs.user` ist hier bewusst eingefroren, um
     // allein `sessionExpired` zu isolieren.
     expect(new Set(seenApiFetch).size).toBe(1)
+  })
+})
+
+/**
+ * Schleifenschutz für den automatischen Anmelde-Redirect. Backstop hinter dem
+ * Callback-Guard: Er greift auch dann, wenn der Auto-signIn aus einem anderen
+ * Grund im Kreis läuft — und darf dabei NIE einen funktionierenden Login
+ * treffen.
+ */
+describe("AuthGate — Schleifenschutz beim Auto-signIn", () => {
+  it("leitet einen normalen Login genau einmal um", () => {
+    stubs.user = null
+
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+
+    expect(stubs.signIn).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/weiterleiten zu workos/i)).toBeTruthy()
+  })
+
+  it("trifft den stillen Roundtrip nach einem Reload nicht", () => {
+    // Beliebig viele Zyklen aus „ein Redirect, danach angemeldet": der
+    // Zähler wird bei jedem Erfolg zurückgesetzt.
+    for (let i = 0; i < MAX_AUTO_SIGN_IN_ATTEMPTS + 3; i++) {
+      stubs.user = null
+      render(
+        <AuthGate>
+          <AppWithForm />
+        </AuthGate>,
+      )
+      expect(stubs.signIn).toHaveBeenCalledTimes(i + 1)
+      cleanup()
+
+      stubs.user = { id: "user_1" }
+      render(
+        <AuthGate>
+          <AppWithForm />
+        </AuthGate>,
+      )
+      cleanup()
+    }
+  })
+
+  it("stoppt nach zu vielen Redirects in Folge und macht den Zustand sichtbar", () => {
+    // Die Versuche der vorangegangenen Durchläufe — sie überleben in echt den
+    // Redirect, weil sie im sessionStorage liegen.
+    for (let i = 0; i < MAX_AUTO_SIGN_IN_ATTEMPTS; i++) registerSignInAttempt()
+    stubs.user = null
+
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+
+    expect(stubs.signIn).not.toHaveBeenCalled()
+    expect(screen.getByText("Anmeldung bricht wiederholt ab")).toBeTruthy()
+  })
+
+  it("gibt den Weg frei, sobald der Nutzer die Anmeldung selbst startet", () => {
+    for (let i = 0; i < MAX_AUTO_SIGN_IN_ATTEMPTS; i++) registerSignInAttempt()
+    stubs.user = null
+
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Erneut anmelden" }))
+
+    expect(stubs.signIn).toHaveBeenCalledTimes(1)
+    // Der Zähler ist zurückgesetzt — der nächste Zyklus hat wieder das volle
+    // Kontingent, statt sofort erneut zu blockieren.
+    expect(registerSignInAttempt()).toBe(true)
+  })
+})
+
+/**
+ * REGRESSION (live gemessen, Szenario B): Alle `/api/*` antworten dauerhaft mit
+ * 401, die Sitzung selbst ist intakt. Beobachtet wurde im Sekundentakt und
+ * endlos: 401 → Force-Refresh (200 von WorkOS) → Retry 401 → Force-Refresh → …
+ * Bei einem echten Backend-Ausfall reißt das das WorkOS-Rate-Limit.
+ *
+ * `api.test.ts` prüft die Bremse gegen einen eigenen Stub — das kann per
+ * Konstruktion nicht zeigen, dass der AuthGate sie überhaupt scharf stellt.
+ * Diese Tests laufen deshalb über den ECHTEN `apiFetch` aus dem Context.
+ */
+describe("AuthGate — 401-Bremse gegen das Dauerfeuer", () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn(() =>
+      Promise.resolve(new Response('{"error":"invalid token"}', { status: 401 })),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("stellt die Bremse scharf: nach dem ersten Signal kein weiterer Refresh", async () => {
+    render(
+      <AuthGate>
+        <ApiFetchProbe />
+      </AuthGate>,
+    )
+    const apiFetch = latestApiFetch()
+
+    // Zyklus 1: Refresh gelingt (der Stub liefert ein Token), der Retry
+    // scheitert trotzdem → Overlay.
+    await act(async () => {
+      expect((await apiFetch("/api/me")).status).toBe(401)
+    })
+    expect(forcedRefreshCount()).toBe(1)
+    // Diagnose aus dem gemessenen Fall: nicht der Anmeldedienst hat versagt.
+    expect(screen.getByText("Zugriff abgelehnt")).toBeTruthy()
+
+    // Ab hier darf WorkOS nicht mehr angefasst werden — egal wie viele
+    // Consumer nachladen.
+    await act(async () => {
+      await apiFetch("/api/me")
+      await apiFetch("/api/tenants")
+      await apiFetch("/api/systems")
+    })
+    expect(forcedRefreshCount()).toBe(1)
+    // Der erste Grund bleibt stehen: die Folge-401 melden über die Bremse
+    // „refresh-failed" (ohne je refresht zu haben) und dürfen die zutreffende
+    // Diagnose nicht überschreiben.
+    expect(screen.getByText("Zugriff abgelehnt")).toBeTruthy()
+    expect(screen.queryByText("Anmeldung nicht erneuert")).toBeNull()
+  })
+
+  it("gibt die Bremse erst durch den Klick auf Erneut versuchen wieder frei", async () => {
+    render(
+      <AuthGate>
+        <ApiFetchProbe />
+      </AuthGate>,
+    )
+    const apiFetch = latestApiFetch()
+
+    await act(async () => {
+      await apiFetch("/api/me")
+    })
+    expect(forcedRefreshCount()).toBe(1)
+
+    // Der Klick fährt selbst einen Force-Refresh (#2) und schließt das Overlay.
+    fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
+    await waitFor(() => {
+      expect(screen.queryByText("Zugriff abgelehnt")).toBeNull()
+    })
+    expect(forcedRefreshCount()).toBe(2)
+
+    // …und erst dadurch darf ein späterer 401 wieder heilen wollen (#3). Ohne
+    // die Freigabe bliebe es bei 2: die stille Selbstheilung wäre für den Rest
+    // der Sitzung tot.
+    await act(async () => {
+      await apiFetch("/api/me")
+    })
+    expect(forcedRefreshCount()).toBe(3)
+    expect(screen.getByText("Zugriff abgelehnt")).toBeTruthy()
   })
 })

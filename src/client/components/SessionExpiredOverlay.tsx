@@ -1,12 +1,52 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { MnAlert } from "#/components/miranum/MnAlert"
 import { Button } from "#/components/ui/button"
+import type { SessionExpiredReason } from "#/lib/api"
+
+/**
+ * Was das Overlay sagt, hängt am Grund — die beiden Fälle haben für den Nutzer
+ * nichts miteinander zu tun.
+ *
+ * LOAD-BEARING (live gemessen): Im 401-Dauerfall gelingt der Force-Refresh
+ * gegen WorkOS jedes Mal, nur unser Backend weist das frische Token ab. Ein
+ * Overlay, das dann „Der Anmeldedienst konnte die Sitzung nicht erneuern"
+ * behauptet, beschreibt genau das Gegenteil dessen, was passiert ist, und
+ * schickt den Betreiber zur falschen Ursache.
+ */
+const TEXTS: Record<SessionExpiredReason, { label: string; body: ReactNode }> = {
+  "refresh-failed": {
+    label: "Anmeldung nicht erneuert",
+    body: (
+      <>
+        Der Anmeldedienst konnte die Sitzung gerade nicht erneuern. „Erneut versuchen" setzt genau
+        hier fort und behält, was Sie gerade offen haben; „Neu anmelden" lädt die Anwendung neu.
+      </>
+    ),
+  },
+  "server-rejected": {
+    label: "Zugriff abgelehnt",
+    body: (
+      <>
+        Die Anmeldung wurde soeben erneuert, der Server weist sie trotzdem zurück. Die Ursache liegt
+        dann nicht bei Ihrer Sitzung, sondern beim Server — eine Neuanmeldung ändert daran in der
+        Regel nichts. „Erneut versuchen" prüft es erneut und behält, was Sie gerade offen haben;
+        hält der Zustand an, wenden Sie sich an den Betrieb.
+      </>
+    ),
+  },
+}
 
 /**
  * Nicht-destruktiver Ersatz für den früheren Sofort-Redirect: das Overlay
  * legt sich ÜBER die laufende App, unmountet aber nichts — offene
  * Formulareingaben (Zugangsdaten, Feld-Zuordnung) bleiben im React-State
  * und sind hinter dem halbtransparenten Hintergrund weiter sichtbar.
+ *
+ * Der Hinweistext knüpft die Zusage bewusst an die AKTION und behauptet
+ * nichts über den Inhalt dahinter: Tritt der Ablauf auf einem Screen mit
+ * offenem Formular auf, bleibt dieses erhalten — tritt er bei dauerhaften
+ * 401 auf, steht hinter dem Overlay nur der Ladezustand des TenantGate. Ein
+ * pauschales „Ihre Eingaben bleiben erhalten" war dort nachweislich falsch.
  *
  * LOAD-BEARING: „Erneut versuchen" ist der Rückweg IN der Seite. Das Overlay
  * öffnet sich auch bei einem transienten WorkOS-Fehler (429/5xx beim
@@ -17,10 +57,13 @@ import { Button } from "#/components/ui/button"
  * Overlay schützen soll.
  */
 export function SessionExpiredOverlay({
+  reason,
   onRetry,
   onSignIn,
   error,
 }: {
+  /** Warum der Zugang weg ist — bestimmt Titel und Text (s. `TEXTS`). */
+  reason: SessionExpiredReason
   /** Stiller Force-Refresh. `true` = Session wieder gültig, Overlay schließt sich. */
   onRetry: () => Promise<boolean>
   onSignIn: () => void
@@ -28,6 +71,7 @@ export function SessionExpiredOverlay({
 }) {
   const [pending, setPending] = useState(false)
   const [retryFailed, setRetryFailed] = useState(false)
+  const text = TEXTS[reason]
 
   const retry = () => {
     setPending(true)
@@ -48,9 +92,8 @@ export function SessionExpiredOverlay({
             transienten Fehler des Refresh-Endpunkts, während die Sitzung
             weiterläuft. Der Titel behauptete dann etwas, das nachweislich
             falsch war — und schickte in die Neuanmeldung statt in den Retry. */}
-        <MnAlert label="Anmeldung nicht erneuert">
-          Der Anmeldedienst konnte die Sitzung gerade nicht erneuern. Ihre Eingaben bleiben erhalten
-          — versuchen Sie es erneut oder melden Sie sich neu an.
+        <MnAlert label={text.label}>
+          {text.body}
           {retryFailed ? (
             <span className="text-ink-2 mt-3 block text-sm">
               Erneuern fehlgeschlagen — bitte neu anmelden.
