@@ -1,6 +1,6 @@
 import { LoginRequiredError } from "@workos-inc/authkit-react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { createApiFetch, readJson } from "./api"
+import { createApiFetch, readJson, type SessionExpiredReason } from "./api"
 
 /** Genau das, was ein fehlgeschlagenes `fetch` wirft — offline, DNS, WorkOS kurz weg. */
 function networkError(): TypeError {
@@ -59,22 +59,43 @@ describe("readJson", () => {
 interface AuthStub {
   getToken: ReturnType<typeof vi.fn>
   getExpectedOrganizationId: () => string | null
-  onSessionExpired: ReturnType<typeof vi.fn>
+  onSessionExpired: ReturnType<typeof vi.fn<(reason: SessionExpiredReason) => void>>
+  isSessionExpired: () => boolean
+  /** Simuliert „Erneut versuchen" im Overlay: der Abgelaufen-Zustand fällt. */
+  release: () => void
 }
 
 /**
  * Token-Quelle wie authkit: ohne Argument das Bestandstoken, mit forceRefresh
  * ein frisches. `expectedOrg` bleibt per Default `null` — dann ist die
  * Organisationsprüfung aus und die Tests messen nur den Refresh-Pfad.
+ *
+ * `isSessionExpired` spiegelt wie im AuthGate den Zustand, den
+ * `onSessionExpired` setzt — in echt ein Ref, der einen Wechsel der
+ * apiFetch-Instanz überlebt.
  */
 function authStub(getToken?: AuthStub["getToken"], expectedOrg: string | null = null): AuthStub {
+  let expired = false
   return {
     getToken:
       getToken ??
       vi.fn(async (opts?: { forceRefresh?: boolean }) => (opts?.forceRefresh ? "new" : "old")),
     getExpectedOrganizationId: () => expectedOrg,
-    onSessionExpired: vi.fn(),
+    onSessionExpired: vi.fn((_reason: SessionExpiredReason) => {
+      expired = true
+    }),
+    isSessionExpired: () => expired,
+    release: () => {
+      expired = false
+    },
   }
+}
+
+/** Wie oft ist ein Refresh gegen WorkOS gefahren worden? */
+function forcedRefreshCount(auth: AuthStub): number {
+  return auth.getToken.mock.calls.filter(
+    (c) => (c[0] as { forceRefresh?: boolean } | undefined)?.forceRefresh,
+  ).length
 }
 
 function authHeaderOfCall(call: unknown[]): string | null {
@@ -124,6 +145,10 @@ describe("createApiFetch", () => {
     expect(res.status).toBe(401)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+    // LOAD-BEARING für den Text im Overlay: Der Refresh hat hier GEKLAPPT,
+    // abgelehnt hat der Server. „Anmeldung nicht erneuert" wäre die falsche
+    // Diagnose — genau so live gemessen (WorkOS 200, /api/* dauerhaft 401).
+    expect(auth.onSessionExpired).toHaveBeenCalledWith("server-rejected")
   })
 
   it("returns the untouched original 401 when the refresh fails", async () => {
@@ -140,6 +165,8 @@ describe("createApiFetch", () => {
     expect(res.status).toBe(401)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+    // Hier ist der Refresh selbst gescheitert — andere Ursache, anderer Text.
+    expect(auth.onSessionExpired).toHaveBeenCalledWith("refresh-failed")
     // Body wurde nie gelesen — readJson des Aufrufers funktioniert weiter.
     await expect(readJson(res)).resolves.toEqual({ error: "invalid token" })
   })
@@ -160,10 +187,7 @@ describe("createApiFetch", () => {
     ])
 
     expect(results.map((r) => r.status)).toEqual([200, 200, 200])
-    const forced = auth.getToken.mock.calls.filter(
-      (c) => (c[0] as { forceRefresh?: boolean } | undefined)?.forceRefresh,
-    )
-    expect(forced).toHaveLength(1)
+    expect(forcedRefreshCount(auth)).toBe(1)
     expect(auth.onSessionExpired).not.toHaveBeenCalled()
   })
 
@@ -188,6 +212,7 @@ describe("createApiFetch", () => {
 
     await expect(createApiFetch(auth)("/api/me")).rejects.toThrow(/Sitzung abgelaufen/)
     expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+    expect(auth.onSessionExpired).toHaveBeenCalledWith("refresh-failed")
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -380,8 +405,9 @@ describe("createApiFetch", () => {
     expect((await apiFetch("/api/me")).status).toBe(401)
     expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
 
-    // Nach einem erfolgreichen Refresh (z. B. über „Erneut versuchen") muss
-    // derselbe apiFetch wieder durchkommen.
+    // „Erneut versuchen" im Overlay gibt den Abgelaufen-Zustand frei; danach
+    // muss derselbe apiFetch wieder durchkommen.
+    auth.release()
     expect((await apiFetch("/api/me")).status).toBe(200)
     expect(attempt).toBe(2)
   })
@@ -446,5 +472,118 @@ describe("createApiFetch — transiente Fehler", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(auth.onSessionExpired).not.toHaveBeenCalled()
     await expect(readJson(res)).resolves.toEqual({ error: "invalid token" })
+  })
+})
+
+/**
+ * REGRESSION (live gemessen): Alle `/api/*` antworten dauerhaft mit 401, die
+ * Sitzung ist intakt. Beobachtet wurde im Sekundentakt und endlos:
+ * 401 → Force-Refresh (200 von WorkOS) → Retry 401 → Force-Refresh → …
+ * Der Refresh gelingt jedes Mal, der Retry scheitert jedes Mal. Bei einem
+ * echten Backend-Ausfall reißt das das WorkOS-Rate-Limit.
+ *
+ * Der Motor der Schleife: ein erfolgreicher Refresh liefert authkit-react ein
+ * neues `user`-Objekt (`isEquivalentWorkOSSession` vergleicht u. a. `roles`
+ * per Referenz), der AuthGate baut eine neue apiFetch-Instanz, und jeder
+ * Consumer mit `apiFetch` in den Hook-Deps lädt neu. Deshalb steht die Bremse
+ * im AuthGate-Ref und nicht im Closure dieser Fabrik.
+ */
+describe("createApiFetch — kein Dauerfeuer nach dem Abgelaufen-Signal", () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("fährt nach dem ersten Signal keinen weiteren Refresh gegen WorkOS", async () => {
+    fetchMock.mockResolvedValue(response('{"error":"unauthorized"}', { status: 401 }))
+    const auth = authStub()
+    const apiFetch = createApiFetch(auth)
+
+    // Erster Zyklus: Refresh gelingt, der Retry scheitert trotzdem → Overlay.
+    expect((await apiFetch("/api/me")).status).toBe(401)
+    expect(forcedRefreshCount(auth)).toBe(1)
+    expect(auth.onSessionExpired).toHaveBeenCalledTimes(1)
+
+    // Ab hier darf WorkOS nicht mehr angefasst werden.
+    expect((await apiFetch("/api/me")).status).toBe(401)
+    expect((await apiFetch("/api/tenants")).status).toBe(401)
+    expect((await apiFetch("/api/systems")).status).toBe(401)
+    expect(forcedRefreshCount(auth)).toBe(1)
+    // Der 401 bleibt unverändert beim Aufrufer — nur der Refresh entfällt.
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+  })
+
+  /**
+   * Die Bremse muss einen Instanz-Wechsel überleben — sonst greift sie genau
+   * im Schleifenfall nicht, weil dort laufend neue Instanzen entstehen.
+   */
+  it("greift auch für eine frisch gebaute apiFetch-Instanz", async () => {
+    fetchMock.mockResolvedValue(response("", { status: 401 }))
+    const auth = authStub()
+
+    expect((await createApiFetch(auth)("/api/me")).status).toBe(401)
+    expect(forcedRefreshCount(auth)).toBe(1)
+
+    expect((await createApiFetch(auth)("/api/me")).status).toBe(401)
+    expect(forcedRefreshCount(auth)).toBe(1)
+  })
+
+  it("verhindert auch den Refresh, wenn schon `getToken` scheitert", async () => {
+    const auth = authStub(
+      vi.fn(async (opts?: { forceRefresh?: boolean }) => {
+        if (opts?.forceRefresh) return "new"
+        throw new LoginRequiredError()
+      }),
+    )
+    fetchMock.mockResolvedValue(response("", { status: 401 }))
+    const apiFetch = createApiFetch(auth)
+
+    // Erster Zyklus: zweimal Refresh (einmal für das fehlende Token, einmal
+    // nach dem 401), der Request bleibt trotzdem 401 → Signal.
+    expect((await apiFetch("/api/me")).status).toBe(401)
+    expect(auth.onSessionExpired).toHaveBeenCalled()
+    expect(forcedRefreshCount(auth)).toBe(2)
+
+    // Danach kommt der Aufruf nicht einmal mehr bis zum fetch — und vor allem
+    // nicht mehr bis WorkOS.
+    await expect(apiFetch("/api/me")).rejects.toThrow(/Sitzung abgelaufen/)
+    expect(forcedRefreshCount(auth)).toBe(2)
+  })
+
+  it("gibt den Weg nach einem erfolgreichen Retry wieder frei", async () => {
+    fetchMock.mockResolvedValue(response("", { status: 401 }))
+    const auth = authStub()
+    const apiFetch = createApiFetch(auth)
+
+    expect((await apiFetch("/api/me")).status).toBe(401)
+    expect(forcedRefreshCount(auth)).toBe(1)
+
+    auth.release()
+    expect((await apiFetch("/api/me")).status).toBe(401)
+    expect(forcedRefreshCount(auth)).toBe(2)
+  })
+
+  // Die Single-Flight-Mechanik bleibt unangetastet: solange kein Signal
+  // gefallen ist, teilen sich parallele 401 weiterhin EINEN Refresh.
+  it("lässt den Single-Flight-Slot unberührt, solange die Sitzung gilt", async () => {
+    fetchMock.mockImplementation(async (_input: string, init?: RequestInit) =>
+      new Headers(init?.headers).get("authorization") === "Bearer new"
+        ? response('{"ok":true}', { status: 200 })
+        : response("", { status: 401 }),
+    )
+    const auth = authStub()
+    const apiFetch = createApiFetch(auth)
+
+    const results = await Promise.all([apiFetch("/api/me"), apiFetch("/api/tenants")])
+
+    expect(results.map((r) => r.status)).toEqual([200, 200])
+    expect(forcedRefreshCount(auth)).toBe(1)
+    expect(auth.onSessionExpired).not.toHaveBeenCalled()
   })
 })

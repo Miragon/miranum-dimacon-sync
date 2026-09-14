@@ -17,11 +17,40 @@ export interface AuthTokenContext {
    */
   getExpectedOrganizationId: () => string | null
   /**
-   * Signal (KEIN Redirect): die Session ist endgültig abgelaufen. Der AuthGate
-   * zeigt daraufhin ein Overlay — offene Formulareingaben bleiben erhalten.
+   * Signal (KEIN Redirect): der Zugang ist weg. Der AuthGate zeigt daraufhin
+   * ein Overlay — offene Formulareingaben bleiben erhalten.
+   *
+   * Der Grund wird mitgegeben, weil die beiden Fälle für den Nutzer NICHT
+   * dasselbe sind (s. `SessionExpiredReason`).
    */
-  onSessionExpired: () => void
+  onSessionExpired: (reason: SessionExpiredReason) => void
+  /**
+   * Steht der Abgelaufen-Zustand bereits? Dann wird KEIN weiterer Refresh
+   * gegen WorkOS gefahren (s. `refreshOnce`).
+   *
+   * LOAD-BEARING, dass die Quelle im AuthGate ein Ref ist und nicht dieses
+   * Closure hier: Ein erfolgreicher Force-Refresh erzeugt in authkit-react
+   * regelmäßig ein NEUES `user`-Objekt, damit eine neue `apiFetch`-Instanz —
+   * ein Closure-Latch wäre genau dann weg, wenn er gebraucht wird.
+   */
+  isSessionExpired: () => boolean
 }
+
+/**
+ * Warum der Zugang weg ist. LOAD-BEARING für den Text im Overlay: Die beiden
+ * Fälle sehen im Code fast gleich aus, haben für den Nutzer aber nichts
+ * miteinander zu tun.
+ *
+ * - `refresh-failed` — der Anmeldedienst hat die Sitzung nicht erneuert
+ *   (`onRefreshFailure` am Provider oder ein terminaler Fehler aus
+ *   `getToken`). Ein erneuter Versuch kann helfen, eine Neuanmeldung auch.
+ * - `server-rejected` — der Refresh hat GEKLAPPT, unser eigenes Backend weist
+ *   das frische Token trotzdem mit 401 ab (live gemessen: WorkOS antwortete
+ *   200, `/api/*` blieb bei 401). Hier von einer „nicht erneuerten Anmeldung"
+ *   zu sprechen, wäre nachweislich falsch und schickt den Betreiber zur
+ *   falschen Ursache.
+ */
+export type SessionExpiredReason = "refresh-failed" | "server-rejected"
 
 export type ApiFetch = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -149,6 +178,15 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
 
   function refreshOnce(): Promise<RefreshResult> {
     if (!auth) return Promise.resolve({ ok: false, terminal: true, cause: null })
+    // Kein Dauerfeuer: steht der Abgelaufen-Zustand schon, hat der Nutzer das
+    // Overlay vor sich und muss entscheiden. Ohne diese Bremse dreht ein
+    // dauerhaft 401-antwortendes Backend eine Endlosschleife aus
+    // „Force-Refresh gelingt → Retry scheitert → Force-Refresh …" gegen
+    // api.workos.com und reißt dort das Rate-Limit. Freigegeben wird der
+    // Zustand erst durch „Erneut versuchen" im Overlay (dort läuft
+    // `getAccessToken({ forceRefresh: true })` bewusst weiter) oder durch
+    // einen Reload.
+    if (auth.isSessionExpired()) return Promise.resolve({ ok: false, terminal: true, cause: null })
     // Lokale Kopie: die Prüfung läuft in einer Closure, in der `auth` nicht
     // mehr eingeengt ist.
     const expectedOrg = auth.getExpectedOrganizationId()
@@ -189,7 +227,7 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
       const refreshed = await refreshOnce()
       if (!refreshed.ok && !refreshed.terminal) throw transientAuthError(refreshed.cause)
       if (!refreshed.ok) {
-        auth.onSessionExpired()
+        auth.onSessionExpired("refresh-failed")
         throw new Error("Sitzung abgelaufen — bitte neu anmelden")
       }
       token = refreshed.token
@@ -204,13 +242,16 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
     if (!fresh.ok) {
       // Nur ein echter authkit-Fehler beweist, dass die Session weg ist; bei
       // einem Netzfehler bleibt es beim normalen 401-Fehlerbild der Seite.
-      if (fresh.terminal) auth.onSessionExpired()
+      if (fresh.terminal) auth.onSessionExpired("refresh-failed")
       // Original-Response zurück, Body ungelesen — readJson des Aufrufers bleibt intakt.
       return res
     }
 
     const retry = await fetch(input, withAuthHeaders(init, fresh.token))
-    if (retry.status === 401) auth.onSessionExpired()
+    // Der Refresh hat geklappt (`fresh.ok`), der Server lehnt das frische
+    // Token trotzdem ab — das ist KEIN Problem des Anmeldedienstes, und der
+    // Grund darf hier nicht verlorengehen.
+    if (retry.status === 401) auth.onSessionExpired("server-rejected")
     return retry
   }
 }
