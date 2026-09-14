@@ -204,7 +204,16 @@ export function createApiFetch(auth: AuthTokenContext | null): ApiFetch {
           warnOnOrganizationDrift(token, expectedOrg)
           return { ok: true, token }
         },
-        (cause: unknown) => ({ ok: false, terminal: isSessionTerminal(cause), cause }),
+        (cause: unknown) => {
+          // Die Ursache endete hier bisher im `cause`-Feld und damit nirgends.
+          // Genau dieser Pfad — 401 vom Backend, danach erzwungener Refresh —
+          // ist der einzige, der unmittelbar nach einem frischen Login einen
+          // Refresh fährt: authkits eigener Ticker ist erst ~10 s vor
+          // Token-Ablauf dran. Ohne das Log ist der Fehlschlag im Feld nicht
+          // nachvollziehbar (authkit-js schreibt ihn bloss per `console.debug`).
+          console.warn("[auth] Erzwungener Refresh nach 401 gescheitert:", cause)
+          return { ok: false, terminal: isSessionTerminal(cause), cause }
+        },
       )
       .finally(() => {
         pendingRefresh = null

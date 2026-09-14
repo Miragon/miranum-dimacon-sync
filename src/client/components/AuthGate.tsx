@@ -252,14 +252,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
     redirectToSignIn,
   ])
 
-  // Bridge für `onRefreshFailure` am AuthKitProvider (hängt außerhalb des Routers).
-  useEffect(
-    // `onRefreshFailure` feuert genau dann, wenn der Refresh selbst gescheitert
-    // ist — der zweite Grund kann von dort nicht kommen.
-    () => subscribeSessionExpired(() => markSessionExpired("refresh-failed")),
-    [markSessionExpired],
-  )
-
   /**
    * Rückweg IN der Seite. `onRefreshFailure` feuert in authkit-js bei JEDER
    * fehlerhaften Antwort des Refresh-Endpunkts — ein transienter 429/5xx von
@@ -287,10 +279,47 @@ export function AuthGate({ children }: { children: ReactNode }) {
       sessionExpiredRef.current = false
       setExpiredReason(null)
       return true
-    } catch {
+    } catch (err) {
+      // Die Ursache darf nicht verschwinden: `onRefreshFailure` bekommt in
+      // authkit-react NUR `{ signIn }` und nie den Fehler, und authkit-js
+      // schreibt ihn bloss per `console.debug` — in Chrome per Default
+      // ausgeblendet. Ohne diese Zeile ist ein Refresh-Fehlschlag im Feld
+      // nicht nachvollziehbar.
+      console.warn("[auth] Erzwungener Refresh gescheitert:", err)
       return false
     }
   }, [getAccessToken])
+
+  /**
+   * Bridge für `onRefreshFailure` am AuthKitProvider (hängt außerhalb des
+   * Routers) — und zwar mit EINEM stillen Heilungsversuch davor.
+   *
+   * LOAD-BEARING: `onRefreshFailure` ist kein Beweis, dass die Sitzung weg
+   * ist. authkit-js feuert es bei JEDER nicht-ok-Antwort des Refresh-Endpunkts
+   * (429/5xx, Netz-Aussetzer, verlorenes Rennen um ein rotiertes Token) und
+   * steht danach im ERROR-State, aus dem es von sich aus nicht mehr refresht.
+   * Das in-memory Access-Token lebt derweil weiter — die App hinter dem
+   * Overlay funktionierte im gemeldeten Fall vollständig, und genau derselbe
+   * erzwungene Refresh, den „Erneut versuchen" fährt, hat sie geheilt. Diesen
+   * Klick nimmt der Gate dem Nutzer jetzt ab; das Overlay erscheint nur noch,
+   * wenn auch der Heilungsversuch scheitert.
+   *
+   * Der Wiedereintritts-Schutz ist nötig, weil ein scheiternder
+   * `getAccessToken({ forceRefresh: true })` in authkit `onRefreshFailure`
+   * erneut auslöst — ohne die Sperre liefe das im Kreis gegen WorkOS.
+   */
+  const healing = useRef(false)
+  const recoverOrExpire = useCallback(async () => {
+    if (healing.current || sessionExpiredRef.current) return
+    healing.current = true
+    try {
+      if (!(await retrySession())) markSessionExpired("refresh-failed")
+    } finally {
+      healing.current = false
+    }
+  }, [retrySession, markSessionExpired])
+
+  useEffect(() => subscribeSessionExpired(() => void recoverOrExpire()), [recoverOrExpire])
 
   useEffect(() => {
     // Ersatz für `onBeforeAutoRefresh`: authkit-react 0.16.1 reicht die Option
