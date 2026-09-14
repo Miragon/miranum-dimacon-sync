@@ -352,6 +352,20 @@ gemeldete Grund gewinnt (`markSessionExpired` kehrt bei gesetztem Ref sofort
 zurück), sonst überschriebe ihn die Bremse selbst: die liefert ohne jeden
 Refresh `terminal` und damit `refresh-failed`.
 
+**Der AuthGate wartet auf den CLIENT, nicht auf den Benutzer** (`clientReady =
+!isLoading && user`, load-bearing). Der AuthKitProvider hält Client und Session
+in zwei getrennten States: `createClient()` ruft während seiner Initialisierung
+schon `onRefresh` und setzt damit `user`, während `client` noch der
+`NOOP_CLIENT` ist (`getAccessToken: () => Promise.reject(new
+LoginRequiredError())`); `setClient(…)` und `isLoading: false` folgen erst im
+`.then`. Wer in diesem Fenster einen API-Call startet, bekommt SOFORT einen
+terminalen `LoginRequiredError` — ohne dass je ein Request rausgeht. Genau das
+war das Overlay über der fertig geladenen App beim ersten Login (HAR:
+sechs Requests, alle 200). Deshalb hängen `auth`/`apiFetch` UND der Render-Gate
+an `clientReady`; die apiFetch-Identität wechselt dabei genau einmal, und zwar
+bevor irgendein Consumer montiert ist. Die Warteanzeige in diesem Fenster heisst
+„anmeldung wird vorbereitet …" — weitergeleitet wird gerade nichts.
+
 **Wachhund über den authkit-Start** (`AUTH_INIT_TIMEOUT_MS`): `isLoading` kann
 für immer `true` bleiben — authkit-react 0.16.1 ruft `createClient(...).then(...)`
 OHNE `.catch()`, `isLoading: false` steht nur im Erfolgspfad. Lehnt
