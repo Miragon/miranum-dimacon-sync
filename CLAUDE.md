@@ -296,6 +296,26 @@ SDK die Route), `returnTo` gegen Open Redirects validiert
 `visibilitychange`-Refresh als Ersatz für das nicht durchgereichte
 `onBeforeAutoRefresh`.
 
+**`onRefreshFailure` heilt still, bevor das Overlay kommt (load-bearing).**
+Das Signal beweist NICHT, dass die Sitzung weg ist: authkit-js feuert es bei
+JEDER nicht-ok-Antwort des Refresh-Endpunkts (429/5xx, Netz-Aussetzer,
+verlorenes Rennen um ein rotiertes Token) und steht danach im ERROR-State, aus
+dem es von sich aus nicht mehr refresht — das in-memory Access-Token lebt
+derweil weiter. Live gemessen beim ALLERERSTEN Login: Overlay „Anmeldung nicht
+erneuert" über einer vollständig geladenen, funktionierenden App; genau der
+`forceRefresh` hinter „Erneut versuchen" hat es weggeräumt. Der AuthGate fährt
+diesen Versuch deshalb selbst (`recoverOrExpire`), das Overlay erscheint nur
+noch, wenn AUCH er scheitert. Wiedereintritts-Schutz (`healing`-Ref) ist Pflicht
+— ein scheiternder `getAccessToken({ forceRefresh: true })` löst
+`onRefreshFailure` erneut aus. Warum nur der erste Login auffällt:
+`doRefresh` ruft `onRefreshFailure` NUR bei `beginningState.tag !== "INITIAL"`
+— nach einem Reload läuft der wiederherstellende Refresh aus `INITIAL` und ein
+Fehlschlag bleibt damit **stumm**; nach dem Callback steht der State schon auf
+AUTHENTICATED. „Nach dem Reload weg" heißt also nicht „behoben". Und
+`retrySession` protokolliert den Fehler, weil `onRefreshFailure` nur
+`{ signIn }` bekommt und authkit-js selbst bloss `console.debug` schreibt (in
+Chrome per Default ausgeblendet).
+
 **Schleifenschutz um den Callback (load-bearing).** Scheitert der
 Code-Tausch, fängt authkit-js den `CodeExchangeError` in `#handleCallback`
 ab, meldet ihn NUR per `console.error` und lässt `user` auf `null` — die App

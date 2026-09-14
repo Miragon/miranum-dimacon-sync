@@ -78,6 +78,21 @@ function forcedRefreshCount(): number {
   return stubs.getAccessToken.mock.calls.filter((c) => c[0]?.forceRefresh).length
 }
 
+/**
+ * Der Pfad von `onRefreshFailure` am AuthKitProvider — mit einem stillen
+ * Heilungsversuch, der SCHEITERT, damit das Overlay überhaupt erscheint.
+ *
+ * Seit dem Fix versucht der Gate bei `onRefreshFailure` zuerst selbst einen
+ * erzwungenen Refresh; gelingt der, bleibt das Overlay bewusst weg (siehe
+ * „heilt still, ohne das Overlay zu zeigen").
+ */
+async function refreshFailureWithFailedRecovery() {
+  stubs.getAccessToken.mockRejectedValueOnce(new Error("refresh failed"))
+  await act(async () => {
+    notifySessionExpired()
+  })
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -104,10 +119,7 @@ describe("AuthGate — Abgelaufen-Overlay", () => {
     const input = screen.getByLabelText<HTMLInputElement>("cron")
     fireEvent.change(input, { target: { value: "0 6 * * *" } })
 
-    // Das ist der Pfad von `onRefreshFailure` am AuthKitProvider.
-    act(() => {
-      notifySessionExpired()
-    })
+    await refreshFailureWithFailedRecovery()
     expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
     expect(screen.getByLabelText<HTMLInputElement>("cron").value).toBe("0 6 * * *")
 
@@ -131,9 +143,7 @@ describe("AuthGate — Abgelaufen-Overlay", () => {
       </AuthGate>,
     )
 
-    act(() => {
-      notifySessionExpired()
-    })
+    await refreshFailureWithFailedRecovery()
     stubs.getAccessToken.mockRejectedValue(new Error("login required"))
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
@@ -141,6 +151,76 @@ describe("AuthGate — Abgelaufen-Overlay", () => {
       expect(screen.getByText(/Erneuern fehlgeschlagen/)).toBeTruthy()
     })
     expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
+  })
+})
+
+/**
+ * REGRESSION (live gemessen, allererster Login): Das Overlay „Anmeldung nicht
+ * erneuert" stand über einer vollständig geladenen, funktionierenden App — und
+ * genau der erzwungene Refresh hinter „Erneut versuchen" hat es weggeräumt.
+ *
+ * `onRefreshFailure` beweist nicht, dass die Sitzung weg ist: authkit-js feuert
+ * es bei JEDER nicht-ok-Antwort des Refresh-Endpunkts und bleibt danach im
+ * ERROR-State, aus dem es von sich aus nicht mehr refresht. Das in-memory
+ * Access-Token lebt derweil weiter. Der Gate nimmt dem Nutzer den Klick deshalb
+ * ab; das Overlay erscheint nur noch, wenn auch die Heilung scheitert.
+ */
+describe("AuthGate — stille Heilung bei onRefreshFailure", () => {
+  it("heilt still, ohne das Overlay zu zeigen", async () => {
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+
+    await act(async () => {
+      notifySessionExpired()
+    })
+
+    expect(screen.queryByText("Anmeldung nicht erneuert")).toBeNull()
+    expect(forcedRefreshCount()).toBe(1)
+    expect(stubs.signIn).not.toHaveBeenCalled()
+  })
+
+  it("zeigt das Overlay erst, wenn auch die Heilung scheitert", async () => {
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+
+    await refreshFailureWithFailedRecovery()
+
+    expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
+    expect(forcedRefreshCount()).toBe(1)
+  })
+
+  /**
+   * Ein scheiternder `getAccessToken({ forceRefresh: true })` löst in authkit
+   * erneut `onRefreshFailure` aus. Ohne Wiedereintritts-Schutz liefe die
+   * Heilung im Kreis gegen WorkOS — genau das Dauerfeuer, das die 401-Bremse
+   * an anderer Stelle schon verhindert.
+   */
+  it("dreht sich nicht im Kreis, wenn die Heilung selbst wieder meldet", async () => {
+    render(
+      <AuthGate>
+        <AppWithForm />
+      </AuthGate>,
+    )
+
+    stubs.getAccessToken.mockImplementation(async (opts?: { forceRefresh?: boolean }) => {
+      if (opts?.forceRefresh) {
+        notifySessionExpired()
+        throw new Error("refresh failed")
+      }
+      return "tok"
+    })
+    await act(async () => {
+      notifySessionExpired()
+    })
+
+    expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
+    expect(forcedRefreshCount()).toBe(1)
   })
 })
 
@@ -162,9 +242,10 @@ describe("AuthGate — Organisation beim Retry", () => {
       </AuthGate>,
     )
 
-    act(() => {
-      notifySessionExpired()
-    })
+    await refreshFailureWithFailedRecovery()
+    // Der gescheiterte Heilungsversuch protokolliert selbst — sonst zaehlt die
+    // Zusicherung unten zwei Warnungen.
+    warn.mockClear()
     stubs.getAccessToken.mockResolvedValue(jwtFor("org_fremd"))
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
@@ -187,9 +268,7 @@ describe("AuthGate — Organisation beim Retry", () => {
       </AuthGate>,
     )
 
-    act(() => {
-      notifySessionExpired()
-    })
+    await refreshFailureWithFailedRecovery()
     stubs.getAccessToken.mockResolvedValue(jwtFor("org_original"))
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
@@ -206,9 +285,7 @@ describe("AuthGate — Organisation beim Retry", () => {
       </AuthGate>,
     )
 
-    act(() => {
-      notifySessionExpired()
-    })
+    await refreshFailureWithFailedRecovery()
     stubs.getAccessToken.mockRejectedValue(new Error("Missing refresh token"))
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }))
 
@@ -234,9 +311,7 @@ describe("AuthGate — apiFetch-Identität (#17)", () => {
     const initial = seenApiFetch[0]
 
     // Pfad von `onRefreshFailure` am AuthKitProvider: sessionExpired false → true.
-    act(() => {
-      notifySessionExpired()
-    })
+    await refreshFailureWithFailedRecovery()
     expect(screen.getByText("Anmeldung nicht erneuert")).toBeTruthy()
     expect(latestApiFetch()).toBe(initial)
 
