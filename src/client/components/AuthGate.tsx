@@ -102,6 +102,25 @@ function signInNotice(state: {
  */
 export const AUTH_INIT_TIMEOUT_MS = 10_000
 
+/**
+ * Die beiden Warteanzeigen des Vorraums — getrennt, weil sie zwei völlig
+ * verschiedene Zustände benennen: authkit startet noch (`isLoading`) gegen
+ * „wir leiten gerade wirklich um" (Auto-signIn).
+ *
+ * Als Konstanten, weil Kommentare hier und in `lib/auth-callback.ts` sie als
+ * Diagnose-Anker WÖRTLICH zitieren („die Seite steht in der
+ * ‚anmeldung wird vorbereitet …‘-Anzeige"). Ein umbenannter Text hat diese
+ * Zitate schon einmal stillschweigend falsch werden lassen und die Fehlersuche
+ * auf den falschen Zustand geschickt; `auth-wait-labels.test.ts` hält Zitat
+ * und Anzeige jetzt zusammen.
+ */
+export const WAIT_LABELS = {
+  /** authkit initialisiert — es wird gerade nirgendwohin weitergeleitet. */
+  starting: "anmeldung wird vorbereitet …",
+  /** Der Auto-signIn läuft: gleich übernimmt WorkOS die Seite. */
+  redirecting: "weiterleiten zu workos …",
+} as const
+
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, isLoading, signIn, getAccessToken, organizationId } = useAuth()
   const [signInError, setSignInError] = useState<string | null>(null)
@@ -128,6 +147,33 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const codeExchangeFailed = !isLoading && !user && wasAuthCallbackOnLoad()
 
   /**
+   * Der authkit-Client ist WIRKLICH da — nicht bloss der Benutzer.
+   *
+   * LOAD-BEARING (live gemessen, allererster Login auf Stage): Der Provider
+   * hält Client und Session in ZWEI getrennten States. `createClient()` ruft
+   * intern schon während seiner Initialisierung den `onRefresh`-Callback, und
+   * der setzt `user` + `organizationId`. `setClient(…)` und `isLoading: false`
+   * folgen erst, wenn das Promise von `createClient` auflöst. Dazwischen liegt
+   * ein Render-Fenster, in dem `user` steht, `client` aber noch der
+   * `NOOP_CLIENT` ist — dessen `getAccessToken` ist
+   * `() => Promise.reject(new LoginRequiredError())`.
+   *
+   * Wer in diesem Fenster einen authentifizierten Request startet, bekommt
+   * SOFORT einen `LoginRequiredError`, ohne dass je ein HTTP-Request rausgeht:
+   * `isSessionTerminal()` stuft ihn (zu Recht) als endgültig ein, und das
+   * Overlay „Anmeldung nicht erneuert" lag über einer App, die Millisekunden
+   * später vollständig und fehlerfrei lud. Im HAR-Mitschnitt des Nutzers stand
+   * deshalb kein einziger fehlgeschlagener Request.
+   *
+   * `isLoading` markiert exakt dieses Fenster: `setClient(NOOP_CLIENT)` und
+   * `setState(initialState)` (= `isLoading: true`) stehen im Provider im selben
+   * Effekt-Rumpf, `setClient(echterClient)` und `isLoading: false` im selben
+   * `.then`. React batcht beides — es gibt keinen Render, in dem `isLoading`
+   * false und der Client trotzdem NOOP wäre (oder umgekehrt).
+   */
+  const clientReady = !isLoading && user !== null
+
+  /**
    * Wachhund über den authkit-Start. LOAD-BEARING, weil `codeExchangeFailed`
    * oben an `!isLoading` hängt — und `isLoading` kann für immer `true` bleiben:
    * authkit-react 0.16.1 ruft `createClient(...).then(...)` OHNE `.catch()`,
@@ -136,9 +182,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
    * einem abgeschnittenen `state`-Parameter — steht dort ausserhalb des
    * try/catch —, oder gesperrter Site-Storage in `getRefreshToken`), bleibt die
    * Seite ohne diesen Wachhund dauerhaft in der handlungslosen
-   * „weiterleiten …"-Anzeige stehen: kein Guard greift, der Auto-signIn kehrt
-   * bei `isLoading` sofort zurück, und ein Reload reproduziert denselben
-   * Zustand, weil authkit die URL nicht mehr bereinigt hat.
+   * „anmeldung wird vorbereitet …"-Anzeige stehen (`WAIT_LABELS.starting`, NICHT
+   * die Weiterleitungs-Anzeige — umgeleitet wird in diesem Zustand nichts): kein
+   * Guard greift, der Auto-signIn kehrt bei `isLoading` sofort zurück, und ein
+   * Reload reproduziert denselben Zustand, weil authkit die URL nicht mehr
+   * bereinigt hat.
    */
   const [authInitStalled, setAuthInitStalled] = useState(false)
   useEffect(() => {
@@ -338,9 +386,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // LOAD-BEARING: `sessionExpired` darf NICHT in den Deps stehen. Sonst
   // wechselt die apiFetch-Identität und alle Consumer (useEffect-Deps)
   // laufen in eine Refetch-Schleife.
+  //
+  // `clientReady` (statt bloss `user`) ist dafür unbedenklich: Es kippt genau
+  // einmal, von false auf true — und solange es false ist, rendert der Gate
+  // unten seine Warteanzeige STATT der Kinder. Den Wechsel der Identität sieht
+  // damit kein Consumer, denn zum Zeitpunkt des Wechsels existiert noch keiner.
   const auth = useMemo(
     () =>
-      user
+      clientReady
         ? {
             getToken: getAccessToken,
             getExpectedOrganizationId,
@@ -348,14 +401,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
             isSessionExpired,
           }
         : null,
-    [user, getAccessToken, getExpectedOrganizationId, markSessionExpired, isSessionExpired],
+    [clientReady, getAccessToken, getExpectedOrganizationId, markSessionExpired, isSessionExpired],
   )
   const apiFetch = useMemo(() => createApiFetch(auth), [auth])
 
-  if (!user) {
-    // Ohne User gibt es keinen State mehr zu schützen — statt des Overlays
-    // hier der Vollbild-Hinweis, damit kein Fehlerzustand in einer
-    // handlungslosen „weiterleiten …"-Anzeige endet (der Auto-signIn ist in
+  if (!clientReady) {
+    // Kein einsatzbereiter Client = kein State, den es zu schützen gäbe: die
+    // Kinder waren nie montiert (s. `clientReady`). Statt des Overlays
+    // hier der Vollbild-Hinweis, damit kein Fehlerzustand in einer der beiden
+    // handlungslosen Warteanzeigen unten endet (der Auto-signIn ist in
     // all diesen Zuständen bewusst aus).
     const notice = signInNotice({
       signInError,
@@ -373,7 +427,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
           </div>
         ) : (
           <p className="text-ink-3 font-mono text-xs tracking-[0.18em] uppercase">
-            weiterleiten zu workos …
+            {/* Nur wenn wirklich umgeleitet wird, darf das auch dastehen:
+                solange authkit startet, passiert gar keine Weiterleitung. */}
+            {isLoading ? WAIT_LABELS.starting : WAIT_LABELS.redirecting}
           </p>
         )}
       </div>

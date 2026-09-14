@@ -132,7 +132,8 @@ interface ReloadTarget {
  *
  * Gebraucht wird das, wenn `createClient` in authkit-react ablehnt — der
  * Provider hat dafür KEIN `.catch()`, `isLoading` bleibt dann für immer `true`
- * und die App steht in der handlungslosen „weiterleiten …"-Anzeige. Ein
+ * und die App steht in der handlungslosen „anmeldung wird vorbereitet …"-Anzeige
+ * (`WAIT_LABELS.starting` im AuthGate; weitergeleitet wird dabei nichts). Ein
  * einfacher Reload hilft nicht, weil der Auslöser typischerweise in der URL
  * steckt (z. B. ein abgeschnittener `state`-Parameter: `#handleCallback` ruft
  * `JSON.parse(stateParam)` AUSSERHALB seines try/catch, authkit-js 0.20.0) —

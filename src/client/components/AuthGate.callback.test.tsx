@@ -144,7 +144,7 @@ describe("AuthGate — gescheiterter Code-Tausch", () => {
  * OHNE `.catch()`; lehnt `createClient` ab (abgeschnittener `state`-Parameter,
  * gesperrter Site-Storage), bleibt der Provider auf `initialState` stehen. Ohne
  * Wachhund steht die Seite dann dauerhaft in der handlungslosen
- * „weiterleiten …"-Anzeige, und ein Reload reproduziert denselben Zustand,
+ * „anmeldung wird vorbereitet …"-Anzeige, und ein Reload reproduziert denselben Zustand,
  * weil authkit die URL nicht mehr bereinigt hat.
  */
 describe("AuthGate — authkit wird gar nicht erst fertig", () => {
@@ -165,8 +165,9 @@ describe("AuthGate — authkit wird gar nicht erst fertig", () => {
         <p>app</p>
       </AuthGate>,
     )
-    // Vorher ist die Warteanzeige richtig — der Start darf dauern.
-    expect(screen.getByText(/weiterleiten zu workos/i)).toBeTruthy()
+    // Vorher ist die Warteanzeige richtig — der Start darf dauern. Sie spricht
+    // vom Start, nicht von einer Weiterleitung: umgeleitet wird hier nichts.
+    expect(screen.getByText(/anmeldung wird vorbereitet/i)).toBeTruthy()
     expect(screen.queryByText("Anmeldung hängt")).toBeNull()
 
     act(() => {
@@ -175,7 +176,7 @@ describe("AuthGate — authkit wird gar nicht erst fertig", () => {
 
     expect(screen.getByText("Anmeldung hängt")).toBeTruthy()
     expect(screen.getByRole("button", { name: "Neu starten" })).toBeTruthy()
-    expect(screen.queryByText(/weiterleiten zu workos/i)).toBeNull()
+    expect(screen.queryByText(/anmeldung wird vorbereitet/i)).toBeNull()
     // Ein Redirect ist von hier aus ohnehin nicht möglich: der Provider
     // liefert im hängenden Zustand noch seinen NOOP-Client.
     expect(stubs.signIn).not.toHaveBeenCalled()
