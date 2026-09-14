@@ -144,7 +144,15 @@ export function reloadWithoutAuthParams(target: ReloadTarget = window): void {
   try {
     const url = new URL(target.location.href)
     url.search = ""
-    target.location.replace(url.toString())
+    const next = url.toString()
+    // Gab es gar keinen Query-String, ist `next` mit der aktuellen Adresse
+    // identisch — und `location.replace` wäre dann bei einem vorhandenen
+    // Fragment (z. B. `/modules#dimacon-zugangsdaten`) laut HTML-Spec nur eine
+    // Fragment-Navigation: gleiche URL ohne Fragment + Fragment non-null ⇒ kein
+    // Reload, der Notausgang täte sichtbar nichts. Betrifft den Stall-Grund
+    // „gesperrter Site-Storage", der ohne `?code=` auf jeder Route auftritt.
+    if (next === target.location.href) target.location.reload()
+    else target.location.replace(next)
   } catch {
     // Keine parsbare Adresse: der einfache Reload ist immer noch besser als
     // eine Seite ohne jeden Rückweg.

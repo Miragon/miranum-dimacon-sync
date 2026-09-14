@@ -157,6 +157,23 @@ describe("reloadWithoutAuthParams", () => {
     expect(registerSignInAttempt()).toBe(true)
   })
 
+  /**
+   * REGRESSION: Ohne Query-String ist die bereinigte Adresse mit der aktuellen
+   * identisch. `location.replace` ist dann laut HTML-Spec nur eine
+   * Fragment-Navigation (gleiche URL ohne Fragment + Fragment non-null) — die
+   * Seite lädt NICHT neu und „Neu starten" täte sichtbar nichts. Der Stall-Grund
+   * „gesperrter Site-Storage in `getRefreshToken`" braucht kein `?code=` und
+   * trifft damit auch Anker-Adressen wie `/modules#dimacon-zugangsdaten`.
+   */
+  it("lädt neu, statt nur ans Fragment zu springen, wenn es keinen Query gibt", () => {
+    const target = fakeTarget("https://app.example.com/modules#dimacon-zugangsdaten")
+
+    reloadWithoutAuthParams(target)
+
+    expect(target.location.reload).toHaveBeenCalledTimes(1)
+    expect(target.location.replace).not.toHaveBeenCalled()
+  })
+
   it("lädt notfalls einfach neu, wenn die Adresse nicht parsbar ist", () => {
     const target = fakeTarget("kein:// gültiger url")
 
