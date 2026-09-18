@@ -3,7 +3,9 @@ import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
 import {
   CREATION_DISABLED_REASON,
   INCOMPLETE_BASE_REASON,
+  buildClockinCreationPolicy,
   buildLooseNameIndex,
+  clockinCreationBlockReason,
   creationBlockReason,
   looseNameKey,
 } from "./creation-policy.js"
@@ -138,5 +140,80 @@ describe("creationBlockReason", () => {
     )
     expect(creationBlockReason(candidate, policy({ blocked }))).toContain("mehrdeutige Zuordnung")
     expect(creationBlockReason(candidate, policy())).toBe("unvollständiger Name in Clockin")
+  })
+})
+
+describe("clockinCreationBlockReason (Anlage Dimacon → Clockin)", () => {
+  /** Policy wie im Lauf: aus Kandidaten, ungepaarten und allen Clockin-Datensätzen */
+  function reasonFor(
+    candidate: DimaconEmployeeFull,
+    context: {
+      otherCandidates?: DimaconEmployeeFull[]
+      unpaired?: ClockinEmployeeInfo[]
+      allClockin?: ClockinEmployeeInfo[]
+    } = {},
+  ) {
+    const unpaired = context.unpaired ?? []
+    const p = buildClockinCreationPolicy(
+      { dimaconOnly: [candidate, ...(context.otherCandidates ?? [])], clockinOnly: unpaired },
+      context.allClockin ?? unpaired,
+    )
+    return clockinCreationBlockReason(candidate, p)
+  }
+
+  it("allows a real person with a new personnel number", () => {
+    expect(reasonFor(dim({ personnelNumber: "00077" }))).toBeNull()
+  })
+
+  it("blocks placeholder records without a letter in a name part", () => {
+    expect(reasonFor(dim({ firstName: "Subunternehmer", lastName: "!" }))).toBe(
+      "kein vollständiger Personenname in Dimacon (Platzhalter?)",
+    )
+  })
+
+  it("accepts names in any script", () => {
+    expect(
+      reasonFor(dim({ firstName: "Иван", lastName: "Петров", personnelNumber: "9" })),
+    ).toBeNull()
+  })
+
+  it("blocks records without a personnel number", () => {
+    expect(reasonFor(dim({ firstName: "Daniel", lastName: "Alt" }))).toBe(
+      "keine Personalnummer in Dimacon — ohne sie ist keine eindeutige Zuordnung möglich",
+    )
+  })
+
+  it("points to the clockin twin when the personnel number is missing in dimacon", () => {
+    expect(reasonFor(dim(), { unpaired: [clk({ id: 7, personnelNumber: "00030" })] })).toBe(
+      "keine Personalnummer in Dimacon — in Clockin steht Anna Muster #7, PNr 00030; Personalnummer in Dimacon pflegen",
+    )
+  })
+
+  it("blocks a personnel number that another clockin record already carries", () => {
+    const holder = clk({ id: 3, firstName: "Bo", lastName: "Z", personnelNumber: "P-5" })
+    expect(reasonFor(dim({ personnelNumber: "p-5" }), { allClockin: [holder] })).toBe(
+      "Personalnummer p-5 ist in Clockin bereits vergeben (Bo Z #3, PNr P-5)",
+    )
+  })
+
+  it("blocks a personnel number that occurs twice among the candidates", () => {
+    const twin = dim({ id: "d2", firstName: "Bo", lastName: "Z", personnelNumber: "P-5" })
+    expect(reasonFor(dim({ personnelNumber: "P-5" }), { otherCandidates: [twin] })).toBe(
+      "Personalnummer P-5 ist in Dimacon mehrfach vergeben",
+    )
+  })
+
+  it("blocks a similar name in clockin under a different personnel number", () => {
+    const twin = clk({ id: 7, personnelNumber: "00030" })
+    expect(reasonFor(dim({ personnelNumber: "30" }), { unpaired: [twin] })).toBe(
+      "ähnlicher Name in Clockin vorhanden (Anna Muster #7, PNr 00030) — Personalnummern abgleichen",
+    )
+  })
+
+  it("ignores namesakes that are already paired in clockin", () => {
+    // Gepaarte Clockin-Datensätze gehören per PNr zu einer ANDEREN Person —
+    // ein Namensvetter mit neuer Nummer darf angelegt werden.
+    const paired = clk({ id: 7, personnelNumber: "P-1" })
+    expect(reasonFor(dim({ personnelNumber: "P-2" }), { allClockin: [paired] })).toBeNull()
   })
 })

@@ -276,8 +276,7 @@ export async function runDimaconClockinSync(
     ).catch(onPrefetchFailure("Clockin-Projekte")),
   ])
 
-  const onCustomerAmbiguous = (message: string) => {
-    log.warn("ambiguous clockin customer", { message })
+  const onCustomerReport = (message: string) => {
     errors.push({ scope: "customer", message })
   }
 
@@ -294,7 +293,7 @@ export async function runDimaconClockinSync(
     customerMapping_,
     onMappingWarning,
     inventory.matching,
-    onCustomerAmbiguous,
+    onCustomerReport,
     customerIndex,
   )
   const upserter = new ProjectUpserter(
@@ -377,12 +376,17 @@ export async function runDimaconClockinSync(
           try {
             const mapping = await employeeMatcher.match(employee)
             if (mapping) desiredEmployeeIds.push(mapping.clockinId)
-            else
+            else {
+              const name = `${employee.firstName} ${employee.lastName}`
+              const personnelNumber = employee.personnelNumber?.trim()
               errors.push({
                 scope: "employee",
                 refId: employeeId,
-                message: `employee ${employee.firstName} ${employee.lastName} not matched in clockin`,
+                message: personnelNumber
+                  ? `Mitarbeiter ${name} (PNr ${personnelNumber}) in Clockin nicht eindeutig gefunden — nicht dem Projekt zugeordnet`
+                  : `Mitarbeiter ${name} hat in Dimacon keine Personalnummer — nicht dem Projekt zugeordnet`,
               })
+            }
           } catch (err) {
             const message = formatError(err)
             errors.push({ scope: "employee", refId: employeeId, message })

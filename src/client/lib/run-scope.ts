@@ -43,7 +43,16 @@ export interface RunScope {
 export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
   "dimacon-clockin": {
     steps: [
-      { key: "employees", label: "Mitarbeiter-Abgleich (⇄ Stammdaten)", default: true },
+      {
+        key: "employees",
+        label: "Mitarbeiter-Abgleich (⇄ Stammdaten)",
+        default: true,
+        note:
+          "Zugeordnet wird ausschließlich über die Personalnummer. In Clockin angelegt werden nur aktive " +
+          "Dimacon-Mitarbeiter mit vollständigem Namen und einer Personalnummer, die dort noch nicht vergeben ist — " +
+          "und nur, wenn in Clockin kein namensähnlicher Mitarbeiter ohne passende Personalnummer existiert. Alle " +
+          "übersprungenen Kandidaten stehen mit Begründung im Ergebnis.",
+      },
       {
         key: "employeeCreateInDimacon",
         label: "Mitarbeiter in Dimacon anlegen",
@@ -57,7 +66,14 @@ export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
       },
       { key: "customers", label: "Kunden anlegen", default: true },
       { key: "projects", label: "Projekte anlegen/aktualisieren", default: true },
-      { key: "assignments", label: "Mitarbeiter-Zuordnung", default: true },
+      {
+        key: "assignments",
+        label: "Mitarbeiter-Zuordnung",
+        default: true,
+        note:
+          "Eingeplante Mitarbeiter werden über ihre Personalnummer in Clockin gefunden — ohne Personalnummer " +
+          "in Dimacon bleibt ein Mitarbeiter unzugeordnet und steht als Fehler im Ergebnis.",
+      },
       {
         key: "archive",
         label: "Archivierung",

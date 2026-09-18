@@ -28,58 +28,49 @@ describe("EmployeeMatcher.match", () => {
     expect(searchForEmployeesMock).not.toHaveBeenCalled()
   })
 
-  it("falls back to the search for unseeded ids", async () => {
-    searchForEmployeesMock.mockResolvedValue({
-      data: [{ id: 42, first_name: "Anna", last_name: "Müller" }],
-    })
+  it("falls back to the personnel-number search for unseeded ids", async () => {
+    searchForEmployeesMock.mockResolvedValue({ data: [{ id: 42, personnel_number: "00030" }] })
 
     const matcher = new EmployeeMatcher(stubClient, silentLog, new Map([["other-id", 77]]))
-    const m = await matcher.match({ id: "d1", firstName: "Anna", lastName: "Müller" })
+    const m = await matcher.match({
+      id: "d1",
+      firstName: "Anna",
+      lastName: "Müller",
+      personnelNumber: "00030",
+    })
 
     expect(m?.clockinId).toBe(42)
     expect(searchForEmployeesMock).toHaveBeenCalledTimes(1)
+    expect(searchForEmployeesMock.mock.calls[0][0].body).toEqual({
+      scopes: [{ name: "byPersonnelNumber", parameters: ["00030"] }],
+    })
   })
 
-  it("stage 1: returns the only candidate when lastName matches uniquely", async () => {
-    searchForEmployeesMock.mockResolvedValue({
-      data: [{ id: 42, first_name: "Anna", last_name: "Müller" }],
-    })
-
+  it("does not search by name when the dimacon employee has no personnel number", async () => {
+    // Früher: Nachnamen-Suche, ein einzelner Treffer galt ohne Vornamen-
+    // Prüfung als Match — jeder „Müller" in Clockin wäre es gewesen.
     const matcher = new EmployeeMatcher(stubClient, silentLog)
     const m = await matcher.match({ id: "d1", firstName: "Anna", lastName: "Müller" })
 
-    expect(m?.clockinId).toBe(42)
-    expect(searchForEmployeesMock).toHaveBeenCalledTimes(1)
+    expect(m).toBeNull()
+    expect(searchForEmployeesMock).not.toHaveBeenCalled()
   })
 
-  it("stage 2: filters by firstName when lastName has multiple hits", async () => {
+  it("accepts only exact personnel-number hits from the server", async () => {
+    // Der Scope kennt Wildcards — eine unscharfe Antwort darf nie treffen.
     searchForEmployeesMock.mockResolvedValue({
       data: [
-        { id: 1, first_name: "Hans", last_name: "Müller" },
-        { id: 2, first_name: "Anna", last_name: "Müller" },
-      ],
-    })
-
-    const matcher = new EmployeeMatcher(stubClient, silentLog)
-    const m = await matcher.match({ id: "d2", firstName: "anna", lastName: "Müller" })
-
-    expect(m?.clockinId).toBe(2)
-  })
-
-  it("stage 3: falls back to email when firstName + lastName collide", async () => {
-    searchForEmployeesMock.mockResolvedValue({
-      data: [
-        { id: 1, first_name: "Anna", last_name: "Müller", email: "anna1@example.com" },
-        { id: 2, first_name: "Anna", last_name: "Müller", email: "anna2@example.com" },
+        { id: 1, personnel_number: "000300" },
+        { id: 2, personnel_number: " 00030 " },
       ],
     })
 
     const matcher = new EmployeeMatcher(stubClient, silentLog)
     const m = await matcher.match({
-      id: "d3",
+      id: "d2",
       firstName: "Anna",
       lastName: "Müller",
-      email: "anna2@example.com",
+      personnelNumber: "00030",
     })
 
     expect(m?.clockinId).toBe(2)
@@ -88,35 +79,38 @@ describe("EmployeeMatcher.match", () => {
   it("returns null when no candidate matches", async () => {
     searchForEmployeesMock.mockResolvedValue({ data: [] })
     const matcher = new EmployeeMatcher(stubClient, silentLog)
-    const m = await matcher.match({ id: "d4", firstName: "X", lastName: "Y" })
+    const m = await matcher.match({
+      id: "d4",
+      firstName: "X",
+      lastName: "Y",
+      personnelNumber: "P-4",
+    })
     expect(m).toBeNull()
   })
 
-  it("returns null when ambiguity remains after all stages", async () => {
+  it("returns null when two clockin employees share the personnel number", async () => {
     searchForEmployeesMock.mockResolvedValue({
       data: [
-        { id: 1, first_name: "Anna", last_name: "Müller", email: "x@y.com" },
-        { id: 2, first_name: "Anna", last_name: "Müller", email: "x@y.com" },
+        { id: 1, personnel_number: "P-5" },
+        { id: 2, personnel_number: "P-5" },
       ],
     })
 
     const matcher = new EmployeeMatcher(stubClient, silentLog)
     const m = await matcher.match({
       id: "d5",
-      firstName: "Anna",
-      lastName: "Müller",
-      email: "x@y.com",
+      firstName: "A",
+      lastName: "B",
+      personnelNumber: "P-5",
     })
     expect(m).toBeNull()
   })
 
   it("caches the mapping per dimacon employee id", async () => {
-    searchForEmployeesMock.mockResolvedValue({
-      data: [{ id: 99, first_name: "Bo", last_name: "Z" }],
-    })
+    searchForEmployeesMock.mockResolvedValue({ data: [{ id: 99, personnel_number: "P-9" }] })
 
     const matcher = new EmployeeMatcher(stubClient, silentLog)
-    const employee = { id: "same", firstName: "Bo", lastName: "Z" }
+    const employee = { id: "same", firstName: "Bo", lastName: "Z", personnelNumber: "P-9" }
     await matcher.match(employee)
     await matcher.match(employee)
 
