@@ -172,6 +172,15 @@ describe("Bedingungen am Schritt (note)", () => {
     expect(step?.note).toMatch(/OHNE Team/)
   })
 
+  it("nennt beim Mitarbeiter-Abgleich die Personalnummer als einzigen Schlüssel", () => {
+    const employees = RUN_SCOPE_SPECS[CLOCKIN].steps.find((s) => s.key === "employees")
+    expect(employees?.note).toMatch(/ausschließlich über die Personalnummer/)
+    expect(employees?.note).toMatch(/namensähnlicher/)
+
+    const assignments = RUN_SCOPE_SPECS[CLOCKIN].steps.find((s) => s.key === "assignments")
+    expect(assignments?.note).toMatch(/Personalnummer/)
+  })
+
   it("nennt beim Archivieren den Planungshorizont", () => {
     const step = RUN_SCOPE_SPECS[CLOCKIN].steps.find((s) => s.key === "archive")
     expect(step?.note).toMatch(/Planungshorizont/)

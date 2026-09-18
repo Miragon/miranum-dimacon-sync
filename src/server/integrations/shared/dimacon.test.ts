@@ -35,9 +35,9 @@ const {
 const stubClient = {} as never
 
 /**
- * Diese Felder MÜSSEN geladen werden, damit `dimaconEmployeeUpdateBody` sie
- * beim Voll-Replace-PUT zurückspiegeln kann (Issue #17 — sonst verlieren
- * Mitarbeiter beim Personalnummer-Backfill ihr Team).
+ * Der Loader reicht diese Felder vollständig durch. Das Dimacon-Mitarbeiter-
+ * PUT ist ein Voll-Replace (Issue #17): wer wieder nach Dimacon schreibt, muss
+ * ALLE diese Felder zurückspiegeln, sonst verlieren Mitarbeiter z. B. ihr Team.
  */
 const ECHOED_FIELDS = [
   "role",

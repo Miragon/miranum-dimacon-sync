@@ -344,6 +344,98 @@ describe("runEmployeeSync — Anlage Clockin → Dimacon", () => {
   })
 })
 
+describe("runEmployeeSync — Anlage Dimacon → Clockin", () => {
+  it("legt die Konstellation aus dem Produktiv-dryRun nicht doppelt an", async () => {
+    // Nachgestellt aus einem Produktiv-dryRun, der zwei Mitarbeiter zugleich als
+    // „reported" UND als „created → Clockin" zeigte: archivierte Alt-Datensätze
+    // ohne PNr stehen vor dem aktiven Datensatz, dazu ein Platzhalter und ein
+    // altes Admin-Konto ohne PNr.
+    loadEmployeesWithEmailMock.mockResolvedValue([
+      dim({ id: "old-carlo-1", firstName: "Carlo", lastName: "Rossi", isArchived: true }),
+      dim({ id: "old-carlo-2", firstName: "Carlo", lastName: "Rossi", isArchived: true }),
+      dim({ id: "old-bora", firstName: "Bora ", lastName: "Demir", isArchived: true }),
+      dim({ id: "carlo", firstName: "Carlo", lastName: "Rossi", personnelNumber: "00011" }),
+      dim({ id: "bora", firstName: "Bora", lastName: "Demir", personnelNumber: "00012" }),
+      dim({ id: "sub", firstName: "Subunternehmer", lastName: "!" }),
+      dim({ id: "1", firstName: "Daniel", lastName: "Alt", role: "CONSTRUCTION_LEADER" }),
+      dim({ id: "daniel", firstName: "Daniel", lastName: "Neu", personnelNumber: "00013" }),
+    ])
+    getAListOfEmployeesMock.mockResolvedValue(
+      page(1, 1, [
+        row(101, { first_name: "Carlo", last_name: "Rossi", personnel_number: "00011" }),
+        row(102, { first_name: "Bora", last_name: "Demir", personnel_number: "00012" }),
+        row(103, { first_name: "Daniel", last_name: "Neu", personnel_number: "00013" }),
+      ]),
+    )
+
+    const outcome = await run()
+
+    expect(clockinCreateEmployeeMock).not.toHaveBeenCalled()
+    expect(dimaconCreateEmployeeMock).not.toHaveBeenCalled()
+    expect(dimaconUpdateEmployeeMock).not.toHaveBeenCalled()
+    expect([...outcome.pairs.entries()]).toEqual([
+      ["carlo", 101],
+      ["bora", 102],
+      ["daniel", 103],
+    ])
+    // Keine „reported"-Zeile mehr für die archivierten Alt-Datensätze
+    expect(outcome.rows.filter((r) => r.status === "reported")).toEqual([])
+    expect(outcome.rows.filter((r) => r.direction === "dimacon→clockin")).toEqual([
+      {
+        direction: "dimacon→clockin",
+        dimaconId: "sub",
+        name: "Subunternehmer !",
+        status: "skipped",
+        reason: "kein vollständiger Personenname in Dimacon (Platzhalter?)",
+      },
+      {
+        direction: "dimacon→clockin",
+        dimaconId: "1",
+        name: "Daniel Alt",
+        status: "skipped",
+        reason: "keine Personalnummer in Dimacon — ohne sie ist keine eindeutige Zuordnung möglich",
+      },
+    ])
+  })
+
+  it("legt einen echten Neuzugang mit Personalnummer weiterhin an", async () => {
+    loadEmployeesWithEmailMock.mockResolvedValue([
+      dim({ id: "new", firstName: "Nora", lastName: "Neu", personnelNumber: "00099" }),
+    ])
+
+    const outcome = await run()
+
+    expect(clockinCreateEmployeeMock).toHaveBeenCalledTimes(1)
+    expect(clockinCreateEmployeeMock.mock.calls[0][0].body).toMatchObject({
+      first_name: "Nora",
+      last_name: "Neu",
+      personnel_number: "00099",
+    })
+    expect(outcome.pairs.get("new")).toBe(55)
+  })
+
+  it("meldet einen Namensvetter unter anderer Personalnummer statt ihn anzulegen", async () => {
+    loadEmployeesWithEmailMock.mockResolvedValue([
+      dim({ id: "d1", firstName: "Max", lastName: "Muster", personnelNumber: "30" }),
+    ])
+    getAListOfEmployeesMock.mockResolvedValue(
+      page(1, 1, [row(7, { first_name: "Max", last_name: "Muster", personnel_number: "00030" })]),
+    )
+
+    const outcome = await run()
+
+    expect(clockinCreateEmployeeMock).not.toHaveBeenCalled()
+    expect(outcome.rows).toContainEqual({
+      direction: "dimacon→clockin",
+      dimaconId: "d1",
+      name: "Max Muster",
+      status: "skipped",
+      reason:
+        "ähnlicher Name in Clockin vorhanden (Max Muster #7, PNr 00030) — Personalnummern abgleichen",
+    })
+  })
+})
+
 describe("runEmployeeSync — vorgeladene Dimacon-Mitarbeiter (#15)", () => {
   it("verzichtet auf den eigenen Abruf, wenn der Orchestrator sie schon hat", async () => {
     const outcome = await run({ preloaded: [dim({ id: "d1", personnelNumber: "P-1" })] })

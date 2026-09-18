@@ -62,7 +62,7 @@ function clk(overrides: Partial<ClockinEmployeeInfo> = {}): ClockinEmployeeInfo 
 }
 
 function pair(d: DimaconEmployeeFull, c: ClockinEmployeeInfo): EmployeePair {
-  return { dimacon: d, clockin: c, matchedBy: "name" }
+  return { dimacon: d, clockin: c }
 }
 
 function syncer(dryRun = false): InstanceType<typeof EmployeeSyncer> {
@@ -157,45 +157,20 @@ describe("EmployeeSyncer.alignPair", () => {
     expect(dimaconUpdateEmployeeMock).not.toHaveBeenCalled()
   })
 
-  it("echoes the full dimacon body when backfilling the personnel number", async () => {
-    // Regression-Schutz: das Dimacon-PUT ist ein Voll-Replace — der Body muss
-    // alle bestehenden Felder zurückspiegeln, sonst werden sie gelöscht.
+  it("never writes to dimacon — not even a personnel number only clockin knows", async () => {
+    // Früher schrieb der Abgleich eine in Dimacon fehlende Personalnummer
+    // zurück. Seit die Zuordnung nur noch über die Personalnummer läuft, gibt
+    // es keinen Namens-Treffer mehr, auf den sich das stützen könnte.
     const row = await syncer().alignPair(
       pair(
-        dim({
-          role: "BACKOFFICE",
-          phoneNumber: "0151 123",
-          team: "Team Nord",
-          additionalInformation: "Zusatzinfo",
-          profilePicture: "pic-1",
-          color: "#123456",
-          timeTrackingActive: false,
-        }),
+        dim({ phoneNumber: "0151 123" }),
         clk({ personnelNumber: "P-7", phoneWork: "0151 123" }),
       ),
     )
 
-    expect(row.status).toBe("updated")
-    expect(row.reason).toContain("Personalnummer P-7 nach Dimacon übernommen")
+    expect(row.status).toBe("unchanged")
+    expect(dimaconUpdateEmployeeMock).not.toHaveBeenCalled()
     expect(clockinUpdateEmployeeMock).not.toHaveBeenCalled()
-    expect(dimaconUpdateEmployeeMock).toHaveBeenCalledTimes(1)
-    expect(dimaconUpdateEmployeeMock.mock.calls[0][0]).toMatchObject({
-      path: { employeeId: "d1" },
-    })
-    // team/additionalInformation/profilePicture MÜSSEN im Body stehen —
-    // sonst löscht das Voll-Replace sie (Issue #17, Team-Verlust).
-    expect(dimaconUpdateEmployeeMock.mock.calls[0][0].body).toEqual({
-      role: "BACKOFFICE",
-      firstName: "Anna",
-      lastName: "Muster",
-      personnelNumber: "P-7",
-      phoneNumber: "0151 123",
-      team: "Team Nord",
-      profilePicture: "pic-1",
-      additionalInformation: "Zusatzinfo",
-      color: "#123456",
-      timeTrackingActive: false,
-    })
   })
 
   it("only reports archived dimacon employees without touching either side", async () => {
@@ -268,7 +243,7 @@ describe("EmployeeSyncer dryRun", () => {
   it("performs no sdk calls for align and both create directions", async () => {
     const dry = syncer(true)
 
-    // Drift + Backfill gleichzeitig — beide Schreibpfade müssen trocken bleiben
+    // Namens-Drift + beide Anlage-Richtungen — alle Schreibpfade bleiben trocken
     const aligned = await dry.alignPair(
       pair(
         dim({ firstName: "Anna-Lena", phoneNumber: "0151 123" }),

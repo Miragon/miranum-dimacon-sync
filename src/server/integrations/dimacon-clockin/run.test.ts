@@ -267,13 +267,14 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
   })
 
-  it("still protects the resolved project id when the customer match is ambiguous", async () => {
-    // Zwei unscharfe Treffer ohne exakten Match ⇒ weder verknüpfen noch anlegen.
-    searchForCustomersMock.mockResolvedValue({
+  it("still protects the resolved project id when clockin holds a customer twice", async () => {
+    // Zwei Clockin-Kunden mit exakt der Nummer ⇒ weder verknüpfen noch anlegen.
+    getAListOfCustomersMock.mockResolvedValue({
       data: [
-        { id: 8, company: "Muster Bau GmbH", identifier: "D-1000" },
-        { id: 9, company: "Muster Nord GmbH", identifier: "D-1001" },
+        { id: 7, company: "Muster GmbH", identifier: "D-100" },
+        { id: 8, company: "Muster GmbH", identifier: "D-100" },
       ],
+      meta: { last_page: 1 },
     })
 
     const result = await runDimaconClockinSync(testCtx(), { date: DATE })
@@ -281,7 +282,7 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     expect(result.errors).toContainEqual(
       expect.objectContaining({
         scope: "customer",
-        message: expect.stringContaining("2 Clockin-Kandidaten"),
+        message: expect.stringContaining('2 Clockin-Kunden tragen die Nummer „D-100"'),
       }),
     )
     expect(createCustomerMock).not.toHaveBeenCalled()
@@ -291,6 +292,27 @@ describe("runDimaconClockinSync (Orchestrierung)", () => {
     // ... und die Archiv-Phase bekommt sie als geschützt gemeldet
     expect(archiveUnplannedMock).toHaveBeenCalledTimes(1)
     expect(archivedSet().has(CLOCKIN_PROJECT_ID)).toBe(true)
+  })
+
+  it("creates the customer with a notice when clockin only holds similar ones", async () => {
+    // Früher „nicht eindeutig": der Kunde blieb dauerhaft unverknüpft.
+    searchForCustomersMock.mockResolvedValue({
+      data: [
+        { id: 8, company: "Muster Bau GmbH", identifier: "D-1000" },
+        { id: 9, company: "Muster Nord GmbH", identifier: "D-1001" },
+      ],
+    })
+
+    const result = await runDimaconClockinSync(testCtx(), { date: DATE })
+
+    expect(createCustomerMock).toHaveBeenCalledTimes(1)
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        scope: "customer",
+        message: expect.stringContaining("2 ähnliche Clockin-Kunden (IDs 8, 9)"),
+      }),
+    )
+    expect(result.projects[0].clockinProjectId).toBe(CLOCKIN_PROJECT_ID)
   })
 
   it("detects duplicate customer names in the full dimacon inventory, not just the day slice", async () => {

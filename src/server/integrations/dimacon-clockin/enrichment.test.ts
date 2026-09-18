@@ -85,6 +85,7 @@ const preloadedEmployees = [
     color: "#000",
     timeTrackingActive: true,
     isArchived: false,
+    personnelNumber: "P-1",
     email: "anna@example.com",
   },
 ]
@@ -116,8 +117,9 @@ beforeEach(() => {
     id: req.path.customerId,
     name: req.path.customerId,
   }))
-  getAllEmployeesMock.mockResolvedValue([{ id: "e-1", firstName: "Anna", lastName: "Muster" }])
-  getAllUsersMock.mockResolvedValue([{ employeeId: "e-1", emailAddress: "anna@example.com" }])
+  getAllEmployeesMock.mockResolvedValue([
+    { id: "e-1", firstName: "Anna", lastName: "Muster", personnelNumber: "P-1" },
+  ])
 })
 
 function bulkOptions(overrides: Record<string, unknown> = {}) {
@@ -159,7 +161,7 @@ describe("enrich — Sammelabrufe", () => {
     expect(enriched.jobs.size).toBe(10)
     expect(enriched.projects.get("proj-3")?.name).toBe("Projekt 3")
     expect(enriched.customers.get("cust-3")?.name).toBe("Kunde 3")
-    expect(enriched.employees.get("e-1")?.email).toBe("anna@example.com")
+    expect(enriched.employees.get("e-1")?.personnelNumber).toBe("P-1")
   })
 
   it("joins team assignments over teamId and date", async () => {
@@ -363,8 +365,9 @@ describe("enrich — Sammelabrufe", () => {
     const enriched = await enrich(stubClient, bulkOptions({ employees: undefined }))
 
     expect(getAllEmployeesMock).toHaveBeenCalledTimes(1)
-    expect(getAllUsersMock).toHaveBeenCalledTimes(1)
-    expect(enriched.employees.get("e-1")?.email).toBe("anna@example.com")
+    // Die E-Mail aus den User-Konten braucht die Zuordnung nicht mehr
+    expect(getAllUsersMock).not.toHaveBeenCalled()
+    expect(enriched.employees.get("e-1")?.personnelNumber).toBe("P-1")
   })
 })
 

@@ -13,12 +13,19 @@ import { todayInBerlin } from "../../shared/time.js"
 import {
   CREATION_DISABLED_REASON,
   INCOMPLETE_BASE_REASON,
+  buildClockinCreationPolicy,
   buildLooseNameIndex,
+  clockinCreationBlockReason,
   creationBlockReason,
 } from "./creation-policy.js"
 import { matchEmployees } from "./matcher.js"
 import { EmployeeSyncer } from "./syncer.js"
-import type { ClockinEmployeeInfo, EmployeeSyncCounts, EmployeeSyncRow } from "./types.js"
+import type {
+  ClockinEmployeeInfo,
+  EmployeeSyncCounts,
+  EmployeeSyncDirection,
+  EmployeeSyncRow,
+} from "./types.js"
 
 export interface EmployeeSyncError {
   scope: "load" | "employee" | "mapping"
@@ -54,14 +61,15 @@ const MAX_LOGGED_REASONS = 20
 
 /**
  * Bidirektionaler Mitarbeiter-Stammdaten-Abgleich Dimacon ⇄ Clockin:
- * fehlende Mitarbeiter werden auf beiden Seiten angelegt; bei gematchten
- * Paaren gewinnt Dimacon (Rückschreibung nur für fehlende Personalnummern);
- * Archivierungen werden nur gemeldet. Läuft als Schritt des
- * dimacon-clockin-Syncs VOR der Tagesplanung, damit frisch angelegte
- * Mitarbeiter sofort zuordenbar sind.
+ * Zuordnung ausschließlich über die Personalnummer; fehlende Mitarbeiter
+ * werden auf beiden Seiten angelegt; bei gematchten Paaren gewinnt Dimacon;
+ * Archivierungen werden nur gemeldet. Nach Dimacon wird nur bei einer Anlage
+ * geschrieben. Läuft als Schritt des dimacon-clockin-Syncs VOR der
+ * Tagesplanung, damit frisch angelegte Mitarbeiter sofort zuordenbar sind.
  *
- * Fail-safe (Issue #17): Die Anlage Clockin → Dimacon läuft nur mit
- * ausdrücklichem Schalter und Relevanzfilter, und wurde der Clockin-Bestand
+ * Fail-safe (Issue #17): Beide Anlage-Richtungen laufen durch einen
+ * Relevanzfilter (`creation-policy.ts`), die Richtung Clockin → Dimacon
+ * zusätzlich nur mit ausdrücklichem Schalter. Wurde der Clockin-Bestand
  * unvollständig geladen, legt der Lauf in KEINER Richtung Mitarbeiter an —
  * ein unvollständiger Vergleich erzeugt sonst Dubletten.
  */
@@ -155,6 +163,21 @@ export async function runEmployeeSync(
     else notCreated.push({ employee: c, reason })
   }
 
+  // Anlage-Policy Dimacon → Clockin: nur bei vollständiger Vergleichsbasis
+  // (sonst genügt unten EINE Sammelzeile) — Platzhalter, Konten ohne
+  // Personalnummer und Namensvettern ungepaarter Clockin-Datensätze werden
+  // gemeldet statt angelegt.
+  const clockinPolicy = buildClockinCreationPolicy(outcome, clockinEmployees)
+  const clockinCandidates: DimaconEmployeeFull[] = []
+  const notCreatedInClockin: { employee: DimaconEmployeeFull; reason: string }[] = []
+  if (mayCreate) {
+    for (const e of outcome.dimaconOnly) {
+      const reason = clockinCreationBlockReason(e, clockinPolicy)
+      if (reason === null) clockinCandidates.push(e)
+      else notCreatedInClockin.push({ employee: e, reason })
+    }
+  }
+
   log.info("employees matched", {
     dimacon: dimaconEmployees.length,
     clockin: clockinEmployees.length,
@@ -166,18 +189,37 @@ export async function runEmployeeSync(
     ambiguous: outcome.ambiguous.length,
     blocked: outcome.blockedClockinIds.size,
     notCreated: notCreated.length,
+    notCreatedInClockin: notCreatedInClockin.length,
   })
 
+  // Das Ergebnis führt nur die ersten MAX_SKIPPED_ROWS Kandidaten einzeln
+  // auf — die Verteilung der Gründe bleibt hier für jeden Lauf sichtbar.
   if (notCreated.length > 0) {
-    // Das Ergebnis führt nur die ersten MAX_SKIPPED_ROWS Kandidaten einzeln
-    // auf — die Verteilung der Gründe bleibt hier für jeden Lauf sichtbar.
     log.info("employees not created in dimacon", {
       total: notCreated.length,
       byReason: countByReason(notCreated),
     })
   }
+  if (notCreatedInClockin.length > 0) {
+    log.info("employees not created in clockin", {
+      total: notCreatedInClockin.length,
+      byReason: countByReason(notCreatedInClockin),
+    })
+  }
 
   rows.push(...notCreatedRows(notCreated, policy))
+  rows.push(
+    ...cappedRows(
+      "dimacon→clockin",
+      notCreatedInClockin.map(({ employee, reason }) => ({
+        direction: "dimacon→clockin" as const,
+        dimaconId: employee.id,
+        name: `${employee.firstName} ${employee.lastName}`.trim() || employee.id,
+        status: "skipped" as const,
+        reason,
+      })),
+    ),
+  )
 
   if (!mayCreate && outcome.dimaconOnly.length > 0) {
     rows.push({
@@ -221,7 +263,7 @@ export async function runEmployeeSync(
           ),
       ),
     ),
-    ...(mayCreate ? outcome.dimaconOnly : []).map((e) =>
+    ...clockinCandidates.map((e) =>
       clockinLimit(() =>
         syncer
           .createInClockin(e)
@@ -282,19 +324,25 @@ function notCreatedRows(
     ]
   }
 
-  const rows: EmployeeSyncRow[] = notCreated
-    .slice(0, MAX_SKIPPED_ROWS)
-    .map(({ employee, reason }) => ({
+  return cappedRows(
+    "clockin→dimacon",
+    notCreated.map(({ employee, reason }) => ({
       direction: "clockin→dimacon" as const,
       clockinId: employee.id,
       name: `${employee.firstName} ${employee.lastName}`.trim() || `#${employee.id}`,
       status: "skipped" as const,
       reason,
-    }))
-  const rest = notCreated.length - rows.length
+    })),
+  )
+}
+
+/** Einzelbegründungen, gedeckelt gegen jsonb-Bloat, plus Restzeile. */
+function cappedRows(direction: EmployeeSyncDirection, all: EmployeeSyncRow[]): EmployeeSyncRow[] {
+  const rows = all.slice(0, MAX_SKIPPED_ROWS)
+  const rest = all.length - rows.length
   if (rest > 0) {
     rows.push({
-      direction: "clockin→dimacon",
+      direction,
       name: `(${rest} weitere ${rest === 1 ? "Kandidat" : "Kandidaten"})`,
       status: "skipped",
       reason: `nicht angelegt — Ergebnis auf ${MAX_SKIPPED_ROWS} Einzelbegründungen begrenzt`,
@@ -304,9 +352,7 @@ function notCreatedRows(
 }
 
 /** Grund → Anzahl, absteigend und gedeckelt — Eingabe für die Log-Zeile. */
-function countByReason(
-  notCreated: { employee: ClockinEmployeeInfo; reason: string }[],
-): Record<string, number> {
+function countByReason(notCreated: { reason: string }[]): Record<string, number> {
   const counts = new Map<string, number>()
   for (const { reason } of notCreated) counts.set(reason, (counts.get(reason) ?? 0) + 1)
   return Object.fromEntries(

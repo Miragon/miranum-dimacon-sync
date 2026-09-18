@@ -130,7 +130,7 @@ export class EmployeeSyncer {
     }
   }
 
-  /** Dimacon gewinnt bei Konflikten; Rückschreibung nur für die Personalnummer. */
+  /** Dimacon gewinnt bei Konflikten; nach Dimacon wird nie geschrieben. */
   async alignPair(pair: EmployeePair): Promise<EmployeeSyncRow> {
     const { dimacon: d, clockin: c } = pair
     const base = {
@@ -159,8 +159,7 @@ export class EmployeeSyncer {
       ),
     })
 
-    const needsClockinUpdate = diff.clockinChanges.length > 0 || mappedDiff.changed
-    if (!needsClockinUpdate && !diff.backfillPersonnelNumber) {
+    if (diff.clockinChanges.length === 0 && !mappedDiff.changed) {
       return { ...base, status: "unchanged" }
     }
 
@@ -170,82 +169,33 @@ export class EmployeeSyncer {
         clockinEmployeeId: c.id,
         changes: diff.clockinChanges,
         mappedChanges: mappedDiff.changes,
-        backfillPersonnelNumber: diff.backfillPersonnelNumber ?? null,
       })
       return { ...base, status: "updated", reason: `[dryRun] ${describeDiff(diff, mappedDiff)}` }
     }
 
-    if (needsClockinUpdate) {
-      // fillIfNonEmpty-Semantik: leere Dimacon-Werte fehlen im Body und
-      // lassen die Clockin-Werte unangetastet (Merge-Semantik der API).
-      await withRetry(() =>
-        clockin.updateEmployee({
-          client: this.clockinClient,
-          path: { employee: c.id },
-          body: {
-            ...applied.standardFields,
-            first_name: d.firstName,
-            last_name: d.lastName,
-            // Clockin-E-Mail bleibt erhalten (fixiertes Feld)
-            email: c.email ?? null,
-            personnel_number: d.personnelNumber?.trim() || c.personnelNumber?.trim() || undefined,
-            ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
-          } as EmployeeWriteBody,
-        }),
-      )
-    }
-
-    if (diff.backfillPersonnelNumber) {
-      await withRetry(() =>
-        dimacon.updateEmployee({
-          client: this.dimaconClient,
-          path: { employeeId: d.id },
-          body: dimaconEmployeeUpdateBody(d, {
-            personnelNumber: diff.backfillPersonnelNumber,
-          }),
-        }),
-      )
-    }
+    // fillIfNonEmpty-Semantik: leere Dimacon-Werte fehlen im Body und
+    // lassen die Clockin-Werte unangetastet (Merge-Semantik der API).
+    await withRetry(() =>
+      clockin.updateEmployee({
+        client: this.clockinClient,
+        path: { employee: c.id },
+        body: {
+          ...applied.standardFields,
+          first_name: d.firstName,
+          last_name: d.lastName,
+          // Clockin-E-Mail bleibt erhalten (fixiertes Feld)
+          email: c.email ?? null,
+          personnel_number: d.personnelNumber?.trim() || c.personnelNumber?.trim() || undefined,
+          ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
+        } as EmployeeWriteBody,
+      }),
+    )
 
     return { ...base, status: "updated", reason: describeDiff(diff, mappedDiff) }
   }
 }
 
-/**
- * Dimacon-PUT ist ein Voll-Replace: bestehende Werte MÜSSEN zurückgespiegelt
- * werden, sonst werden sie gelöscht (Issue #17 — Mitarbeiter verloren beim
- * Personalnummer-Backfill ihr Team). Deshalb spiegelt der Body ALLE geladenen
- * Felder zurück und die Änderung kommt als `overrides` obendrauf.
- * `undefined`-Werte bleiben bewusst weg statt auf `null` normalisiert zu
- * werden — unter Merge-Semantik strikt sicherer, unter Replace identisch.
- */
-function dimaconEmployeeUpdateBody(
-  d: DimaconEmployeeFull,
-  overrides: { personnelNumber?: string } = {},
-): NonNullable<Parameters<typeof dimacon.updateEmployee>[0]>["body"] {
-  return {
-    role: d.role,
-    firstName: d.firstName,
-    lastName: d.lastName,
-    personnelNumber: d.personnelNumber,
-    phoneNumber: d.phoneNumber,
-    team: d.team,
-    profilePicture: d.profilePicture,
-    color: d.color,
-    timeTrackingActive: d.timeTrackingActive,
-    additionalInformation: d.additionalInformation,
-    ...overrides,
-  }
-}
-
 function describeDiff(diff: PairDiff, mappedDiff?: { changes: string[] }): string {
-  const parts: string[] = []
   const changes = [...diff.clockinChanges, ...(mappedDiff?.changes ?? [])]
-  if (changes.length > 0) {
-    parts.push(`Clockin angepasst: ${changes.join(", ")}`)
-  }
-  if (diff.backfillPersonnelNumber) {
-    parts.push(`Personalnummer ${diff.backfillPersonnelNumber} nach Dimacon übernommen`)
-  }
-  return parts.join("; ")
+  return `Clockin angepasst: ${changes.join(", ")}`
 }

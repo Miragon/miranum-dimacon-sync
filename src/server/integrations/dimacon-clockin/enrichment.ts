@@ -33,7 +33,8 @@ export interface DimaconEmployeeInfo {
   id: string
   firstName: string
   lastName: string
-  email?: string
+  /** einziger Schlüssel der Zuordnung zu Clockin */
+  personnelNumber?: string
 }
 
 /**
@@ -524,21 +525,23 @@ async function loadEmployeeInfos(
     return new Map(
       preloaded.map((e) => [
         e.id,
-        { id: e.id, firstName: e.firstName, lastName: e.lastName, email: e.email },
+        {
+          id: e.id,
+          firstName: e.firstName,
+          lastName: e.lastName,
+          personnelNumber: e.personnelNumber,
+        },
       ]),
     )
   }
 
-  const [employees, users] = await Promise.all([
-    withRetry(() => dimacon.getAllEmployees({ client })).then(
-      (rows) => rows as unknown as { id: string; firstName: string; lastName: string }[],
-    ),
-    withRetry(() => dimacon.getAllUsers({ client })).then(
-      (rows) => rows as unknown as { employeeId: string; emailAddress: string }[],
-    ),
-  ])
+  const employees = (await withRetry(() => dimacon.getAllEmployees({ client }))) as unknown as {
+    id: string
+    firstName: string
+    lastName: string
+    personnelNumber?: string
+  }[]
 
-  const emailByEmployeeId = new Map(users.map((u) => [u.employeeId, u.emailAddress]))
   return new Map(
     employees.map((e) => [
       e.id,
@@ -546,7 +549,7 @@ async function loadEmployeeInfos(
         id: e.id,
         firstName: e.firstName,
         lastName: e.lastName,
-        email: emailByEmployeeId.get(e.id),
+        personnelNumber: e.personnelNumber,
       },
     ]),
   )

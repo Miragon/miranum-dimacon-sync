@@ -3,6 +3,7 @@ import type { Client as ClockInClient } from "@miragon/client-clockin"
 import { NON_IDEMPOTENT_RETRY, withRetry } from "../../lib/concurrency.js"
 import type { Logger } from "../../lib/log.js"
 import type { DimaconCustomerInfo } from "../shared/dimacon.js"
+import type { ClockinPage } from "../shared/clockin-pages.js"
 import type { ClockinCustomerIndex } from "./customer-index.js"
 import { customerSourceValues } from "../shared/field-catalog.js"
 import { applyMapping } from "../shared/field-mapping.js"
@@ -16,7 +17,23 @@ interface ClockinCustomerRow {
   identifier?: string | null
 }
 
-type ClockinLookupResult = { row: ClockinCustomerRow | null } | { ambiguous: ClockinCustomerRow[] }
+/**
+ * Rohbefund eines Clockin-Lookups. `exact` = das gefragte Feld entspricht
+ * exakt dem Suchwert, `similar` = weitere, nur unscharfe Treffer.
+ * `exactComplete` = false, wenn ein exakter Treffer auf einer nicht
+ * gelesenen Seite der unscharfen Suche liegen könnte.
+ */
+interface ClockinLookup {
+  exact: ClockinCustomerRow[]
+  similar: ClockinCustomerRow[]
+  exactComplete: boolean
+}
+
+/** Entscheidung über einen Lookup: Treffer, Sperre (gemeldet) oder kein Treffer. */
+type LookupDecision =
+  | { kind: "found"; row: ClockinCustomerRow }
+  | { kind: "blocked" }
+  | { kind: "none"; similar: ClockinCustomerRow[] }
 
 /** Kandidaten-IDs in der Meldung — gekappt, damit die Fehlerliste lesbar bleibt. */
 const MAX_LISTED_IDS = 5
@@ -74,8 +91,11 @@ export class CustomerSyncer {
     private readonly onMappingWarning: (message: string) => void = () => undefined,
     /** Gesamtbestands-Wissen, das den Namens-Fallback absichert */
     private readonly matching: CustomerMatchingContext = OPEN_CUSTOMER_MATCHING,
-    /** Meldung einer nicht auflösbaren Mehrdeutigkeit (landet in `errors`). */
-    private readonly onAmbiguous: (message: string) => void = () => undefined,
+    /**
+     * Meldungen für den Betreiber (landen in `errors`): Dubletten in Clockin,
+     * nicht exakt prüfbare Suchen und Neuanlagen trotz ähnlicher Kunden.
+     */
+    private readonly onReport: (message: string) => void = () => undefined,
     /**
      * Vorab geladener Clockin-Kundenbestand. Vorhanden = exakte Treffer
      * kommen ohne einen einzigen `searchForCustomers`-Aufruf zustande.
@@ -96,15 +116,15 @@ export class CustomerSyncer {
   private async doResolve(customer: DimaconCustomerInfo): Promise<CustomerMapping | null> {
     const lookupNumber = customer.customerNumber ?? customer.name
 
-    const byNumber = await this.findInClockin(
+    const byNumber = await this.decide(
+      customer,
       lookupNumber,
       customer.customerNumber ? "identifier" : "company",
     )
-    if ("ambiguous" in byNumber) {
-      return this.reportAmbiguous(customer, lookupNumber, byNumber.ambiguous)
-    }
+    if (byNumber.kind === "blocked") return null
 
-    let found = byNumber.row
+    let found = byNumber.kind === "found" ? byNumber.row : null
+    const similar = byNumber.kind === "none" ? [...byNumber.similar] : []
 
     // Fallback per Name: verhindert Duplikat-Kunden, wenn die
     // Dimacon-Kundennummer nachträglich geändert wurde (z. B. durch das
@@ -122,11 +142,10 @@ export class CustomerSyncer {
           reason: blocked,
         })
       } else {
-        const byName = await this.findInClockin(customer.name, "company")
-        if ("ambiguous" in byName) {
-          return this.reportAmbiguous(customer, customer.name, byName.ambiguous)
-        }
-        const candidate = byName.row
+        const byName = await this.decide(customer, customer.name, "company")
+        if (byName.kind === "blocked") return null
+        if (byName.kind === "none") similar.push(...byName.similar)
+        const candidate = byName.kind === "found" ? byName.row : null
         if (candidate && this.belongsToAnotherDimaconCustomer(candidate, customer)) {
           // Der Namenstreffer trägt die Kundennummer eines ANDEREN
           // Dimacon-Kunden — typisch bei gleichnamigen Firmen. Verknüpfen
@@ -175,7 +194,55 @@ export class CustomerSyncer {
     }
 
     const number = customer.customerNumber ?? customer.id
-    return this.createInClockin(customer, number)
+    const created = await this.createInClockin(customer, number)
+    this.reportSimilar(customer, number, similar)
+    return created
+  }
+
+  /**
+   * Genau ein exakter Treffer gewinnt; mehrere exakte Treffer sind eine
+   * echte Dublette in Clockin und werden gemeldet. Ohne exakten Treffer
+   * zählt ein EINZELNER unscharfer Treffer weiter als Match (sonst legte die
+   * Verschärfung bestehende, unscharf gematchte Kunden neu an) — aber nur,
+   * wenn er nicht erkennbar einem anderen Dimacon-Kunden gehört. Mehrere
+   * unscharfe Treffer heißen „nicht vorhanden": sie blockieren nichts mehr,
+   * sondern erscheinen als Hinweis bei der Anlage.
+   */
+  private async decide(
+    customer: DimaconCustomerInfo,
+    needle: string,
+    field: "identifier" | "company",
+  ): Promise<LookupDecision> {
+    const lookup = await this.findInClockin(needle, field)
+
+    if (lookup.exact.length === 1) return { kind: "found", row: lookup.exact[0] }
+    if (lookup.exact.length > 1) {
+      this.reportDuplicates(customer, needle, field, lookup.exact)
+      return { kind: "blocked" }
+    }
+    if (!lookup.exactComplete) {
+      // Ein exakter Treffer könnte auf einer nicht gelesenen Seite liegen —
+      // eine Anlage erzeugte dann eine Dublette.
+      this.report(
+        customer,
+        needle,
+        `Kunde ${customer.name}: die Clockin-Suche nach „${needle}" ist nicht vollständig prüfbar (mehrseitig oder ohne Seitenangabe) — kein exakter Abgleich möglich, weder verknüpft noch angelegt`,
+      )
+      return { kind: "blocked" }
+    }
+
+    const similar = lookup.similar.filter((r) => !this.belongsToAnotherDimaconCustomer(r, customer))
+    if (lookup.similar.length === 1 && similar.length === 1) {
+      this.log.info("clockin customer accepted by single fuzzy hit", {
+        dimaconCustomerId: customer.id,
+        needle,
+        clockinCustomerId: similar[0].id,
+        clockinIdentifier: similar[0].identifier ?? null,
+        clockinCompany: similar[0].company ?? null,
+      })
+      return { kind: "found", row: similar[0] }
+    }
+    return { kind: "none", similar }
   }
 
   /** Grund, warum der Namens-Fallback nicht greifen darf — sonst undefined. */
@@ -201,65 +268,101 @@ export class CustomerSyncer {
   }
 
   /**
-   * Sucht über den unscharfen `byNameOrNumber`-Scope und entscheidet LOKAL:
-   * genau ein exakter Treffer im gefragten Feld gewinnt; mehrere exakte
-   * Treffer sind mehrdeutig. Ohne exakten Treffer bleibt es beim bisherigen
-   * Verhalten (genau eine Zeile ⇒ akzeptieren) — sonst würde die Verschärfung
-   * bestehende, unscharf gematchte Kunden in Clockin neu anlegen.
+   * Exakte Treffer kommen aus einer VOLLSTÄNDIGEN Quelle — dem Index
+   * (kompletter Bestand) bzw. für Nummern dem exakten `byIdentifier`-Scope.
+   * Die unscharfe `byNameOrNumber`-Suche liefert danach nur noch Kandidaten
+   * für den Einzeltreffer und den Hinweis. Vorher wurde die Nummer allein
+   * über die unscharfe Suche gesucht: mehrere Beinahe-Treffer ohne exakten
+   * (Alt-Kunden, deren Identifier die Nummer nur ENTHÄLT) blockierten den
+   * Kunden dauerhaft, und ein exakter Treffer auf Seite 2 blieb unsichtbar.
    */
   private async findInClockin(
     needle: string,
     field: "identifier" | "company",
-  ): Promise<ClockinLookupResult> {
+  ): Promise<ClockinLookup> {
+    let exactSourceComplete = false
     if (this.index) {
-      // Der Index ist MEHRWERTIG — die Mehrdeutigkeitsprüfung sieht hier
+      // Der Index ist MEHRWERTIG — die Dubletten-Erkennung sieht hier
       // dieselben Kandidaten wie bei der Serversuche.
       const exact =
         field === "identifier" ? this.index.byIdentifier(needle) : this.index.byCompany(needle)
-      if (exact.length === 1) return { row: exact[0] }
-      if (exact.length > 1) return { ambiguous: exact }
-      // Miss: der Index kennt nur EXAKTE Treffer. Die unscharfe Serversuche
-      // (`byNameOrNumber`) bleibt deshalb der Fallback — sonst legte der Lauf
-      // bestehende, bisher unscharf gematchte Kunden neu an. Ein Miss kostet
-      // wie bisher einen Request, ein Treffer künftig keinen.
+      if (exact.length > 0) return { exact, similar: [], exactComplete: true }
+      exactSourceComplete = true
+    } else if (field === "identifier") {
+      const exact = await this.searchCustomers("byIdentifier", needle).then((page) =>
+        page.rows.filter((r) => normalizeName(r.identifier) === normalizeName(needle)),
+      )
+      if (exact.length > 0) return { exact, similar: [], exactComplete: true }
+      exactSourceComplete = true
     }
 
+    const fuzzy = await this.searchCustomers("byNameOrNumber", needle)
+    const exact = fuzzy.rows.filter((r) => normalizeName(r[field]) === normalizeName(needle))
+    return {
+      exact,
+      similar: fuzzy.rows.filter((r) => !exact.includes(r)),
+      exactComplete: exactSourceComplete || fuzzy.complete,
+    }
+  }
+
+  /**
+   * Erste Ergebnisseite einer Kundensuche. `complete` nur, wenn belegt ist,
+   * dass keine weitere Seite folgt — ohne `meta.last_page` ist die
+   * Seitenzahl unbekannt, nicht „eins" (wie `requireMeta` in clockin-pages.ts).
+   */
+  private async searchCustomers(
+    scope: "byIdentifier" | "byNameOrNumber",
+    needle: string,
+  ): Promise<{ rows: ClockinCustomerRow[]; complete: boolean }> {
     const result = (await withRetry(() =>
       clockin.searchForCustomers({
         client: this.clockinClient,
-        body: { scopes: [{ name: "byNameOrNumber", parameters: [needle] }] },
+        body: { scopes: [{ name: scope, parameters: [needle] }] },
       }),
-    )) as unknown as { data?: ClockinCustomerRow[] }
+    )) as unknown as ClockinPage<ClockinCustomerRow>
 
     const rows = (result.data ?? []).filter((r) => r.id !== undefined)
-    if (rows.length === 0) return { row: null }
-
-    const exact = rows.filter((r) => normalizeName(r[field]) === normalizeName(needle))
-    if (exact.length === 1) return { row: exact[0] }
-    if (exact.length > 1) return { ambiguous: exact }
-    if (rows.length === 1) return { row: rows[0] }
-    return { ambiguous: rows }
+    const lastPage = result.meta?.last_page
+    return {
+      rows,
+      complete: rows.length === 0 || (typeof lastPage === "number" && lastPage <= 1),
+    }
   }
 
-  /** Mehrdeutigkeit: weder verknüpfen noch anlegen — melden und aussteigen. */
-  private reportAmbiguous(
+  /** Mehrere exakte Treffer: weder verknüpfen noch anlegen — in Clockin bereinigen. */
+  private reportDuplicates(
     customer: DimaconCustomerInfo,
     needle: string,
+    field: "identifier" | "company",
     candidates: ClockinCustomerRow[],
-  ): null {
-    const ids = candidates
-      .slice(0, MAX_LISTED_IDS)
-      .map((c) => c.id)
-      .join(", ")
-    const suffix = candidates.length > MAX_LISTED_IDS ? ", …" : ""
-    const message = `Kunde ${customer.name}: Suche nach „${needle}" liefert ${candidates.length} Clockin-Kandidaten (IDs ${ids}${suffix}) — nicht eindeutig, weder verknüpft noch angelegt`
-    this.log.warn("ambiguous clockin customer match", {
-      dimaconCustomerId: customer.id,
+  ): void {
+    const what = field === "identifier" ? "die Nummer" : "den Namen"
+    this.report(
+      customer,
       needle,
-      candidates: candidates.length,
-    })
-    this.onAmbiguous(message)
-    return null
+      `Kunde ${customer.name}: ${candidates.length} Clockin-Kunden tragen ${what} „${needle}" (IDs ${listIds(candidates)}) — Dublette in Clockin, bitte dort zusammenführen; weder verknüpft noch angelegt`,
+    )
+  }
+
+  /** Neuanlage trotz ähnlicher Kunden: nicht blockieren, aber sichtbar machen. */
+  private reportSimilar(
+    customer: DimaconCustomerInfo,
+    number: string,
+    similar: ClockinCustomerRow[],
+  ): void {
+    const unique = [...new Map(similar.map((r) => [r.id, r])).values()]
+    if (unique.length === 0) return
+    const action = this.dryRun ? "würde neu angelegt" : "neu angelegt"
+    this.report(
+      customer,
+      number,
+      `Kunde ${customer.name}: in Clockin ${action} (Nummer ${number}) — ${unique.length} ähnliche Clockin-Kunden (IDs ${listIds(unique)}), bitte prüfen, ob einer davon derselbe Kunde ist`,
+    )
+  }
+
+  private report(customer: DimaconCustomerInfo, needle: string, message: string): void {
+    this.log.warn("clockin customer report", { dimaconCustomerId: customer.id, needle, message })
+    this.onReport(message)
   }
 
   private async createInClockin(
@@ -336,4 +439,13 @@ export class CustomerSyncer {
       ...(applied.customFields.length > 0 ? { custom_fields: applied.customFields } : {}),
     } as CustomerWriteBody
   }
+}
+
+/** „7, 8, 9" bzw. „1, 2, 3, 4, 5, …" — gekappt auf MAX_LISTED_IDS. */
+function listIds(rows: ClockinCustomerRow[]): string {
+  const ids = rows
+    .slice(0, MAX_LISTED_IDS)
+    .map((r) => r.id)
+    .join(", ")
+  return rows.length > MAX_LISTED_IDS ? `${ids}, …` : ids
 }

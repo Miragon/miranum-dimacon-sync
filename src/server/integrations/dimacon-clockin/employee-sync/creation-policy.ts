@@ -1,4 +1,6 @@
 import type { DimaconEmployeeFull } from "../../shared/dimacon.js"
+import { personnelNumberKey } from "./matcher.js"
+import type { MatchOutcome } from "./matcher.js"
 import type { ClockinEmployeeInfo } from "./types.js"
 
 /**
@@ -39,15 +41,20 @@ export function looseNameKey(first: string | undefined, last: string | undefined
   return `${firstTokens[0]} ${lastTokens[lastTokens.length - 1]}`
 }
 
-/** Index über alle Dimacon-Mitarbeiter (auch archivierte — sie existieren dort). */
-export function buildLooseNameIndex(
-  dimaconEmployees: readonly DimaconEmployeeFull[],
+/**
+ * Loser Namensschlüssel → Anzeigetext des ersten Treffers. Für die Anlage in
+ * Dimacon über ALLE Dimacon-Mitarbeiter (auch archivierte — sie existieren
+ * dort), für die Anlage in Clockin über die ungepaarten Clockin-Mitarbeiter.
+ */
+export function buildLooseNameIndex<T extends { firstName: string; lastName: string }>(
+  people: readonly T[],
+  label: (person: T) => string = (p) => `${p.firstName} ${p.lastName}`.trim(),
 ): Map<string, string> {
   const index = new Map<string, string>()
-  for (const e of dimaconEmployees) {
-    const key = looseNameKey(e.firstName, e.lastName)
+  for (const p of people) {
+    const key = looseNameKey(p.firstName, p.lastName)
     if (!key || index.has(key)) continue
-    index.set(key, `${e.firstName} ${e.lastName}`.trim())
+    index.set(key, label(p))
   }
   return index
 }
@@ -81,6 +88,96 @@ export function creationBlockReason(c: ClockinEmployeeInfo, p: CreationPolicyInp
   }
 
   return null
+}
+
+/**
+ * Gegenstück für die Anlage Dimacon → Clockin. Ohne diesen Filter legte der
+ * Lauf jeden ungepaarten aktiven Dimacon-Mitarbeiter an — auch Platzhalter
+ * („Subunternehmer !"), Alt-Konten ohne Personalnummer und Personen, die in
+ * Clockin nur unter abweichender oder fehlender Personalnummer stehen.
+ */
+export interface ClockinCreationPolicyInput {
+  /** normalisierte Personalnummer → Clockin-Datensatz, der sie bereits trägt */
+  clockinPersonnelNumbers: ReadonlyMap<string, string>
+  /** normalisierte Personalnummern, die unter den Anlage-Kandidaten mehrfach vorkommen */
+  duplicatePersonnelNumbers: ReadonlySet<string>
+  /** loser Namensschlüssel → Clockin-Mitarbeiter OHNE Dimacon-Partner */
+  unpairedClockinNames: ReadonlyMap<string, string>
+}
+
+export function buildClockinCreationPolicy(
+  outcome: Pick<MatchOutcome, "dimaconOnly" | "clockinOnly">,
+  clockinEmployees: readonly ClockinEmployeeInfo[],
+): ClockinCreationPolicyInput {
+  const clockinPersonnelNumbers = new Map<string, string>()
+  for (const c of clockinEmployees) {
+    const key = personnelNumberKey(c.personnelNumber)
+    if (key && !clockinPersonnelNumbers.has(key))
+      clockinPersonnelNumbers.set(key, describeClockin(c))
+  }
+
+  const seen = new Set<string>()
+  const duplicatePersonnelNumbers = new Set<string>()
+  for (const d of outcome.dimaconOnly) {
+    const key = personnelNumberKey(d.personnelNumber)
+    if (!key) continue
+    if (seen.has(key)) duplicatePersonnelNumbers.add(key)
+    else seen.add(key)
+  }
+
+  return {
+    clockinPersonnelNumbers,
+    duplicatePersonnelNumbers,
+    unpairedClockinNames: buildLooseNameIndex(outcome.clockinOnly, describeClockin),
+  }
+}
+
+/**
+ * `null` = darf in Clockin angelegt werden, sonst der deutsche Grund für die
+ * gemeldete `skipped`-Zeile. Der Name verknüpft hier nichts — er verhindert
+ * nur eine Anlage, wenn dieselbe Person in Clockin unter anderer oder ohne
+ * Personalnummer steht.
+ */
+export function clockinCreationBlockReason(
+  d: DimaconEmployeeFull,
+  p: ClockinCreationPolicyInput,
+): string | null {
+  if (!hasLetter(d.firstName) || !hasLetter(d.lastName)) {
+    return "kein vollständiger Personenname in Dimacon (Platzhalter?)"
+  }
+
+  const similar = p.unpairedClockinNames.get(looseNameKey(d.firstName, d.lastName))
+  const personnelNumber = d.personnelNumber?.trim()
+  if (!personnelNumber) {
+    return similar
+      ? `keine Personalnummer in Dimacon — in Clockin steht ${similar}; Personalnummer in Dimacon pflegen`
+      : "keine Personalnummer in Dimacon — ohne sie ist keine eindeutige Zuordnung möglich"
+  }
+
+  const key = personnelNumberKey(personnelNumber)
+  const holder = p.clockinPersonnelNumbers.get(key)
+  if (holder) {
+    return `Personalnummer ${personnelNumber} ist in Clockin bereits vergeben (${holder})`
+  }
+  if (p.duplicatePersonnelNumbers.has(key)) {
+    return `Personalnummer ${personnelNumber} ist in Dimacon mehrfach vergeben`
+  }
+  if (similar) {
+    return `ähnlicher Name in Clockin vorhanden (${similar}) — Personalnummern abgleichen`
+  }
+
+  return null
+}
+
+function describeClockin(c: ClockinEmployeeInfo): string {
+  const name = `${c.firstName} ${c.lastName}`.trim()
+  const personnelNumber = c.personnelNumber?.trim()
+  return `${name} #${c.id}, ${personnelNumber ? `PNr ${personnelNumber}` : "ohne PNr"}`
+}
+
+/** mindestens ein Buchstabe (beliebige Schrift) — „!" ist kein Name */
+function hasLetter(value: string | undefined): boolean {
+  return /\p{L}/u.test(value ?? "")
 }
 
 /** klein, ohne Diakritika, Umlaute ausgeschrieben, nur Buchstaben-Tokens */

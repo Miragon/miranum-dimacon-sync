@@ -159,7 +159,10 @@ export interface DimaconEmployeeFull {
   phoneNumber?: string
   team?: string
   additionalInformation?: string
-  /** Wird nur geladen, damit das Voll-Replace-PUT es zurückspiegeln kann. */
+  /**
+   * Nur für ein Voll-Replace-PUT relevant, das es zurückspiegeln müsste
+   * (Issue #17) — der Abgleich schreibt derzeit nicht nach Dimacon.
+   */
   profilePicture?: string
   role: DimaconEmployeeRole
   color: string

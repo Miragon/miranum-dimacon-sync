@@ -211,15 +211,35 @@ Fenster ±`ARCHIVE_HORIZON_DAYS` um **heute UND** um das Sync-Datum
 aus dem Sync). Ist der Horizont unbekannt oder die Clockin-Projektliste
 unvollständig geladen, archiviert der Lauf gar nichts und meldet den Grund.
 
-Zwei load-bearing Regeln des Mitarbeiter-Abgleichs: Dimacon-PUTs sind
-Voll-Replace — jeder Update-Body spiegelt ALLE geladenen Felder zurück
-(`dimaconEmployeeUpdateBody` in `employee-sync/syncer.ts`, sonst verlieren
-Mitarbeiter beim Personalnummer-Backfill ihr Team). Und die Anlage ist
-fail-closed: wurde der Clockin-Bestand unvollständig geladen
-(`shared/clockin-pages.ts` paginiert und meldet Abbruchgründe), legt der Lauf
-in KEINER Richtung Mitarbeiter an; nicht angelegte Kandidaten erscheinen mit
-deutscher Begründung als `skipped`-Zeile im Ergebnis
-(`employee-sync/creation-policy.ts`).
+Load-bearing Regeln des Mitarbeiter-Abgleichs: **Zugeordnet wird
+ausschließlich über die Personalnummer** (`employee-sync/matcher.ts`), aktive
+Dimacon-Mitarbeiter vor archivierten — auch die Tagesplanung
+(`employees.ts`) sucht nur per `byPersonnelNumber`. Name/E-Mail als Schlüssel
+haben Dubletten erzeugt: ein archivierter Alt-Datensatz ohne PNr griff sich
+über den Namen den Clockin-Mitarbeiter, der aktive sollte daraufhin ein
+zweites Mal in Clockin angelegt werden. Namen dienen nur noch als BREMSE vor
+einer Anlage, nie zum Verknüpfen. Beide Anlage-Richtungen laufen durch
+`employee-sync/creation-policy.ts` (Dimacon → Clockin: vollständiger
+Personenname, PNr vorhanden und in Clockin unvergeben, kein namensähnlicher
+ungepaarter Clockin-Datensatz). Die Anlage ist fail-closed: wurde der
+Clockin-Bestand unvollständig geladen (`shared/clockin-pages.ts` paginiert
+und meldet Abbruchgründe), legt der Lauf in KEINER Richtung Mitarbeiter an;
+nicht angelegte Kandidaten erscheinen mit deutscher Begründung als
+`skipped`-Zeile im Ergebnis. Nach Dimacon schreibt der Abgleich nur noch bei
+einer Anlage (kein PNr-Backfill mehr) — wer wieder ein Mitarbeiter-PUT
+einführt: das ist ein Voll-Replace, ALLE geladenen Felder zurückspiegeln,
+sonst verlieren Mitarbeiter ihr Team (Issue #17).
+
+Kunden-Lookup (`customers.ts`): die Kundennummer geht an den EXAKTEN Scope
+`byIdentifier` (bzw. den vollständigen Index), erst danach an die unscharfe
+`byNameOrNumber`-Suche. Mehrere exakte Treffer = Dublette in Clockin →
+gemeldet, weder verknüpft noch angelegt. Nur unscharfe Treffer blockieren
+NICHT (früher „nicht eindeutig" — der Kunde blieb dauerhaft unverknüpft und
+seine Projekte wurden nie angelegt): ein einzelner gilt weiter als Treffer,
+sofern er nicht einem anderen Dimacon-Kunden gehört; mehrere ⇒ Anlage plus
+Hinweis mit den ähnlichen IDs. Ist die unscharfe Suche mehrseitig und gibt es
+keine vollständige exakte Quelle, wird nicht angelegt (ein exakter Treffer
+könnte auf Seite 2 liegen).
 
 Die alte settings.json wird nur noch vom **einmaligen Legacy-Seed** gelesen
 (`src/server/lib/legacy-settings.ts` parst beide Alt-Formen; Seed-Guard =
