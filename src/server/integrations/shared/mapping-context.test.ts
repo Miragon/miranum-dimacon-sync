@@ -149,8 +149,40 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
         type: "STRING",
         enumDefinitionId: undefined,
         isActive: true,
+        isRequired: false,
       },
     ])
+  })
+
+  it("always loads the customer attributes as TARGETS for dimaconCustomer — never Clockin", async () => {
+    // Pflicht-Attribute müssen vor jeder Anlage bekannt sein, auch ohne
+    // gespeicherte Zuordnung (Übernahme Lexware → Dimacon).
+    getFieldMappingMock.mockResolvedValue(undefined)
+    getAllAttributes2Mock.mockResolvedValue([
+      { id: "attr-req", label: "Kostenstelle", type: "STRING", isActive: true, isRequired: true },
+      { id: "attr-sel", label: "Kategorie", type: "SELECT", isActive: true, enumDefinitionId: "e" },
+    ])
+    const getClockin = throwingClockinGetter()
+
+    const context = await loadMappingContext({
+      dimaconClient,
+      getClockinClient: getClockin,
+      entities: ["dimaconCustomer"],
+      getFieldMapping: getFieldMappingMock,
+    })
+
+    const ctx = context.get("dimaconCustomer")
+    expect(ctx?.rules).toBe(FIELD_CATALOG.dimaconCustomer.defaultRules)
+    expect(ctx?.isCustomized).toBe(false)
+    expect(ctx?.discovery.attributes).toEqual([])
+    expect(ctx?.discovery.targetAttributes.map((a) => [a.id, a.isRequired])).toEqual([
+      ["attr-req", true],
+      ["attr-sel", false],
+    ])
+    expect(getAllAttributes2Mock).toHaveBeenCalledTimes(1)
+    // Auswahl-Attribute sind keine befüllbaren Ziele — Enums werden nicht gebraucht
+    expect(getAllEnumsMock).not.toHaveBeenCalled()
+    expect(getClockin).not.toHaveBeenCalled()
   })
 
   it("fetches customer attributes (getAllAttributes2) and enums for a SELECT attribute", async () => {

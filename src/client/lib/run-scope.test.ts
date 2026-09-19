@@ -56,7 +56,11 @@ describe("toRunDefaults", () => {
   it("produces dryRun + steps and never a date", () => {
     const scope = readScope(LEXOFFICE, { dryRun: true }, { dryRunFallback: false })
     const defaults = toRunDefaults(scope)
-    expect(defaults).toEqual({ dryRun: true, steps: { createContacts: true, alignNumbers: true } })
+    expect(defaults).toEqual({
+      dryRun: true,
+      // LOAD-BEARING: fehlender Key darf NIE zu „an" werden
+      steps: { createContacts: true, alignNumbers: true, importFromLexware: false },
+    })
     expect(defaults).not.toHaveProperty("date")
   })
 })
@@ -125,6 +129,13 @@ describe("describeScope / isDefaultScope", () => {
     expect(isDefaultScope("unbekannt", { dryRun: true })).toBe(true)
   })
 
+  it("names the enabled Lexware import as an extra step", () => {
+    expect(describeScope(LEXOFFICE, {})).toBe("voll · live")
+    const scope = { dryRun: false, steps: { importFromLexware: true } }
+    expect(describeScope(LEXOFFICE, scope)).toBe("voll + 1 Zusatzschritt · live")
+    expect(isDefaultScope(LEXOFFICE, scope)).toBe(false)
+  })
+
   it("returns a dash for unknown integrations", () => {
     expect(describeScope("unbekannt", {})).toBe("—")
   })
@@ -157,6 +168,14 @@ describe("hints", () => {
     )
     expect(spec.hints({ createContacts: false, alignNumbers: true })[0]).toMatch(/Nur Abgleich/)
   })
+
+  it("warns only with the lexoffice import switched on", () => {
+    const spec = RUN_SCOPE_SPECS[LEXOFFICE]
+    expect(spec.hints({ createContacts: true, alignNumbers: true })).toHaveLength(1)
+    expect(
+      spec.hints({ createContacts: true, alignNumbers: true, importFromLexware: true })[1],
+    ).toMatch(/auch in Dimacon Kunden/)
+  })
 })
 
 /**
@@ -184,6 +203,12 @@ describe("Bedingungen am Schritt (note)", () => {
   it("nennt beim Archivieren den Planungshorizont", () => {
     const step = RUN_SCOPE_SPECS[CLOCKIN].steps.find((s) => s.key === "archive")
     expect(step?.note).toMatch(/Planungshorizont/)
+  })
+
+  it("nennt bei der Übernahme aus Lexware Belegfilter und Zeitfenster", () => {
+    const step = RUN_SCOPE_SPECS[LEXOFFICE].steps.find((s) => s.key === "importFromLexware")
+    expect(step?.default).toBe(false)
+    expect(step?.note).toMatch(/Angebot oder einer Auftragsbestätigung der letzten 14/)
   })
 
   it("nennt bei der Lexware-Anlage die Mehrdeutigkeits-Regel", () => {

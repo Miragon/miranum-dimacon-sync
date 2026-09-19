@@ -14,6 +14,7 @@ export type SourceRef =
 export type TargetRef =
   | { kind: "standard"; field: string }
   | { kind: "custom"; customFieldId: number }
+  | { kind: "attribute"; attributeId: string }
 
 export interface MappingRule {
   source: SourceRef
@@ -21,7 +22,7 @@ export interface MappingRule {
 }
 
 export interface MappingEntityBlock {
-  entity: "project" | "customer" | "employee" | "lexofficeContact"
+  entity: "project" | "customer" | "employee" | "lexofficeContact" | "dimaconCustomer"
   isDefault: boolean
   rules: MappingRule[]
   locked: { sourceLabel: string; targetField: string; note: string }[]
@@ -34,15 +35,38 @@ export interface MappingEntityBlock {
   targets: {
     standard: { field: string; label: string; dataType: string }[]
     custom: { id: number; label: string; dataType: string }[]
+    /**
+     * Dimacon-Kunden-Attribute als Ziel (nur dimaconCustomer). `problem`
+     * gesetzt = nicht befüllbar (Typ oder deaktiviert). Optional: ältere
+     * Server liefern das Feld nicht.
+     */
+    attributes?: TargetAttribute[]
   }
   warnings: string[]
   discoveryErrors: string[]
 }
 
+export interface TargetAttribute {
+  id: string
+  label: string
+  type: string
+  isActive: boolean
+  isRequired: boolean
+  problem?: string
+}
+
 // ── Hilfen ──────────────────────────────────────────────────────────────────
 
 function targetKey(t: TargetRef): string {
-  return t.kind === "standard" ? `standard:${t.field}` : `custom:${t.customFieldId}`
+  if (t.kind === "standard") return `standard:${t.field}`
+  if (t.kind === "custom") return `custom:${t.customFieldId}`
+  return `attribute:${t.attributeId}`
+}
+
+function orphanLabel(t: TargetRef): string {
+  if (t.kind === "standard") return t.field
+  if (t.kind === "custom") return `Custom-Field ${t.customFieldId}`
+  return `Attribut ${t.attributeId}`
 }
 
 function sourceLabel(block: MappingEntityBlock, source: SourceRef): string {
@@ -57,9 +81,29 @@ function rulesEqual(a: MappingRule[], b: MappingRule[]): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-/** Zielsystem je Entität — Lexware-Kontakte haben Lexware-, alle anderen Clockin-Ziele. */
+/** Quellsystem je Entität — nur die Übernahme liest aus Lexware, alle anderen aus Dimacon. */
+function sourceSystem(entity: MappingEntityBlock["entity"]): string {
+  return entity === "dimaconCustomer" ? "Lexware-Office" : "Dimacon"
+}
+
+/** Zielsystem je Entität. */
 function targetSystem(entity: MappingEntityBlock["entity"]): string {
-  return entity === "lexofficeContact" ? "Lexware-Office" : "Clockin"
+  if (entity === "lexofficeContact") return "Lexware-Office"
+  if (entity === "dimaconCustomer") return "Dimacon"
+  return "Clockin"
+}
+
+/**
+ * Welche Attribut-Ziele der Editor zeigt: alle aktiven (nicht befüllbare
+ * ausgegraut — ein Pflicht-Attribut, das die Übernahme blockiert, darf nicht
+ * unsichtbar sein) plus deaktivierte, auf die noch eine Regel zeigt, damit
+ * man sie entfernen kann.
+ */
+function visibleTargetAttributes(block: MappingEntityBlock, rules: MappingRule[]) {
+  const referenced = new Set(
+    rules.flatMap((r) => (r.target.kind === "attribute" ? [r.target.attributeId] : [])),
+  )
+  return (block.targets.attributes ?? []).filter((a) => a.isActive || referenced.has(a.id))
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
@@ -90,6 +134,7 @@ export function MappingEditor({
     const known = new Set([
       ...block.targets.standard.map((t) => `standard:${t.field}`),
       ...block.targets.custom.map((t) => `custom:${t.id}`),
+      ...(block.targets.attributes ?? []).map((a) => `attribute:${a.id}`),
     ])
     return rules.filter((r) => !known.has(targetKey(r.target)))
   }, [rules, block.targets])
@@ -188,7 +233,7 @@ export function MappingEditor({
         {/* Quellen */}
         <div>
           <h3 className="text-ink mb-3 font-mono text-[0.7rem] tracking-[0.18em] uppercase">
-            Dimacon-Quellfelder
+            {sourceSystem(block.entity)}-Quellfelder
           </h3>
           <div className="border-rule divide-rule divide-y border">
             {block.sources.standard.map((s) => (
@@ -267,16 +312,30 @@ export function MappingEditor({
                 onRemove={removeRule}
               />
             ))}
+            {visibleTargetAttributes(block, rules).map((a) => (
+              <TargetRow
+                key={`attribute:${a.id}`}
+                label={a.label}
+                badge={`attribut · ${a.type}`}
+                required={a.isActive && a.isRequired}
+                disabledReason={a.problem}
+                target={{ kind: "attribute", attributeId: a.id }}
+                rule={ruleByTarget.get(`attribute:${a.id}`)}
+                block={block}
+                dragging={dragging}
+                hoverTarget={hoverTarget}
+                setHoverTarget={setHoverTarget}
+                onDrop={dropOn}
+                onRemove={removeRule}
+              />
+            ))}
             {orphanRules.map((r) => (
               <div
                 key={targetKey(r.target)}
                 className="border-l-mn-accent flex items-center gap-3 border-l-[3px] px-3 py-2"
               >
                 <span className="text-ink min-w-0 flex-1 truncate font-mono text-[0.75rem]">
-                  {sourceLabel(block, r.source)} →{" "}
-                  {r.target.kind === "custom"
-                    ? `Custom-Field ${r.target.customFieldId}`
-                    : r.target.field}
+                  {sourceLabel(block, r.source)} → {orphanLabel(r.target)}
                 </span>
                 <span className="text-ink-3 font-mono text-[0.6rem] tracking-[0.12em] uppercase">
                   ziel existiert nicht mehr
@@ -363,6 +422,7 @@ function TargetRow({
   label,
   badge,
   required,
+  disabledReason,
   target,
   rule,
   block,
@@ -375,6 +435,8 @@ function TargetRow({
   label: string
   badge: string | null
   required: boolean
+  /** Gesetzt = kein Drop-Ziel; eine bestehende Regel bleibt entfernbar */
+  disabledReason?: string
   target: TargetRef
   rule: MappingRule | undefined
   block: MappingEntityBlock
@@ -389,7 +451,7 @@ function TargetRow({
   return (
     <div
       onDragOver={(e) => {
-        if (!dragging) return
+        if (!dragging || disabledReason) return
         e.preventDefault()
         e.dataTransfer.dropEffect = "copy"
         setHoverTarget(key)
@@ -397,9 +459,13 @@ function TargetRow({
       onDragLeave={() => {
         if (hovered) setHoverTarget(null)
       }}
-      onDrop={(e) => onDrop(target, e)}
+      onDrop={(e) => {
+        if (disabledReason) return
+        onDrop(target, e)
+      }}
+      title={disabledReason}
       className={`flex items-center gap-3 px-3 py-2 ${
-        hovered ? "bg-paper-3 border-ink border" : "bg-paper"
+        hovered ? "bg-paper-3 border-ink border" : disabledReason ? "bg-paper-2" : "bg-paper"
       }`}
     >
       <span className="text-ink min-w-0 font-mono text-[0.75rem]">
@@ -428,7 +494,7 @@ function TargetRow({
           </>
         ) : (
           <span className="text-ink-3 font-mono text-[0.65rem]">
-            {dragging ? "hierher ziehen" : "—"}
+            {disabledReason ? "nicht befüllbar" : dragging ? "hierher ziehen" : "—"}
           </span>
         )}
       </span>

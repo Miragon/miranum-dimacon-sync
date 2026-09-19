@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { FIELD_CATALOG } from "./field-catalog.js"
 import {
   applyMapping,
+  coerceToAttribute,
   coerceValue,
   diffMappedFields,
   EMPTY_DISCOVERY,
@@ -59,6 +60,7 @@ const discovery: Discovery = {
     { id: 12, label: "Zahlenfeld", dataType: "number" },
     { id: 13, label: "Datumsfeld", dataType: "date" },
   ],
+  targetAttributes: [],
 }
 
 describe("applyMapping — Default-Regeln reproduzieren das Legacy-Verhalten", () => {
@@ -260,10 +262,103 @@ describe("coerceValue", () => {
   })
 })
 
+/** Übernahme Lexware → Dimacon: Dimacon-Kunden-Attribute als ZIELE. */
+const reverseDiscovery: Discovery = {
+  ...EMPTY_DISCOVERY,
+  targetAttributes: [
+    { id: "t-str", label: "USt-IdNr.", type: "STRING", isActive: true },
+    { id: "t-num", label: "Kundenrabatt", type: "NUMBER", isActive: true },
+    { id: "t-sel", label: "Kategorie", type: "SELECT", enumDefinitionId: "e", isActive: true },
+    { id: "t-off", label: "Alt", type: "STRING", isActive: false },
+  ],
+}
+
+const lexwareValues: SourceValues = {
+  standard: {
+    note: "Stammkunde",
+    vatRegistrationId: "DE1",
+    customerNumber: "10010",
+    taxNumber: "",
+  },
+  attributes: new Map(),
+}
+
+function toAttribute(field: string, attributeId: string) {
+  return {
+    source: { kind: "standard" as const, field },
+    target: { kind: "attribute" as const, attributeId },
+  }
+}
+
+describe("applyMapping — Dimacon-Attribute als Ziel", () => {
+  it("writes coerced values into attributeValues and omits empty sources", () => {
+    const applied = applyMapping(
+      [toAttribute("vatRegistrationId", "t-str"), toAttribute("taxNumber", "t-num")],
+      FIELD_CATALOG.dimaconCustomer,
+      reverseDiscovery,
+      lexwareValues,
+    )
+    expect(applied.attributeValues).toEqual([{ attributeId: "t-str", value: "DE1" }])
+    expect(applied.warnings).toEqual([])
+  })
+
+  it("warns instead of writing a value that does not fit the attribute type", () => {
+    const applied = applyMapping(
+      [toAttribute("note", "t-num")],
+      FIELD_CATALOG.dimaconCustomer,
+      reverseDiscovery,
+      lexwareValues,
+    )
+    expect(applied.attributeValues).toEqual([])
+    expect(applied.warnings[0]?.code).toBe("type_mismatch")
+  })
+
+  it.each([
+    ["t-sel", "nicht befüllt"],
+    ["t-off", "deaktiviert"],
+    ["t-gone", "existiert nicht mehr"],
+  ])("never writes attribute %s", (attributeId, message) => {
+    const applied = applyMapping(
+      [toAttribute("note", attributeId)],
+      FIELD_CATALOG.dimaconCustomer,
+      reverseDiscovery,
+      lexwareValues,
+    )
+    expect(applied.attributeValues).toEqual([])
+    expect(applied.warnings[0]?.message).toContain(message)
+  })
+})
+
+describe("coerceToAttribute", () => {
+  it.each([
+    ["STRING", "  frei  ", "frei"],
+    ["NUMBER", "12,5", "12.5"],
+    ["NUMBER", "zwölf", null],
+    ["DATE", "2026-09-19T10:00", "2026-09-19"],
+    ["DATE", "1.9.2026", "2026-09-01"],
+    ["DATE", "morgen", null],
+    ["SWITCH", "Ja", "true"],
+    ["SWITCH", "0", "false"],
+    ["SWITCH", "vielleicht", null],
+    ["SELECT", "Neubau", null],
+  ] as const)("%s ← %j", (type, raw, expected) => {
+    expect(coerceToAttribute(raw, type)).toBe(expected)
+  })
+
+  it("treats an empty source as missing, not as invalid", () => {
+    expect(coerceToAttribute("  ", "NUMBER")).toBeUndefined()
+  })
+})
+
 describe("diffMappedFields", () => {
   it("treats empty string, null and undefined as equal", () => {
     const diff = diffMappedFields(
-      { standardFields: { description: null }, customFields: [], warnings: [] },
+      {
+        standardFields: { description: null },
+        customFields: [],
+        attributeValues: [],
+        warnings: [],
+      },
       { standard: { description: "" }, customFields: new Map() },
     )
     expect(diff.changed).toBe(false)
@@ -274,6 +369,7 @@ describe("diffMappedFields", () => {
       {
         standardFields: { name: "Neu" },
         customFields: [{ custom_field_id: 11, value: "A" }],
+        attributeValues: [],
         warnings: [],
       },
       { standard: { name: "Alt" }, customFields: new Map([[11, "B"]]) },
@@ -285,7 +381,13 @@ describe("diffMappedFields", () => {
 
 describe("validateRules", () => {
   it("accepts the default rules", () => {
-    for (const entity of ["project", "customer", "employee", "lexofficeContact"] as const) {
+    for (const entity of [
+      "project",
+      "customer",
+      "employee",
+      "lexofficeContact",
+      "dimaconCustomer",
+    ] as const) {
       const res = validateRules(
         FIELD_CATALOG[entity].defaultRules,
         FIELD_CATALOG[entity],
@@ -308,10 +410,61 @@ describe("validateRules", () => {
         },
       ],
       FIELD_CATALOG.lexofficeContact,
-      { attributes: [], enums: new Map(), customFields: [] },
+      EMPTY_DISCOVERY,
     )
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.errors.join()).toContain("Custom-Ziele werden für diese Entität")
+  })
+
+  it("validates attribute targets against the dimacon customer attributes", () => {
+    const ok = validateRules(
+      [toAttribute("vatRegistrationId", "t-str")],
+      FIELD_CATALOG.dimaconCustomer,
+      reverseDiscovery,
+    )
+    expect(ok).toEqual({ ok: true })
+
+    const res = validateRules(
+      [toAttribute("note", "t-sel"), toAttribute("note", "t-off"), toAttribute("note", "t-gone")],
+      FIELD_CATALOG.dimaconCustomer,
+      reverseDiscovery,
+    )
+    expect(res.ok).toBe(false)
+    if (!res.ok) {
+      expect(res.errors.join()).toContain("(SELECT) kann nicht befüllt werden")
+      expect(res.errors.join()).toContain("deaktiviert")
+      expect(res.errors.join()).toContain("unbekanntes Dimacon-Attribut t-gone")
+    }
+  })
+
+  it("rejects attribute targets for entities that write elsewhere", () => {
+    const res = validateRules(
+      [
+        {
+          source: { kind: "standard", field: "name" },
+          target: { kind: "attribute", attributeId: "t-str" },
+        },
+      ],
+      FIELD_CATALOG.customer,
+      discovery,
+    )
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.errors.join()).toContain("Attribut-Ziele werden für diese Entität")
+  })
+
+  it("rejects the locked match keys of the dimacon customer", () => {
+    const res = validateRules(
+      [
+        {
+          source: { kind: "standard", field: "note" },
+          target: { kind: "standard", field: "customerNumber" },
+        },
+      ],
+      FIELD_CATALOG.dimaconCustomer,
+      reverseDiscovery,
+    )
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.errors.join()).toContain("fixiert")
   })
 
   it("rejects the locked company.name target for lexoffice contacts", () => {
@@ -323,7 +476,7 @@ describe("validateRules", () => {
         },
       ],
       FIELD_CATALOG.lexofficeContact,
-      { attributes: [], enums: new Map(), customFields: [] },
+      EMPTY_DISCOVERY,
     )
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.errors.join()).toContain("fixiert")

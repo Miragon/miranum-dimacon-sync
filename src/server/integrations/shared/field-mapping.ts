@@ -3,9 +3,10 @@ import { targetKey } from "./field-mapping-schema.js"
 import type { MappingRule } from "./field-mapping-schema.js"
 
 /**
- * Pure Engine für die Feld-Zuordnung Dimacon → Clockin: wendet Regeln auf
- * Quellwerte an, koerziert Attribut-Typen auf Clockin-Datentypen und
- * diff't gemappte Felder gegen den aktuellen Clockin-Stand. Keine I/O.
+ * Pure Engine für die Feld-Zuordnung Dimacon → Clockin/Lexware (und für die
+ * Übernahme Lexware → Dimacon): wendet Regeln auf Quellwerte an, koerziert
+ * Attribut-Typen auf die Zieltypen und diff't gemappte Felder gegen den
+ * aktuellen Clockin-Stand. Keine I/O.
  */
 
 export type AttributeType =
@@ -23,7 +24,23 @@ export interface DimaconAttributeDef {
   type: AttributeType
   enumDefinitionId?: string
   isActive: boolean
+  /** Dimacon verweigert die Anlage, wenn ein aktives Pflicht-Attribut fehlt */
+  isRequired?: boolean
 }
+
+/**
+ * Attribut-Typen, die die Übernahme Lexware → Dimacon befüllen kann.
+ * SELECT/MULTI_SELECT bewusst NICHT: ob Dimacon beim Schreiben die
+ * Wert-ID oder das Label erwartet, ist ungeprüft (der Lesepfad toleriert
+ * beides, s. `resolveEnumValue`) — ein falsch geschriebener Auswahlwert
+ * wäre schlimmer als ein leeres Feld. TIME hat keine Lexware-Quelle.
+ */
+export const WRITABLE_ATTRIBUTE_TYPES: readonly AttributeType[] = [
+  "STRING",
+  "NUMBER",
+  "DATE",
+  "SWITCH",
+]
 
 export interface EnumDef {
   id: string
@@ -38,12 +55,20 @@ export interface ClockinCustomFieldDef {
 }
 
 export interface Discovery {
+  /** Dimacon-Attribute als QUELLEN */
   attributes: DimaconAttributeDef[]
   enums: Map<string, EnumDef>
   customFields: ClockinCustomFieldDef[]
+  /** Dimacon-Attribute als ZIELE — nur bei `dimaconCustomer` befüllt */
+  targetAttributes: DimaconAttributeDef[]
 }
 
-export const EMPTY_DISCOVERY: Discovery = { attributes: [], enums: new Map(), customFields: [] }
+export const EMPTY_DISCOVERY: Discovery = {
+  attributes: [],
+  enums: new Map(),
+  customFields: [],
+  targetAttributes: [],
+}
 
 export interface SourceValues {
   standard: Record<string, string | undefined>
@@ -60,6 +85,8 @@ export interface AppliedMapping {
   /** direkt in den Clockin-Body spreadbar */
   standardFields: Record<string, string | null>
   customFields: { custom_field_id: number; value: string }[]
+  /** Dimacon-`customAttributeValues` (nur Attribut-Ziele) */
+  attributeValues: { attributeId: string; value: string }[]
   warnings: MappingWarning[]
 }
 
@@ -71,9 +98,11 @@ export function applyMapping(
 ): AppliedMapping {
   const standardFields: Record<string, string | null> = {}
   const customFields: { custom_field_id: number; value: string }[] = []
+  const attributeValues: { attributeId: string; value: string }[] = []
   const warnings: MappingWarning[] = []
   const attributesById = new Map(discovery.attributes.map((a) => [a.id, a]))
   const customById = new Map(discovery.customFields.map((c) => [c.id, c]))
+  const targetAttributesById = new Map(discovery.targetAttributes.map((a) => [a.id, a]))
   const knownStandardTargets = new Set(catalog.standardTargets.map((t) => t.field))
 
   rules.forEach((rule, ruleIndex) => {
@@ -124,6 +153,27 @@ export function applyMapping(
         return
       }
       standardFields[rule.target.field] = coerced
+    } else if (rule.target.kind === "attribute") {
+      const def = targetAttributesById.get(rule.target.attributeId)
+      const problem = !def
+        ? `Dimacon-Attribut ${rule.target.attributeId} existiert nicht mehr`
+        : attributeTargetProblem(def)
+      if (!def || problem) {
+        warnings.push({ code: "unknown_attribute", ruleIndex, message: problem ?? "" })
+        return
+      }
+      const coerced = coerceToAttribute(raw, def.type)
+      if (coerced === null) {
+        warnings.push({
+          code: "type_mismatch",
+          ruleIndex,
+          message: `Wert "${raw ?? ""}" passt nicht zu ${def.type} (${def.label})`,
+        })
+        return
+      }
+      // Leere Quelle: Attribut weglassen — Attribut-Ziele gibt es nur bei
+      // der Anlage, dort gibt es keinen alten Wert zu überschreiben.
+      if (coerced !== undefined) attributeValues.push({ attributeId: def.id, value: coerced })
     } else {
       const def = customById.get(rule.target.customFieldId)
       if (!def) {
@@ -154,7 +204,53 @@ export function applyMapping(
     }
   })
 
-  return { standardFields, customFields, warnings }
+  return { standardFields, customFields, attributeValues, warnings }
+}
+
+/** Warum ein Attribut kein Ziel sein kann — `undefined` = befüllbar. */
+export function attributeTargetProblem(def: DimaconAttributeDef): string | undefined {
+  if (!WRITABLE_ATTRIBUTE_TYPES.includes(def.type)) {
+    return `Dimacon-Attribut „${def.label}" (${def.type}) kann nicht befüllt werden`
+  }
+  if (!def.isActive) return `Dimacon-Attribut „${def.label}" ist deaktiviert`
+  return undefined
+}
+
+/**
+ * Koerziert einen Text aus dem Quellsystem auf einen Dimacon-Attributtyp.
+ * `undefined` = keine Quelle, `null` = nicht konvertierbar (type_mismatch).
+ * SWITCH schreibt "true"/"false" — dieselbe Form, die `coerceValue` beim
+ * Lesen aus Dimacon als wahr erkennt.
+ */
+export function coerceToAttribute(
+  raw: string | undefined,
+  type: AttributeType,
+): string | null | undefined {
+  const trimmed = raw?.trim()
+  if (!trimmed) return undefined
+
+  switch (type) {
+    case "STRING":
+      return trimmed
+    case "NUMBER": {
+      const normalized = trimmed.replace(",", ".")
+      return Number.isFinite(Number(normalized)) ? normalized : null
+    }
+    case "DATE": {
+      if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10)
+      const german = trimmed.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
+      if (!german) return null
+      return `${german[3]}-${german[2].padStart(2, "0")}-${german[1].padStart(2, "0")}`
+    }
+    case "SWITCH": {
+      const lower = trimmed.toLowerCase()
+      if (["true", "1", "ja", "yes", "x"].includes(lower)) return "true"
+      if (["false", "0", "nein", "no"].includes(lower)) return "false"
+      return null
+    }
+    default:
+      return null
+  }
 }
 
 /**
@@ -258,6 +354,7 @@ export function validateRules(
   const knownTargets = new Set(catalog.standardTargets.map((t) => t.field))
   const knownAttributes = new Set(discovery.attributes.map((a) => a.id))
   const knownCustomFields = new Set(discovery.customFields.map((c) => c.id))
+  const targetAttributes = new Map(discovery.targetAttributes.map((a) => [a.id, a]))
   const lockedTargets = new Set(catalog.lockedTargetFields)
 
   rules.forEach((rule, i) => {
@@ -284,6 +381,19 @@ export function validateRules(
           ? `Regel ${i + 1}: Custom-Ziele werden für diese Entität nicht unterstützt oder es sind keine Custom-Felder definiert`
           : `Regel ${i + 1}: unbekanntes Clockin-Custom-Field ${rule.target.customFieldId}`,
       )
+    }
+    if (rule.target.kind === "attribute") {
+      const def = targetAttributes.get(rule.target.attributeId)
+      const problem = def ? attributeTargetProblem(def) : undefined
+      if (!def) {
+        errors.push(
+          targetAttributes.size === 0
+            ? `Regel ${i + 1}: Attribut-Ziele werden für diese Entität nicht unterstützt oder es sind keine Attribute definiert`
+            : `Regel ${i + 1}: unbekanntes Dimacon-Attribut ${rule.target.attributeId}`,
+        )
+      } else if (problem) {
+        errors.push(`Regel ${i + 1}: ${problem}`)
+      }
     }
   })
 

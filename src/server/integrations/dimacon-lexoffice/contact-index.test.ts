@@ -37,6 +37,18 @@ beforeEach(() => {
 })
 
 describe("LexwareContactIndex", () => {
+  it("resolves every contact by id — also archived ones, which number/name skip", async () => {
+    const archived = { ...contact("lex-2", "Alt GmbH", 10002), archived: true }
+    const index = new LexwareContactIndex([contact("lex-1", "Muster GmbH", 10001), archived])
+
+    expect(index.byId("lex-1")?.company?.name).toBe("Muster GmbH")
+    // byId ist ungefiltert: die Übernahme muss begründen können, warum sie
+    // einen Beleg-Kontakt NICHT anlegt
+    expect(index.byId("lex-2")).toBe(archived)
+    expect(await index.byName("Alt GmbH")).toEqual([])
+    expect(index.byId("lex-x")).toBeUndefined()
+  })
+
   it("matches by number and by normalised name", async () => {
     const index = new LexwareContactIndex([contact("lex-1", "Muster GmbH", 1001)])
 

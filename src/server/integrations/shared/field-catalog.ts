@@ -167,6 +167,59 @@ export const FIELD_CATALOG: Record<MappingEntity, EntityCatalog> = {
       { source: std("phoneNumber"), target: std("phoneNumbers.business") },
     ],
   },
+  dimaconCustomer: {
+    // Gegenrichtung (Übernahme Lexware → Dimacon): Quellen sind Felder des
+    // Lexware-Kontakts (Werte: dimacon-lexoffice/customer-body.ts), Ziele der
+    // Create-Body des Dimacon-Kunden plus dessen Custom-Attribute (Discovery).
+    standardSources: [
+      { field: "street", label: "Straße" },
+      { field: "zip", label: "PLZ" },
+      { field: "city", label: "Ort" },
+      { field: "zipCity", label: "PLZ + Ort (kombiniert)" },
+      { field: "supplement", label: "Adresszusatz" },
+      { field: "email", label: "E-Mail (erste vorhandene)" },
+      { field: "email.business", label: "E-Mail (geschäftlich)" },
+      { field: "email.office", label: "E-Mail (Büro)" },
+      { field: "email.private", label: "E-Mail (privat)" },
+      { field: "email.other", label: "E-Mail (sonstige)" },
+      { field: "phone", label: "Telefon (erste vorhandene)" },
+      { field: "phone.business", label: "Telefon (geschäftlich)" },
+      { field: "phone.office", label: "Telefon (Büro)" },
+      { field: "phone.mobile", label: "Mobil" },
+      { field: "phone.private", label: "Telefon (privat)" },
+      { field: "contactPerson.name", label: "Ansprechpartner" },
+      { field: "contactPerson.email", label: "Ansprechpartner E-Mail" },
+      { field: "contactPerson.phone", label: "Ansprechpartner Telefon" },
+      { field: "note", label: "Notiz" },
+      { field: "customerNumber", label: "Kundennummer" },
+      { field: "vatRegistrationId", label: "USt-IdNr." },
+      { field: "taxNumber", label: "Steuernummer" },
+    ],
+    standardTargets: [
+      { field: "street", label: "Straße", dataType: "text" },
+      { field: "zipCity", label: "PLZ + Ort", dataType: "text" },
+      { field: "phoneNumber", label: "Telefon", dataType: "text" },
+      { field: "email", label: "E-Mail", dataType: "text" },
+      { field: "description", label: "Beschreibung", dataType: "text" },
+    ],
+    lockedPairs: [
+      // Name + Nummer sind die Schlüssel, über die der nächste Vorwärts-Lauf
+      // den angelegten Kunden wiederfindet (import-policy.ts) — remappbar
+      // würde jede Übernahme ein Duplikat nach sich ziehen.
+      { sourceLabel: "Firmen- bzw. Personenname", targetField: "name", note: "match-key" },
+      { sourceLabel: "Kundennummer", targetField: "customerNumber", note: "match-key" },
+    ],
+    lockedTargetFields: ["name", "customerNumber"],
+    requiredTargets: [],
+    // Nur Anlage: eine leere Quelle lässt das Feld weg
+    writeSemantics: "fillIfNonEmpty",
+    defaultRules: [
+      { source: std("street"), target: std("street") },
+      { source: std("zipCity"), target: std("zipCity") },
+      { source: std("phone"), target: std("phoneNumber") },
+      { source: std("email"), target: std("email") },
+    ],
+  },
   employee: {
     // Dimacon kennt keine Mitarbeiter-Attribute — nur Standardfelder als Quellen.
     standardSources: [
@@ -205,7 +258,7 @@ export const FIELD_CATALOG: Record<MappingEntity, EntityCatalog> = {
 /** Welche Integration bildet welche Entitäten ab */
 export const MAPPABLE_ENTITIES: Record<string, MappingEntity[]> = {
   "dimacon-clockin": ["project", "customer", "employee"],
-  "dimacon-lexoffice": ["lexofficeContact"],
+  "dimacon-lexoffice": ["lexofficeContact", "dimaconCustomer"],
 }
 
 interface AttributeValueRow {

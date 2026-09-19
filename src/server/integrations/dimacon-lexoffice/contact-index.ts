@@ -32,14 +32,21 @@ interface LexContactPage {
 export class LexwareContactIndex implements ContactSource {
   private readonly byNumberKey = new Map<string, LexContact[]>()
   private readonly byNameKey = new Map<string, LexContact[]>()
+  /**
+   * ALLE Kontakte nach ID, auch archivierte und reine Lieferanten: die
+   * Übernahme nach Dimacon löst Beleg-Kontakte darüber auf und muss
+   * begründen können, WARUM einer nicht übernommen wird.
+   */
+  private readonly byIdKey = new Map<string, LexContact>()
   private count = 0
 
   constructor(contacts: readonly LexContact[] = []) {
     for (const contact of contacts) this.add(contact)
   }
 
-  /** Nur aktive Kunden-Kontakte — identischer Filter wie die Serversuche. */
+  /** Nummer/Name nur für aktive Kunden-Kontakte — identischer Filter wie die Serversuche. */
   add(contact: LexContact): void {
+    this.byIdKey.set(contact.id, contact)
     if (!isActiveCustomerContact(contact)) return
     this.count++
     push(this.byNumberKey, contactNumber(contact) ?? "", contact)
@@ -52,6 +59,11 @@ export class LexwareContactIndex implements ContactSource {
 
   async byName(name: string): Promise<LexContact[]> {
     return this.byNameKey.get(normalizeName(name)) ?? []
+  }
+
+  /** Beliebiger Kontakt nach ID — ungefiltert, s. `byIdKey`. */
+  byId(id: string): LexContact | undefined {
+    return this.byIdKey.get(id)
   }
 
   get size(): number {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { FIELD_CATALOG, MAPPABLE_ENTITIES } from "./field-catalog.js"
 import { EntityFieldMappingSchema } from "./field-mapping-schema.js"
 
-const ENTITIES = ["project", "customer", "employee", "lexofficeContact"] as const
+const ENTITIES = ["project", "customer", "employee", "lexofficeContact", "dimaconCustomer"] as const
 
 describe("FIELD_CATALOG", () => {
   it("default rules parse against the mapping schema", () => {

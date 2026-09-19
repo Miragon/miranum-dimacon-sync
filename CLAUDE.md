@@ -24,6 +24,7 @@ src/server/      Hono Backend (Port 3020)
   │   │   └─ employee-sync/ Schritt 1 — bidirektionaler Mitarbeiter-
   │   │                     Stammdaten-Abgleich; danach Tagesplanung
   │   └─ dimacon-lexoffice/ Kunden-Sync + Nummern-Alignment Dimacon → Lexware
+  │                         (+ Opt-in-Übernahme Lexware → Dimacon)
   └─ routes/     /api/{clockin,dimacon,lexoffice,integrations,settings,
                  mappings,credentials,systems,me,tenants}/...
 ```
@@ -199,7 +200,7 @@ editierbar im Feld-Zuordnungs-Tab der Integrations-Einstellungen
 (`/sync/<id>/settings?tab=mapping`) via `/api/mappings/:id[/:entity]`.
 Katalog/Engine in `src/server/integrations/shared/field-{catalog,mapping}.ts`;
 ohne persistierte Zuordnung gelten die Default-Regeln und es gibt keine
-Discovery-API-Calls. Match-Keys (project.number, customer.identifier,
+Discovery-API-Calls (Ausnahme `dimaconCustomer`, s. Übernahme unten). Match-Keys (project.number, customer.identifier,
 employee-Namen/PN) sind fixiert und nie remappbar. Der dimacon-clockin-Sync
 akzeptiert `steps: { employees, customers, projects, assignments, archive,
 employeeCreateInDimacon }` im Run-Input (Default: alles an —
@@ -240,6 +241,33 @@ sofern er nicht einem anderen Dimacon-Kunden gehört; mehrere ⇒ Anlage plus
 Hinweis mit den ähnlichen IDs. Ist die unscharfe Suche mehrseitig und gibt es
 keine vollständige exakte Quelle, wird nicht angelegt (ein exakter Treffer
 könnte auf Seite 2 liegen).
+
+Übernahme Lexware → Dimacon (`dimacon-lexoffice`, Schritt
+`importFromLexware`, **per Default AUS**): Kandidaten sind nur Kontakte mit
+Angebot/Auftragsbestätigung der letzten `IMPORT_WINDOW_DAYS` (14) Tage
+(`voucher-candidates.ts`, abgelehnt/storniert zählt nicht) — nie der
+Gesamtbestand, der ist voller Alt- und Einmalkunden. Sie läuft im SELBEN Lauf
+HINTER dem Vorwärts-Abgleich (ein Mutex; als eigene Integration könnten beide
+Richtungen parallel denselben Kunden anlegen) und nimmt dessen Zuordnungen
+(`claimed`) mit — im dry-run trägt der per Name gefundene Dimacon-Kunde die
+Lexware-Nummer noch nicht. Schlüssel ist die Lexware-Kundennummer; angelegt
+wird mit ihr und exakt `contactName()`, damit der nächste Vorwärts-Lauf in der
+Nummernstufe trifft. `import-policy.ts` ist fail-closed: Nummer in Dimacon
+fremd vergeben, gleich oder ähnlich benannter Dimacon-Kunde (loser Schlüssel
+ohne Rechtsform — nur BREMSE, nie Verknüpfung), Namens-Dublette unter den
+Kandidaten ⇒ `skipped` mit Begründung. Ohne VOLLSTÄNDIGEN Kontakt-Index oder
+vollständige Belegliste legt der Lauf nichts an. Die Felder kommen aus der
+Feld-Zuordnung `dimaconCustomer` („Dimacon-Kunde (aus Lexware)“ im
+Feld-Zuordnungs-Tab): Quellen sind Lexware-Felder (`customer-body.ts`), Ziele
+die Dimacon-Standardfelder plus die Kunden-Attribute über die Zielart
+`attribute` (Clockin-Custom-Fields bleiben `custom`). Default = Adresse, erste
+E-Mail/Telefonnummer; Name + Kundennummer sind fixiert. Auswahl-Attribute
+(SELECT/MULTI_SELECT) sind bewusst KEINE Ziele (`WRITABLE_ATTRIBUTE_TYPES`) —
+ob Dimacon beim Schreiben Wert-ID oder Label erwartet, ist ungeprüft. Für
+`dimaconCustomer` lädt `loadMappingContext` die Discovery IMMER: ein aktives
+Pflicht-Attribut (`isRequired`) ohne befüllbare Regel sperrt die Übernahme
+für den Lauf (EIN Fehler mit Abhilfe statt je Kunde ein Dimacon-400), eine
+leere Pflicht-Quelle macht den Kontakt zur `skipped`-Zeile.
 
 Die alte settings.json wird nur noch vom **einmaligen Legacy-Seed** gelesen
 (`src/server/lib/legacy-settings.ts` parst beide Alt-Formen; Seed-Guard =
