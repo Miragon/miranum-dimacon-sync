@@ -34,6 +34,7 @@ interface DimaconAttributeRow {
   type: AttributeType
   enumDefinitionId?: string
   isActive: boolean
+  isRequired?: boolean
 }
 
 interface DimaconEnumRow {
@@ -58,6 +59,11 @@ interface ClockinCustomFieldRow {
  * keine Clockin-Credentials — eine eager-Konstruktion würde dort werfen).
  * `getFieldMapping` kommt tenant-gescoped vom Aufrufer (Run-Kontext bzw.
  * Mappings-Route) — dieses Modul kennt weder DB noch Mandanten.
+ *
+ * Ausnahme `dimaconCustomer`: dort wird die Discovery IMMER geladen (ein GET
+ * der Kunden-Attribute). Die Übernahme muss die Pflicht-Attribute vor jeder
+ * Anlage kennen — auch ohne gespeicherte Zuordnung, sonst scheitert jede
+ * Anlage einzeln an Dimacon statt einmal mit klarer Meldung.
  */
 export async function loadMappingContext(opts: {
   dimaconClient: DimaconClient
@@ -71,6 +77,24 @@ export async function loadMappingContext(opts: {
   for (const entity of entities) {
     const catalog = FIELD_CATALOG[entity]
     const persisted = await getFieldMapping(entity)
+    const alwaysDiscover = entity === "dimaconCustomer"
+
+    if (!persisted && alwaysDiscover) {
+      context.set(entity, {
+        entity,
+        rules: catalog.defaultRules,
+        catalog,
+        discovery: await loadDiscovery(
+          dimaconClient,
+          getClockinClient,
+          entity,
+          catalog.defaultRules,
+        ),
+        isCustomized: false,
+        hasCustomTargets: false,
+      })
+      continue
+    }
 
     if (!persisted) {
       context.set(entity, {
@@ -86,9 +110,14 @@ export async function loadMappingContext(opts: {
 
     // Discovery nur, wenn Regeln Attribute/Custom-Felder referenzieren —
     // reine Standard-Regeln brauchen keine Live-Definitionen.
-    const needsDiscovery = persisted.rules.some(
-      (r) => r.source.kind === "attribute" || r.target.kind === "custom",
-    )
+    const needsDiscovery =
+      alwaysDiscover ||
+      persisted.rules.some(
+        (r) =>
+          r.source.kind === "attribute" ||
+          r.target.kind === "custom" ||
+          r.target.kind === "attribute",
+      )
     const discovery = needsDiscovery
       ? await loadDiscovery(dimaconClient, getClockinClient, entity, persisted.rules)
       : EMPTY_DISCOVERY
@@ -115,6 +144,15 @@ export async function loadDiscovery(
   const needsEnums = (attributes: DimaconAttributeDef[]): boolean =>
     attributes.some((a) => a.type === "SELECT" || a.type === "MULTI_SELECT")
 
+  // Gegenrichtung: die Kunden-Attribute sind ZIELE, Quellen sind Lexware-Felder.
+  // Kein Clockin, keine Enums (Auswahl-Attribute sind keine befüllbaren Ziele).
+  // Bewusst ALLE Attribute, auch deaktivierte: nur so kann der Editor eine
+  // Regel auf ein inzwischen deaktiviertes Attribut benennen statt sie als
+  // „Ziel existiert nicht mehr" zu zeigen. Geschrieben wird nur in aktive.
+  if (entity === "dimaconCustomer") {
+    return { ...EMPTY_DISCOVERY, targetAttributes: await loadAttributes(dimaconClient, entity) }
+  }
+
   const attributes = await loadAttributes(dimaconClient, entity)
   const referencedOnly = rules
     ? attributes.filter(
@@ -131,7 +169,7 @@ export async function loadDiscovery(
 
   const customFields = await loadCustomFields(getClockinClient, entity)
 
-  return { attributes: referencedOnly, enums, customFields }
+  return { attributes: referencedOnly, enums, customFields, targetAttributes: [] }
 }
 
 async function loadAttributes(
@@ -146,7 +184,7 @@ async function loadAttributes(
   const rows = (await withRetry(() =>
     entity === "project"
       ? dimacon.getAllAttributes1({ client })
-      : // customer + lexofficeContact: beide lesen die Kunden-Attribute
+      : // customer, lexofficeContact, dimaconCustomer: alle lesen die Kunden-Attribute
         dimacon.getAllAttributes2({ client }),
   )) as unknown as DimaconAttributeRow[]
 
@@ -156,6 +194,7 @@ async function loadAttributes(
     type: r.type,
     enumDefinitionId: r.enumDefinitionId,
     isActive: r.isActive,
+    isRequired: r.isRequired === true,
   }))
 }
 

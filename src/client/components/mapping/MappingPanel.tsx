@@ -12,6 +12,7 @@ const ENTITY_LABELS: Record<MappingEntityBlock["entity"], string> = {
   customer: "Kunde",
   employee: "Mitarbeiter",
   lexofficeContact: "Lexware-Kontakt",
+  dimaconCustomer: "Dimacon-Kunde (aus Lexware)",
 }
 
 interface MappingsResponse {
@@ -64,8 +65,8 @@ export function MappingPanel({ integrationId }: { integrationId: string }) {
   return (
     <div>
       <p className="text-body-sm text-ink-2 mb-8 max-w-[540px]">
-        Legt fest, welche Dimacon-Felder in welche Zielfelder geschrieben werden — inklusive
-        Custom-Attributen und Custom-Feldern, wo das Zielsystem sie kennt. Fixierte Zeilen sind
+        Legt fest, welche Quellfelder in welche Zielfelder geschrieben werden — inklusive
+        Custom-Attributen und Custom-Feldern, wo die Systeme sie kennen. Fixierte Zeilen sind
         Match-Keys und nicht veränderbar. Entfernte Regeln löschen bereits geschriebene Werte nicht
         — das Feld wird nur nicht mehr gepflegt.
       </p>
@@ -109,6 +110,15 @@ export function MappingPanel({ integrationId }: { integrationId: string }) {
             <p className="text-ink-3 mt-6 max-w-[540px] font-mono text-[0.65rem] leading-relaxed">
               Die Kunden-Zuordnung wirkt beim Anlegen neuer Clockin-Kunden — bestehende Kunden
               werden vom Sync nicht aktualisiert.
+            </p>
+          ) : null}
+          {active?.entity === "dimaconCustomer" ? (
+            <p className="text-body-sm text-ink-2 mt-6 max-w-[540px]">
+              Die Zuordnung wirkt nur, wenn die Übernahme neue Dimacon-Kunden anlegt (Schritt
+              „Kunden aus Lexware in Dimacon anlegen“ im Umfang) — bestehende Kunden werden nicht
+              aktualisiert. Name und Kundennummer sind fixiert. Mit * markierte Attribute verlangt
+              Dimacon: Solange eines davon keine Quelle hat, legt die Übernahme keinen Kunden an.
+              Auswahlfelder kann die Übernahme noch nicht befüllen.
             </p>
           ) : null}
           {active?.entity === "lexofficeContact" ? (

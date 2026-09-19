@@ -7,9 +7,36 @@ export interface LexContact {
   version: number
   /** `vendor` wird nur modelliert, um reine Lieferanten erkennen zu können. */
   roles?: { customer?: { number?: string | number }; vendor?: { number?: string | number } }
-  company?: { name?: string }
+  company?: {
+    name?: string
+    /** Ab hier nur für die Übernahme nach Dimacon gelesen (customer-body.ts) */
+    vatRegistrationId?: string
+    taxNumber?: string
+    contactPersons?: LexContactPerson[]
+  }
   person?: { firstName?: string; lastName?: string }
   archived?: boolean
+  addresses?: { billing?: LexAddress[]; shipping?: LexAddress[] }
+  emailAddresses?: Partial<Record<"business" | "office" | "private" | "other", string[]>>
+  phoneNumbers?: Partial<
+    Record<"business" | "office" | "mobile" | "private" | "fax" | "other", string[]>
+  >
+  note?: string
+}
+
+export interface LexAddress {
+  supplement?: string
+  street?: string
+  zip?: string
+  city?: string
+}
+
+export interface LexContactPerson {
+  firstName?: string
+  lastName?: string
+  primary?: boolean
+  emailAddress?: string
+  phoneNumber?: string
 }
 
 export interface LexContactsResponse {

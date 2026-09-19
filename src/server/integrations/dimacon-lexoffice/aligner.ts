@@ -26,6 +26,8 @@ export type ContactResolution =
   | { kind: "ambiguous"; reason: string }
   | { kind: "conflict"; reason: string }
 
+type AlignerSteps = Pick<LexofficeSyncSteps, "createContacts" | "alignNumbers">
+
 /** Kandidaten-IDs für die Ergebniszeile — gekappt, damit die Zeile lesbar bleibt. */
 const MAX_LISTED_IDS = 5
 
@@ -72,7 +74,8 @@ export class CustomerAligner {
     private readonly lexofficeClient: LexofficeClient,
     private readonly log: Logger,
     private readonly dryRun: boolean,
-    private readonly steps: LexofficeSyncSteps = { createContacts: true, alignNumbers: true },
+    /** Die Übernahme Lexware → Dimacon läuft getrennt (importer.ts) */
+    private readonly steps: AlignerSteps = { createContacts: true, alignNumbers: true },
     /** Feld-Zuordnung für den Create-Body (Kontakte werden nie aktualisiert) */
     private readonly mapping?: EntityMappingContext,
     private readonly onMappingWarning: (message: string) => void = () => undefined,

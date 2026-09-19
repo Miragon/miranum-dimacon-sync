@@ -4,10 +4,12 @@ import { CustomerSyncInputSchema } from "./types.js"
 
 export const dimaconLexofficeIntegration = defineIntegration({
   id: "dimacon-lexoffice",
-  name: "Dimacon → Lexoffice",
+  name: "Dimacon ⇄ Lexoffice",
   description:
     "Alle Dimacon-Kunden mit Lexware Office abgleichen — fehlende Kontakte " +
-    "anlegen und Dimacon-Kundennummern an die Lexware-Nummern angleichen.",
+    "anlegen und Dimacon-Kundennummern an die Lexware-Nummern angleichen. " +
+    "Optional: Kunden mit aktuellem Angebot oder Auftragsbestätigung aus " +
+    "Lexware in Dimacon anlegen.",
   systems: ["dimacon", "lexoffice"],
   requiredCredentials: ["dimacon", "lexoffice"],
   inputSchema: CustomerSyncInputSchema,

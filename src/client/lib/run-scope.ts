@@ -6,8 +6,9 @@
  * vom Run-Formular, vom Umfang-Tab und von der Run-Historie genutzt.
  *
  * Die `default`-Werte spiegeln die Zod-Defaults des jeweiligen
- * `inputSchema` auf dem Server — insbesondere ist `employeeCreateInDimacon`
- * bewusst AUS (Issue #17). Ein fehlender Key darf nie zu „an" werden.
+ * `inputSchema` auf dem Server — insbesondere sind `employeeCreateInDimacon`
+ * (Issue #17) und `importFromLexware` bewusst AUS. Ein fehlender Key darf nie
+ * zu „an" werden.
  */
 export interface RunStepSpec {
   key: string
@@ -111,12 +112,25 @@ export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
           "gehören, werden mit Begründung gemeldet statt geschrieben.",
       },
       { key: "alignNumbers", label: "Kundennummern angleichen", default: true },
+      {
+        key: "importFromLexware",
+        label: "Kunden aus Lexware in Dimacon anlegen",
+        default: false,
+        note:
+          "Übernommen werden nur Lexware-Kunden mit einem Angebot oder einer Auftragsbestätigung der letzten 14 " +
+          "Tage (abgelehnte und stornierte Belege zählen nicht). Angelegt wird mit der Lexware-Kundennummer — und " +
+          "nur, wenn die Nummer in Dimacon frei ist und dort kein gleich oder ähnlich benannter Kunde existiert. " +
+          "Alle übersprungenen Kontakte stehen mit Begründung im Ergebnis.",
+      },
     ],
-    hints: (steps) => [
-      steps.createContacts
-        ? "Läuft über den gesamten Dimacon-Kundenbestand — ein Live-Lauf legt fehlende Lexware-Kontakte an."
-        : "Nur Abgleich — es werden keine Lexware-Kontakte angelegt.",
-    ],
+    hints: (steps) =>
+      [
+        steps.createContacts
+          ? "Läuft über den gesamten Dimacon-Kundenbestand — ein Live-Lauf legt fehlende Lexware-Kontakte an."
+          : "Nur Abgleich — es werden keine Lexware-Kontakte angelegt.",
+        steps.importFromLexware &&
+          "Ein Live-Lauf legt jetzt auch in Dimacon Kunden an — siehe die Bedingungen unter den Schritten.",
+      ].filter((h): h is string => Boolean(h)),
   },
 }
 

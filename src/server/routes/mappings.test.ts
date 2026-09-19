@@ -99,6 +99,27 @@ describe("mappings routes", () => {
     expect(await res.json()).toEqual({ error: "unknown integration or entity" })
   })
 
+  it("offers the reverse mapping (Lexware → Dimacon-Kunde) next to the Lexware contact", async () => {
+    const res = await app.request("/api/mappings/dimacon-lexoffice")
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { entities: EntityBlockJson[] }
+    expect(body.entities.map((e) => e.entity)).toEqual(["lexofficeContact", "dimaconCustomer"])
+    const reverse = body.entities.find((e) => e.entity === "dimaconCustomer")
+    expect(reverse?.rules).toEqual(FIELD_CATALOG.dimaconCustomer.defaultRules)
+  })
+
+  it("rejects attribute targets while the dimacon attributes cannot be loaded", async () => {
+    const res = await app.request("/api/mappings/dimacon-lexoffice/dimaconCustomer", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        rules: [{ source: std("note"), target: { kind: "attribute", attributeId: "attr-1" } }],
+      }),
+    })
+    // Ohne Discovery ist weder Typ noch Pflicht-Status des Attributs prüfbar
+    expect(res.status).toBe(502)
+  })
+
   it("accepts standard-only rules despite failing discovery and persists them", async () => {
     const res = await putProject(VALID_RULES)
     expect(res.status).toBe(200)

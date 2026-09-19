@@ -8,7 +8,11 @@ import { safeJson } from "../lib/http.js"
 import { log } from "../lib/log.js"
 import type { AppEnv } from "../lib/tenant.js"
 import { FIELD_CATALOG, MAPPABLE_ENTITIES } from "../integrations/shared/field-catalog.js"
-import { validateRules } from "../integrations/shared/field-mapping.js"
+import {
+  attributeTargetProblem,
+  EMPTY_DISCOVERY,
+  validateRules,
+} from "../integrations/shared/field-mapping.js"
 import type { Discovery } from "../integrations/shared/field-mapping.js"
 import { MappingRuleSchema } from "../integrations/shared/field-mapping-schema.js"
 import type { MappingEntity } from "../integrations/shared/field-mapping-schema.js"
@@ -54,14 +58,13 @@ app.put("/:integrationId/:entity", async (c) => {
   // Ohne Discovery lassen sich nur Standard-Regeln verifizieren — Regeln mit
   // Attribut-/Custom-Referenzen brauchen die Live-Definitionen zwingend.
   const needsDiscovery = parsed.data.rules.some(
-    (r) => r.source.kind === "attribute" || r.target.kind === "custom",
+    (r) =>
+      r.source.kind === "attribute" || r.target.kind === "custom" || r.target.kind === "attribute",
   )
   if (!attempt.ok && needsDiscovery) {
     return c.json({ error: `Discovery fehlgeschlagen: ${attempt.message}` }, 502)
   }
-  const discovery: Discovery = attempt.ok
-    ? attempt.value
-    : { attributes: [], enums: new Map(), customFields: [] }
+  const discovery: Discovery = attempt.ok ? attempt.value : EMPTY_DISCOVERY
 
   const validation = validateRules(parsed.data.rules, catalog, discovery)
   if (!validation.ok) {
@@ -103,7 +106,7 @@ async function entityBlock(tenantId: string, integrationId: string, entity: Mapp
   const rules = persisted?.rules ?? catalog.defaultRules
 
   const discoveryErrors: string[] = []
-  let discovery: Discovery = { attributes: [], enums: new Map(), customFields: [] }
+  let discovery: Discovery = EMPTY_DISCOVERY
   const attempt = await tryDiscovery(tenantId, entity)
   if (attempt.ok) discovery = attempt.value
   else discoveryErrors.push(attempt.message)
@@ -131,6 +134,18 @@ async function entityBlock(tenantId: string, integrationId: string, entity: Mapp
     targets: {
       standard: catalog.standardTargets,
       custom: discovery.customFields,
+      // Nur dimaconCustomer: Dimacon-Kunden-Attribute. `problem` ≠ undefined
+      // heißt „nicht befüllbar" (Typ/deaktiviert) — der Editor zeigt sie
+      // trotzdem, damit ein Pflicht-Attribut, das die Übernahme blockiert,
+      // nicht unsichtbar bleibt.
+      attributes: discovery.targetAttributes.map((a) => ({
+        id: a.id,
+        label: a.label,
+        type: a.type,
+        isActive: a.isActive,
+        isRequired: a.isRequired === true,
+        problem: attributeTargetProblem(a),
+      })),
     },
     warnings: validation.ok ? [] : validation.errors,
     discoveryErrors,
