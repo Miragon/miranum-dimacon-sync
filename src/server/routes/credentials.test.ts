@@ -151,6 +151,12 @@ describe("POST /api/credentials/:system/test", () => {
     expect(testConnectionMock.mock.calls).toStrictEqual([["lexoffice", { apiKey: "lex" }]])
   })
 
+  it("sevdesk: Secret landet im apiToken-Feld", async () => {
+    const res = await testReq("sevdesk", { token: "sev" })
+    expect(res.status).toBe(200)
+    expect(testConnectionMock.mock.calls).toStrictEqual([["sevdesk", { apiToken: "sev" }]])
+  })
+
   it("Upstream-Fehler → 200 mit ok:false und formatError-Meldung", async () => {
     testConnectionMock.mockRejectedValue(new Error("HTTP 401 Unauthorized"))
     const res = await testReq("lexoffice", { token: "lex" })

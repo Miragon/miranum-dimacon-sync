@@ -27,7 +27,7 @@ interface SystemStatus {
 }
 
 /**
- * Die drei angebundenen Systeme — Status UND Zugangsdaten an einem Ort.
+ * Die vier angebundenen Systeme — Status UND Zugangsdaten an einem Ort.
  *
  * Die frühere Seite /settings beantwortete mit „wo hinterlege ich
  * Zugangsdaten?" genau die Frage, für die es hier schon eine Statusspalte
@@ -88,7 +88,7 @@ function Modules() {
         <span className="mn-mono">/modules · systeme</span>
         <h1 className="text-h-1 text-ink mt-4">Systeme</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[560px]">
-          Die drei angebundenen Systeme
+          Die vier angebundenen Systeme
           {tenantCtx ? (
             <>
               {" "}
@@ -119,7 +119,7 @@ function Modules() {
             <h2 className="text-ink mb-6 font-mono text-[0.75rem] tracking-[0.18em] uppercase">
               Übersicht
             </h2>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               {systems.map((s) => {
                 const el = findElementBySystem(s.id)
                 return (

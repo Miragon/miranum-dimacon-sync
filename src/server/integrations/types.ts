@@ -5,7 +5,7 @@ import type { TenantClients } from "../lib/clients.js"
 import type { Logger } from "../lib/log.js"
 import type { EntityFieldMapping, MappingEntity } from "./shared/field-mapping-schema.js"
 
-export type SystemId = "dimacon" | "clockin" | "lexoffice"
+export type SystemId = "dimacon" | "clockin" | "lexoffice" | "sevdesk"
 
 /**
  * Tenant-Kontext eines Laufs — von buildRunContext (context.ts) verdrahtet.

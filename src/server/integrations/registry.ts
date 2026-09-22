@@ -3,6 +3,7 @@ import { formatError } from "../lib/errors.js"
 import { withRunMetrics, type RunMetricsSnapshot } from "../lib/metrics.js"
 import { dimaconClockinIntegration } from "./dimacon-clockin/index.js"
 import { dimaconLexofficeIntegration } from "./dimacon-lexoffice/index.js"
+import { dimaconSevdeskIntegration } from "./dimacon-sevdesk/index.js"
 import { runExclusive } from "./mutex.js"
 import type { IntegrationDefinition, IntegrationRunContext } from "./types.js"
 
@@ -10,6 +11,7 @@ import type { IntegrationDefinition, IntegrationRunContext } from "./types.js"
 export const integrations: readonly IntegrationDefinition[] = [
   dimaconClockinIntegration,
   dimaconLexofficeIntegration,
+  dimaconSevdeskIntegration,
 ]
 
 export function getIntegration(id: string): IntegrationDefinition | undefined {

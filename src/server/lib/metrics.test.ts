@@ -40,12 +40,12 @@ describe("metrics", () => {
       (s) => (snapshot = s),
     )
 
-    expect(snapshot?.requests).toEqual({ dimacon: 2, clockin: 2, lexoffice: 0 })
+    expect(snapshot?.requests).toEqual({ dimacon: 2, clockin: 2, lexoffice: 0, sevdesk: 0 })
     const phases = snapshot!.phases
     expect(phases.map((p) => p.phase)).toEqual(["enrich", "inner"])
     // Der Request der inneren Phase zählt NICHT zusätzlich in "enrich".
-    expect(phases[0]!.requests).toEqual({ dimacon: 1, clockin: 1, lexoffice: 0 })
-    expect(phases[1]!.requests).toEqual({ dimacon: 0, clockin: 1, lexoffice: 0 })
+    expect(phases[0]!.requests).toEqual({ dimacon: 1, clockin: 1, lexoffice: 0, sevdesk: 0 })
+    expect(phases[1]!.requests).toEqual({ dimacon: 0, clockin: 1, lexoffice: 0, sevdesk: 0 })
   })
 
   it("vermischt parallel gestartete Phasen nicht", async () => {

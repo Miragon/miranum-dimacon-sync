@@ -75,7 +75,7 @@ describe("runIntegration — Lauf-Metrik", () => {
     }
 
     expect(result.ok).toBe(true)
-    expect(result.metrics.requests).toEqual({ dimacon: 2, clockin: 1, lexoffice: 0 })
+    expect(result.metrics.requests).toEqual({ dimacon: 2, clockin: 1, lexoffice: 0, sevdesk: 0 })
     expect(result.metrics.phases.map((p) => p.phase)).toEqual(["laden", "schreiben"])
 
     const [stored] = await db

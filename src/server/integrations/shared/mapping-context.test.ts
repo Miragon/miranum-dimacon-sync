@@ -287,6 +287,34 @@ describe("loadMappingContext (Regeln + Discovery pro Entity)", () => {
     expect(getEmployeeCustomFieldsMock).not.toHaveBeenCalled()
     expect(context.get("lexofficeContact")?.discovery.customFields).toEqual([])
   })
+
+  it("reads customer attributes for sevdeskContact without constructing a clockin client", async () => {
+    const rules: MappingRule[] = [
+      {
+        source: { kind: "attribute", attributeId: "attr-1" },
+        target: { kind: "standard", field: "description" },
+      },
+    ]
+    getFieldMappingMock.mockResolvedValue({ version: 1, rules })
+    getAllAttributes2Mock.mockResolvedValue([
+      { id: "attr-1", label: "Notiz", type: "STRING", isActive: true },
+    ])
+    const getClockin = throwingClockinGetter()
+
+    const context = await loadMappingContext({
+      dimaconClient: dimaconClient,
+      getClockinClient: getClockin,
+      entities: ["sevdeskContact"],
+      getFieldMapping: getFieldMappingMock,
+    })
+
+    expect(getAllAttributes2Mock).toHaveBeenCalledTimes(1)
+    expect(getClockin).not.toHaveBeenCalled()
+    expect(getProjectCustomFieldsMock).not.toHaveBeenCalled()
+    expect(getCustomerCustomFieldsMock).not.toHaveBeenCalled()
+    expect(getEmployeeCustomFieldsMock).not.toHaveBeenCalled()
+    expect(context.get("sevdeskContact")?.discovery.customFields).toEqual([])
+  })
 })
 
 describe("loadDiscovery (Editor-Discovery)", () => {

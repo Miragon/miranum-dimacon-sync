@@ -2,6 +2,8 @@ import { DimaconClockinResult } from "./DimaconClockinResult.js"
 import type { SyncResult } from "./DimaconClockinResult.js"
 import { DimaconLexofficeResult } from "./DimaconLexofficeResult.js"
 import type { CustomerSyncResult } from "./DimaconLexofficeResult.js"
+import { DimaconSevdeskResult } from "./DimaconSevdeskResult.js"
+import type { SevdeskSyncResult } from "./DimaconSevdeskResult.js"
 
 /**
  * Rendert das Run-Ergebnis passend zur Integration — unbekannte
@@ -20,6 +22,9 @@ export function RunResultView({
   }
   if (integrationId === "dimacon-lexoffice") {
     return <DimaconLexofficeResult result={result as CustomerSyncResult} />
+  }
+  if (integrationId === "dimacon-sevdesk") {
+    return <DimaconSevdeskResult result={result as SevdeskSyncResult} />
   }
   return (
     <section>

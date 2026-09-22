@@ -29,6 +29,13 @@
       "when": 1789297449389,
       "tag": "0003_sudden_maximus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790084929937,
+      "tag": "0004_bored_shatterstar",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,7 @@ import {
 
 const CLOCKIN = "dimacon-clockin"
 const LEXOFFICE = "dimacon-lexoffice"
+const SEVDESK = "dimacon-sevdesk"
 
 describe("readScope", () => {
   it("falls back to the schema default of each step", () => {
@@ -139,6 +140,14 @@ describe("describeScope / isDefaultScope", () => {
   it("returns a dash for unknown integrations", () => {
     expect(describeScope("unbekannt", {})).toBe("—")
   })
+
+  it("labels the sevdesk scope like the lexoffice one (no opt-ins)", () => {
+    expect(describeScope(SEVDESK, {})).toBe("voll · live")
+    expect(isDefaultScope(SEVDESK, {})).toBe(true)
+    expect(describeScope(SEVDESK, { dryRun: true, steps: { createContacts: false } })).toBe(
+      "1 von 2 Schritten · dry-run",
+    )
+  })
 })
 
 describe("hints", () => {
@@ -165,6 +174,14 @@ describe("hints", () => {
     const spec = RUN_SCOPE_SPECS[LEXOFFICE]
     expect(spec.hints({ createContacts: true, alignNumbers: true })[0]).toMatch(
       /gesamten Dimacon-Kundenbestand/,
+    )
+    expect(spec.hints({ createContacts: false, alignNumbers: true })[0]).toMatch(/Nur Abgleich/)
+  })
+
+  it("switches the sevdesk hint with createContacts", () => {
+    const spec = RUN_SCOPE_SPECS[SEVDESK]
+    expect(spec.hints({ createContacts: true, alignNumbers: true })[0]).toMatch(
+      /fehlende sevDesk-Kontakte/,
     )
     expect(spec.hints({ createContacts: false, alignNumbers: true })[0]).toMatch(/Nur Abgleich/)
   })
@@ -214,5 +231,11 @@ describe("Bedingungen am Schritt (note)", () => {
   it("nennt bei der Lexware-Anlage die Mehrdeutigkeits-Regel", () => {
     const step = RUN_SCOPE_SPECS[LEXOFFICE].steps.find((s) => s.key === "createContacts")
     expect(step?.note).toMatch(/gleichnamige/)
+  })
+
+  it("nennt bei der sevDesk-Anlage Mehrdeutigkeits-Regel und Nummern-Seeding", () => {
+    const step = RUN_SCOPE_SPECS[SEVDESK].steps.find((s) => s.key === "createContacts")
+    expect(step?.note).toMatch(/gleichnamige/)
+    expect(step?.note).toMatch(/frei, wird sie beim Anlegen mitgegeben/)
   })
 })

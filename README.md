@@ -1,5 +1,5 @@
 Miranum App Template — React SPA + Hono backend mit den Miranum-Clients
-(ClockIn, Dimacon, Lexoffice).
+(ClockIn, Dimacon, Lexoffice, sevDesk).
 
 ## Architektur
 
@@ -12,8 +12,9 @@ src/
     ├── integrations/            Integrations-Registry (Mutex, Scheduler — je Mandant)
     │   ├── shared/              gemeinsame Loader/Helper (Dimacon, Zeit)
     │   ├── dimacon-clockin/     Tagesplanung Dimacon → Clockin
-    │   └── dimacon-lexoffice/   Kunden-Sync Dimacon → Lexware Office
-    └── routes/ /api/{clockin,dimacon,lexoffice,integrations,settings,mappings,credentials,systems,me,tenants}/...
+    │   ├── dimacon-lexoffice/   Kunden-Sync Dimacon → Lexware Office
+    │   └── dimacon-sevdesk/     Kunden-Sync Dimacon → sevDesk
+    └── routes/ /api/{clockin,dimacon,lexoffice,sevdesk,integrations,settings,mappings,credentials,systems,me,tenants}/...
 ```
 
 **Multi-Mandanten-Modell:** Eine WorkOS-Organisation = ein Mandant. Der
@@ -55,12 +56,12 @@ Allowlist bleibt fail-closed. Semantik:
   eigener WorkOS-API-Key nur für diese App (Rate-Limit-/Rotations-Isolation).
 
 Alle Konfiguration liegt tenant-gescoped in Postgres: **API-Zugangsdaten**
-(AES-256-GCM-verschlüsselt; Dimacon unter `/modules`, Clockin/Lexware in den
-Integrations-Einstellungen `/sync/<id>/settings`), **Schedules**,
+(AES-256-GCM-verschlüsselt; Dimacon unter `/modules`, Clockin/Lexware/sevDesk in
+den Integrations-Einstellungen `/sync/<id>/settings`), **Schedules**,
 **Feld-Zuordnungen** und die **Run-Historie** (`sync_runs`, letzte 50 je
 Mandant+Integration). Migrationen laufen automatisch beim Boot.
 
-Die API-Clients kommen als npm-Packages (`@miragon/client-{clockin,dimacon,lexoffice}`)
+Die API-Clients kommen als npm-Packages (`@miragon/client-{clockin,dimacon,lexoffice,sevdesk}`)
 aus [Miragon/miranum-clients](https://github.com/Miragon/miranum-clients).
 
 Der Backend-Server serviert die API-Routes unter `/api/...` und im Production-Build
@@ -104,9 +105,9 @@ Lokal kommt also alles aus `.env`, in Prod gewinnen `fly secrets`. Template:
 | `VITE_WORKOS_API_HOSTNAME` | AuthKit-Domain auf der EIGENEN Site (z. B. `auth.example.com`, build-time) ⇒ First-Party-Cookies. Leer ⇒ Refresh-Token im `localStorage` (s. u.). | nein    |
 | `WORKOS_API_KEY`           | WorkOS-API-Key (`sk_…`, server-only): filtert die Switcher-Liste nach Org-Mitgliedschaft. Leer = nur aktiver Mandant.                             | nein    |
 | `WORKOS_ORG_SYNC`          | `on` = Org-Sync aktiv (Orgs mit Feature-Flag `dimacon-sync` werden automatisch provisioniert; braucht `WORKOS_API_KEY`).                          | nein    |
-| `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`). Defaults: 10 / 5 / 2 Requests pro Sekunde.                                     | nein    |
-| `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2.                                                                                           | nein    |
-| `CONCURRENCY_<SYS>`        | Parallele Tasks **je Phase**, nicht je Lauf (gemischte Tasks: strengstes System). Defaults: 8 / 5 / 2.                                            | nein    |
+| `RATE_LIMIT_<SYS>_RPS`     | Token-Bucket-Rate je Zielsystem (`DIMACON`/`CLOCKIN`/`LEXOFFICE`/`SEVDESK`). Defaults: 10 / 5 / 2 / 2 Requests pro Sekunde.                       | nein    |
+| `RATE_LIMIT_<SYS>_BURST`   | Sofort-Vorrat desselben Buckets. Defaults: 20 / 10 / 2 / 4.                                                                                       | nein    |
+| `CONCURRENCY_<SYS>`        | Parallele Tasks **je Phase**, nicht je Lauf (gemischte Tasks: strengstes System). Defaults: 8 / 5 / 2 / 2.                                        | nein    |
 | `ARCHIVE_HORIZON_DAYS`     | Planungshorizont des Archiv-Schutzes (±, Default 14 Tage) um heute **und** um das Sync-Datum: was darin einen Termin hat, bleibt.                 | nein    |
 
 ### Rate-Limits & Laufzeit
@@ -337,6 +338,7 @@ eigene HTTP-Routen und einen Eintrag in der UI (`/sync`).
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dimacon-clockin`   | Kompletter Clockin-Sync, Schritte per `steps` zuschaltbar: (1) **bidirektionaler** Mitarbeiter-Stammdaten-Abgleich über den gesamten Bestand (Zuordnung **ausschließlich über die Personalnummer**, aktive vor archivierten; Dimacon gewinnt; der Live-Lauf legt in Clockin fehlende Mitarbeiter an — nur mit vollständigem Personennamen und einer dort unvergebenen Personalnummer, und nicht, wenn in Clockin ein namensähnlicher Mitarbeiter ohne passende Nummer steht; vorher dry-run prüfen). Die Gegenrichtung **Clockin → Dimacon ist per Default AUS** und braucht `{"steps":{"employeeCreateInDimacon":true}}`; sie legt dann nur Mitarbeiter mit Personalnummer an, ohne ausgelaufene Verträge, ohne mehrdeutige/dublette und ohne namensähnliche Kandidaten — alles andere wird als `skipped`-Zeile mit Begründung gemeldet. Fail-Safe: wurde die Clockin-Mitarbeiterliste unvollständig geladen, legt der Lauf in **keiner** Richtung Mitarbeiter an. (2) Tagesplanung: Termine laden, Kunden/Projekte upserten, Mitarbeiter zuweisen, nicht Eingeplante archivieren. Die Kundennummer wird **exakt** gesucht (`byIdentifier`); mehrere exakte Treffer sind eine Dublette in Clockin und werden gemeldet statt geschrieben, bloß ähnliche Treffer blockieren nicht (Anlage plus Hinweis mit den ähnlichen IDs). Der Kunden-Namens-Fallback (greift nur, wenn die Kundennummer nichts findet) wird gegen den **Dimacon-Gesamtbestand** abgesichert: gleichnamige Kunden und Treffer, deren Clockin-Identifier die Kundennummer eines anderen Dimacon-Kunden ist, werden nicht verknüpft; lädt der Bestand nicht, entfällt der Fallback ganz. **Ohne Lexware-Abhängigkeit.** |
 | `dimacon-lexoffice` | **Alle** Dimacon-Kunden mit Lexware Office abgleichen: fehlende Kontakte anlegen, Dimacon-Kundennummern an die Lexware-Nummern angleichen. Optional (`{"steps":{"importFromLexware":true}}`, **per Default AUS**) die Gegenrichtung: Lexware-Kunden mit Angebot oder Auftragsbestätigung der letzten 14 Tage in Dimacon anlegen, mit der Lexware-Kundennummer — nicht bei fremd vergebener Nummer oder gleich/ähnlich benanntem Dimacon-Kunden (`skipped` mit Begründung). Auflösung erst über die (numerische) Kundennummer mit Namensplausibilisierung, dann über den exakten Namen (Firma ODER Privatperson) — jeweils nur gegen aktive Kunden-Kontakte, reine Lieferanten und archivierte Kontakte zählen nie als Treffer. Mehrdeutige Treffer und Namens-Duplikate im Dimacon-Bestand werden als `ambiguous`/`conflict` gemeldet statt geschrieben; fällt die Nummernsuche mit einem Fehler aus, wird in diesem Lauf kein Kontakt mehr angelegt. Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `dimacon-sevdesk`   | **Alle** Dimacon-Kunden mit sevDesk abgleichen — gleiche Auflösung wie `dimacon-lexoffice` (Kundennummer mit Namensplausibilisierung → exakter Name, Organisationen UND Personen; reine Lieferanten-Kontakte — Kategorie 2 — zählen nie als Treffer; `ambiguous`/`conflict` statt Schreibvorgang), aber **ohne Gegenrichtung**. Steps `createContacts`/`alignNumbers` per Default an. Beim Anlegen wird die Dimacon-Kundennummer mitgegeben, wenn sie in sevDesk nachweislich frei ist (sevDesk vergibt beim API-Create keine Nummer automatisch); Adresse und E-Mail/Telefon entstehen als eigene sevDesk-Ressourcen (`/ContactAddress`, `/CommunicationWay`) — Teilfehler dort lassen die Zeile `created` und stehen als `customer`-Fehler im Ergebnis. Nummern-Alignment schreibt die sevDesk-Nummer per Voll-Replace-PUT in den Dimacon-Kunden (alle Felder inkl. `customAttributeValues` werden zurückgespiegelt). Achtung: erster Live-Lauf legt fehlende Kontakte für den gesamten Bestand an — vorher dry-run prüfen.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 **Endpoints** (run/healthz offen — `run` ist Dual-Auth: Mandanten-Webhook-
 Secret oder AuthKit-JWT, Liste hinter Auth):
@@ -451,6 +453,14 @@ Architektur-Bausteine (`src/server/integrations/`):
   (inkl. Kunden-Attribute, ohne Auswahlfelder) kommen aus der Feld-Zuordnung
   „Dimacon-Kunde (aus Lexware)“ (`customer-body.ts`); aktive
   Pflicht-Attribute ohne Zuordnung sperren die Übernahme
+- `dimacon-sevdesk/` — sevDesk-Kontakt find-or-create + Kundennummern-Alignment,
+  Spiegel des Lexoffice-Aligners ohne Gegenrichtung. Voll-Index über
+  `GET /Contact` (limit/offset, `depth=1` = auch Personen) mit Fallback auf
+  exakt nachverifizierte Serversuche; ein Kontakt zählt als Kunde, solange er
+  nicht Kategorie „Lieferant“ (id 2) hat. Der Create verteilt sich auf drei
+  Ressourcen (Contact, ContactAddress, CommunicationWay) — Adresse/E-Mail/
+  Telefon sind best-effort, der Kontakt selbst wird bewusst ohne Retry
+  angelegt (nicht idempotent)
 
 Tests laufen mit `pnpm test`.
 
@@ -461,11 +471,13 @@ npm-Packages aus [Miragon/miranum-clients](https://github.com/Miragon/miranum-cl
 - `@miragon/client-clockin` — ClockIn (`createClockInClient`)
 - `@miragon/client-dimacon` — Dimacon (`createDimaconClient`)
 - `@miragon/client-lexoffice` — Lexoffice (`createLexofficeClient`)
+- `@miragon/client-sevdesk` — sevDesk (`createSevdeskClient`; Authorization-Header
+  trägt den rohen API-Token, KEIN `Bearer`-Präfix)
 
 ClockIn und Dimacon werden via `@hey-api/openapi-ts` aus OpenAPI-Specs generiert,
-der Lexoffice-Client ist hand-geschrieben und nutzt Node's `Buffer` — daher
-Server-only. Generierung und Release passieren im miranum-clients-Repo; hier
-werden die Packages nur konsumiert.
+die Clients für Lexoffice und sevDesk sind hand-geschrieben (Lexoffice nutzt
+Node's `Buffer` — daher Server-only). Generierung und Release passieren im
+miranum-clients-Repo; hier werden die Packages nur konsumiert.
 
 Eingebunden im Backend über `src/server/lib/clients.ts` — eine per-Mandant-
 Factory (`getClientsForTenant`), die die verschlüsselten Zugangsdaten aus

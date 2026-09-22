@@ -8,6 +8,7 @@ import lexoffice from "./routes/lexoffice.js"
 import mappings from "./routes/mappings.js"
 import { me, tenantsRoute } from "./routes/me.js"
 import settings from "./routes/settings.js"
+import sevdesk from "./routes/sevdesk.js"
 import sync from "./routes/sync.js"
 import systems from "./routes/systems.js"
 import { integrationsApiRoutes, integrationsOpenRoutes } from "./routes/integrations.js"
@@ -46,6 +47,7 @@ export function createApp(): Hono<AppEnv> {
   app.route("/api/clockin", clockin)
   app.route("/api/dimacon", dimacon)
   app.route("/api/lexoffice", lexoffice)
+  app.route("/api/sevdesk", sevdesk)
   app.route("/api/settings", settings)
   app.route("/api/mappings", mappings)
   app.route("/api/credentials", credentials)

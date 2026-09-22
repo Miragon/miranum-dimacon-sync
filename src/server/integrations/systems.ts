@@ -12,6 +12,7 @@ export const SYSTEMS: readonly SystemDefinition[] = [
   { id: "dimacon", name: "Dimacon" },
   { id: "clockin", name: "ClockIn" },
   { id: "lexoffice", name: "Lexware Office" },
+  { id: "sevdesk", name: "sevDesk" },
 ]
 
 export interface SystemStatus {

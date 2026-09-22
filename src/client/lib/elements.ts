@@ -47,6 +47,15 @@ export const MIRANUM_ELEMENTS: MiranumElement[] = [
     description: "Buchhaltung & Rechnungen",
     systemId: "lexoffice",
   },
+  {
+    no: "04",
+    symbol: "Sd",
+    name: "sevDesk",
+    ig: "BU",
+    group: "finance",
+    description: "Buchhaltung & Rechnungen",
+    systemId: "sevdesk",
+  },
 ]
 
 export function findElementBySystem(systemId: string): MiranumElement | undefined {

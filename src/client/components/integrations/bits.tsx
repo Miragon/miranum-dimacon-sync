@@ -24,7 +24,7 @@ export function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-const METRIC_SYSTEMS = ["dimacon", "clockin", "lexoffice"] as const
+const METRIC_SYSTEMS = ["dimacon", "clockin", "lexoffice", "sevdesk"] as const
 
 type MetricSystem = (typeof METRIC_SYSTEMS)[number]
 
@@ -32,6 +32,7 @@ const SYSTEM_LABELS: Record<MetricSystem, string> = {
   dimacon: "Dimacon",
   clockin: "Clockin",
   lexoffice: "Lexware",
+  sevdesk: "sevDesk",
 }
 
 export interface RunMetricsSnapshot {

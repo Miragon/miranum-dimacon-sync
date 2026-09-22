@@ -10,14 +10,20 @@ import { AsyncLocalStorage } from "node:async_hooks"
  * Wegwerf-Clients (connection-test.ts) laufen dadurch unverändert weiter.
  */
 
-export type MetricSystem = "dimacon" | "clockin" | "lexoffice"
+export type MetricSystem = "dimacon" | "clockin" | "lexoffice" | "sevdesk"
 
-export const METRIC_SYSTEMS: readonly MetricSystem[] = ["dimacon", "clockin", "lexoffice"]
+export const METRIC_SYSTEMS: readonly MetricSystem[] = [
+  "dimacon",
+  "clockin",
+  "lexoffice",
+  "sevdesk",
+]
 
 export interface RequestCounts {
   dimacon: number
   clockin: number
   lexoffice: number
+  sevdesk: number
 }
 
 export interface PhaseMetrics {
@@ -79,7 +85,7 @@ const storage = new AsyncLocalStorage<Store>()
 
 function emptyCounters(): Counters {
   return {
-    requests: { dimacon: 0, clockin: 0, lexoffice: 0 },
+    requests: { dimacon: 0, clockin: 0, lexoffice: 0, sevdesk: 0 },
     retries: 0,
     rateLimited: 0,
     waitedMs: 0,

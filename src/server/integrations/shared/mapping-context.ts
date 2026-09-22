@@ -184,7 +184,8 @@ async function loadAttributes(
   const rows = (await withRetry(() =>
     entity === "project"
       ? dimacon.getAllAttributes1({ client })
-      : // customer, lexofficeContact, dimaconCustomer: alle lesen die Kunden-Attribute
+      : // customer, lexofficeContact, dimaconCustomer, sevdeskContact:
+        // alle lesen die Kunden-Attribute
         dimacon.getAllAttributes2({ client }),
   )) as unknown as DimaconAttributeRow[]
 
@@ -210,8 +211,10 @@ async function loadCustomFields(
   getClient: () => ClockInClient | Promise<ClockInClient>,
   entity: MappingEntity,
 ): Promise<ClockinCustomFieldDef[]> {
-  // Lexware Office kennt keine Custom-Felder — und braucht keinen Clockin-Client
-  if (entity === "lexofficeContact") return []
+  // Lexware Office und sevDesk kennen hier keine Custom-Felder — und ihre
+  // Integrationen dürfen NIE einen Clockin-Client konstruieren (der Mandant
+  // braucht dafür keine Clockin-Credentials).
+  if (entity === "lexofficeContact" || entity === "sevdeskContact") return []
 
   const client = await getClient()
   const response = (await withRetry(() => {

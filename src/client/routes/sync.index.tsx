@@ -52,9 +52,9 @@ function IntegrationsPage() {
         <span className="mn-mono">/sync · integrationen</span>
         <h1 className="text-h-1 text-ink mt-4">Integrationen</h1>
         <p className="text-body text-ink-2 mt-3 max-w-[540px]">
-          Alle Sync-Abläufe zwischen Dimacon, Clockin und Lexware Office — Status einsehen und
-          manuell starten. Zeitplan, Umfang, Zugangsdaten und Feld-Zuordnung liegen je Integration
-          unter „Einstellungen".
+          Alle Sync-Abläufe zwischen Dimacon, Clockin, Lexware Office und sevDesk — Status einsehen
+          und manuell starten. Zeitplan, Umfang, Zugangsdaten und Feld-Zuordnung liegen je
+          Integration unter „Einstellungen".
         </p>
       </header>
 

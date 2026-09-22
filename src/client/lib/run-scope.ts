@@ -132,6 +132,27 @@ export const RUN_SCOPE_SPECS: Record<string, RunScopeSpec> = {
           "Ein Live-Lauf legt jetzt auch in Dimacon Kunden an — siehe die Bedingungen unter den Schritten.",
       ].filter((h): h is string => Boolean(h)),
   },
+  "dimacon-sevdesk": {
+    steps: [
+      {
+        key: "createContacts",
+        label: "sevDesk-Kontakte anlegen",
+        default: true,
+        note:
+          "Angelegt wird nur, wenn der Kunde in sevDesk eindeutig NICHT existiert. Mehrere gleichnamige Treffer, " +
+          "gleichnamige Dimacon-Kunden im selben Lauf und Kundennummern, die in sevDesk zu einem anderen Namen " +
+          "gehören, werden mit Begründung gemeldet statt geschrieben. Ist die Dimacon-Kundennummer in sevDesk " +
+          "frei, wird sie beim Anlegen mitgegeben.",
+      },
+      { key: "alignNumbers", label: "Kundennummern angleichen", default: true },
+    ],
+    hints: (steps) =>
+      [
+        steps.createContacts
+          ? "Läuft über den gesamten Dimacon-Kundenbestand — ein Live-Lauf legt fehlende sevDesk-Kontakte an."
+          : "Nur Abgleich — es werden keine sevDesk-Kontakte angelegt.",
+      ].filter((h): h is string => Boolean(h)),
+  },
 }
 
 function stepsOf(runDefaults: unknown): Record<string, unknown> {

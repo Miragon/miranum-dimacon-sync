@@ -5,6 +5,7 @@ const getCurrentUserMock = vi.fn()
 const createClockInClientMock = vi.fn()
 const getAListOfProjectsMock = vi.fn()
 const createLexofficeClientMock = vi.fn()
+const createSevdeskClientMock = vi.fn()
 
 vi.mock("@miragon/client-dimacon", () => ({
   createDimaconClient: createDimaconClientMock,
@@ -17,6 +18,9 @@ vi.mock("@miragon/client-clockin", () => ({
 vi.mock("@miragon/client-lexoffice", () => ({
   createLexofficeClient: createLexofficeClientMock,
 }))
+vi.mock("@miragon/client-sevdesk", () => ({
+  createSevdeskClient: createSevdeskClientMock,
+}))
 
 const { mapUpstreamError, testConnection } = await import("./connection-test.js")
 
@@ -28,15 +32,18 @@ function heyApiClient() {
 let dimaconClient: ReturnType<typeof heyApiClient>
 let clockinClient: ReturnType<typeof heyApiClient>
 let lexofficeGet: ReturnType<typeof vi.fn>
+let sevdeskGet: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   vi.resetAllMocks()
   dimaconClient = heyApiClient()
   clockinClient = heyApiClient()
   lexofficeGet = vi.fn().mockResolvedValue({ organizationId: "org" })
+  sevdeskGet = vi.fn().mockResolvedValue({ objects: [] })
   createDimaconClientMock.mockReturnValue(dimaconClient)
   createClockInClientMock.mockReturnValue(clockinClient)
   createLexofficeClientMock.mockReturnValue({ get: lexofficeGet })
+  createSevdeskClientMock.mockReturnValue({ get: sevdeskGet })
   getCurrentUserMock.mockResolvedValue({})
   getAListOfProjectsMock.mockResolvedValue({})
 })
@@ -74,6 +81,20 @@ describe("testConnection", () => {
 
     expect(createLexofficeClientMock).toHaveBeenCalledExactlyOnceWith({ apiKey: "lex" })
     expect(lexofficeGet).toHaveBeenCalledExactlyOnceWith("/v1/profile")
+  })
+
+  it("sevdesk: prüft /Contact?limit=1 mit dem Wegwerf-Client (roher Token, kein Bearer)", async () => {
+    await testConnection("sevdesk", { apiToken: "sev" })
+
+    expect(createSevdeskClientMock).toHaveBeenCalledExactlyOnceWith({ apiToken: "sev" })
+    expect(sevdeskGet).toHaveBeenCalledExactlyOnceWith("/Contact", { limit: "1" })
+  })
+
+  it("sevdesk: reicht Upstream-Fehler unverändert durch", async () => {
+    sevdeskGet.mockRejectedValue(new Error("sevDesk API 401: Unauthorized"))
+    await expect(testConnection("sevdesk", { apiToken: "sev" })).rejects.toThrow(
+      "sevDesk API 401: Unauthorized",
+    )
   })
 
   it("validiert die Payload, bevor ein Client gebaut wird", async () => {

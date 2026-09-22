@@ -27,7 +27,7 @@ import { probeErrorResponse } from "./probe-error.js"
  * (dokumentierte Entscheidung — internes Ops-Tool).
  */
 
-const SYSTEMS = new Set<CredentialSystem>(["dimacon", "clockin", "lexoffice"])
+const SYSTEMS = new Set<CredentialSystem>(["dimacon", "clockin", "lexoffice", "sevdesk"])
 
 const httpUrl = z
   .string()
@@ -50,6 +50,10 @@ const BODY_SCHEMAS: Record<
     baseUrl: httpUrl.optional().or(z.literal("").transform(() => undefined)),
   }),
   lexoffice: z.object({
+    token: z.string().optional(),
+    baseUrl: httpUrl.optional().or(z.literal("").transform(() => undefined)),
+  }),
+  sevdesk: z.object({
     token: z.string().optional(),
     baseUrl: httpUrl.optional().or(z.literal("").transform(() => undefined)),
   }),

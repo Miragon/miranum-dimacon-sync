@@ -22,7 +22,13 @@ export interface MappingRule {
 }
 
 export interface MappingEntityBlock {
-  entity: "project" | "customer" | "employee" | "lexofficeContact" | "dimaconCustomer"
+  entity:
+    | "project"
+    | "customer"
+    | "employee"
+    | "lexofficeContact"
+    | "dimaconCustomer"
+    | "sevdeskContact"
   isDefault: boolean
   rules: MappingRule[]
   locked: { sourceLabel: string; targetField: string; note: string }[]
@@ -89,6 +95,7 @@ function sourceSystem(entity: MappingEntityBlock["entity"]): string {
 /** Zielsystem je Entität. */
 function targetSystem(entity: MappingEntityBlock["entity"]): string {
   if (entity === "lexofficeContact") return "Lexware-Office"
+  if (entity === "sevdeskContact") return "sevDesk"
   if (entity === "dimaconCustomer") return "Dimacon"
   return "Clockin"
 }

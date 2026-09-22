@@ -7,6 +7,8 @@ export const MappingEntitySchema = z.enum([
   "lexofficeContact",
   /** Gegenrichtung: Lexware-Kontakt → neuer Dimacon-Kunde (Übernahme) */
   "dimaconCustomer",
+  /** dimacon-sevdesk: Dimacon-Kunde → neuer sevDesk-Kontakt */
+  "sevdeskContact",
 ])
 export type MappingEntity = z.infer<typeof MappingEntitySchema>
 

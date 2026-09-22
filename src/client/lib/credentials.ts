@@ -1,4 +1,4 @@
-export type CredentialSystemId = "dimacon" | "clockin" | "lexoffice"
+export type CredentialSystemId = "dimacon" | "clockin" | "lexoffice" | "sevdesk"
 
 export interface CredentialStatus {
   system: CredentialSystemId
@@ -44,6 +44,14 @@ export const CREDENTIAL_SYSTEMS: SystemDef[] = [
     id: "lexoffice",
     name: "Lexware Office",
     tokenLabel: "API-Key",
+    fields: [
+      { key: "baseUrl", label: "Base-URL (optional)", placeholder: "https://…", required: false },
+    ],
+  },
+  {
+    id: "sevdesk",
+    name: "sevDesk",
+    tokenLabel: "API-Token",
     fields: [
       { key: "baseUrl", label: "Base-URL (optional)", placeholder: "https://…", required: false },
     ],

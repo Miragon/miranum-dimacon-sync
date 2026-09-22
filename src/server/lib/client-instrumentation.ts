@@ -1,4 +1,5 @@
 import type { Client as LexofficeClient } from "@miragon/client-lexoffice"
+import type { Client as SevdeskClient } from "@miragon/client-sevdesk"
 import { countRequest, type MetricSystem } from "./metrics.js"
 import type { TokenBucket } from "./rate-limit.js"
 
@@ -181,6 +182,36 @@ export function wrapLexofficeClient(client: LexofficeClient, bucket: TokenBucket
     ): Promise<T> => {
       await gate()
       return client.upload<T>(path, fileName, content, mimeType)
+    },
+  }
+}
+
+/**
+ * sevDesk hat denselben handgeschriebenen Client-Zuschnitt wie Lexware
+ * (keine Interceptoren) — gleicher Wrapper, nur ohne download/upload.
+ * Auch hier läuft die client-interne 429-Wiederholung am Bucket vorbei.
+ */
+export function wrapSevdeskClient(client: SevdeskClient, bucket: TokenBucket): SevdeskClient {
+  const gate = async () => {
+    await bucket.acquire()
+    countRequest("sevdesk")
+  }
+  return {
+    get: async <T>(path: string, params?: Record<string, string>): Promise<T> => {
+      await gate()
+      return client.get<T>(path, params)
+    },
+    post: async <T>(path: string, body?: unknown): Promise<T> => {
+      await gate()
+      return client.post<T>(path, body)
+    },
+    put: async <T>(path: string, body?: unknown): Promise<T> => {
+      await gate()
+      return client.put<T>(path, body)
+    },
+    del: async <T>(path: string): Promise<T> => {
+      await gate()
+      return client.del<T>(path)
     },
   }
 }

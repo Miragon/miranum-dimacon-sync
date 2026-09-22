@@ -41,6 +41,7 @@
     "@miragon/client-clockin": "^0.1.0",
     "@miragon/client-dimacon": "^0.2.0",
     "@miragon/client-lexoffice": "^0.1.0",
+    "@miragon/client-sevdesk": "^0.1.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",

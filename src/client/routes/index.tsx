@@ -77,7 +77,7 @@ function Dashboard() {
         <span className="mn-mono">übersicht · sync</span>
         <h1 className="text-h-display text-ink mt-4 max-md:text-[3rem]">Miranum.</h1>
         <p className="text-body-lg text-ink-2 mt-6 max-w-[580px]">
-          Stand der Sync-Abläufe zwischen Dimacon, Clockin und Lexware Office.
+          Stand der Sync-Abläufe zwischen Dimacon, Clockin, Lexware Office und sevDesk.
         </p>
       </header>
 
@@ -121,6 +121,7 @@ function Dashboard() {
         </h2>
         {loading ? (
           <div className="grid gap-6 md:grid-cols-2">
+            <Skeleton className="h-[168px]" />
             <Skeleton className="h-[168px]" />
             <Skeleton className="h-[168px]" />
           </div>

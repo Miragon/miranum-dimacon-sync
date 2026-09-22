@@ -23,14 +23,19 @@ src/server/      Hono Backend (Port 3020)
   │   ├─ dimacon-clockin/   kompletter Clockin-Sync (OHNE Lexware):
   │   │   └─ employee-sync/ Schritt 1 — bidirektionaler Mitarbeiter-
   │   │                     Stammdaten-Abgleich; danach Tagesplanung
-  │   └─ dimacon-lexoffice/ Kunden-Sync + Nummern-Alignment Dimacon → Lexware
-  │                         (+ Opt-in-Übernahme Lexware → Dimacon)
-  └─ routes/     /api/{clockin,dimacon,lexoffice,integrations,settings,
+  │   ├─ dimacon-lexoffice/ Kunden-Sync + Nummern-Alignment Dimacon → Lexware
+  │   │                     (+ Opt-in-Übernahme Lexware → Dimacon)
+  │   └─ dimacon-sevdesk/   Kunden-Sync + Nummern-Alignment Dimacon → sevDesk
+  │                         (Spiegel des Lexoffice-Aligners, ohne Gegenrichtung)
+  └─ routes/     /api/{clockin,dimacon,lexoffice,sevdesk,integrations,settings,
                  mappings,credentials,systems,me,tenants}/...
 ```
 
-API-Clients kommen als externe npm-Deps (`@miragon/client-{clockin,dimacon,lexoffice}`)
-aus dem Repo Miragon/miranum-clients — hier nur konsumiert, nicht generiert.
+API-Clients kommen als externe npm-Deps
+(`@miragon/client-{clockin,dimacon,lexoffice,sevdesk}`) aus dem Repo
+Miragon/miranum-clients — hier nur konsumiert, nicht generiert. Der
+sevDesk-Client ist wie der Lexoffice-Client handgeschrieben; sein
+Authorization-Header trägt den ROHEN API-Token (kein `Bearer`-Präfix).
 
 Dev: `pnpm stack:up` (Postgres 17 aus `stack/docker-compose.yml`, Host-Port
 5400), dann `pnpm dev` (Client + Server
@@ -81,7 +86,7 @@ nennt die Abhilfe: Token neu speichern). Dev-Server NIE mit
 Inline-Zufallskey starten — `CREDENTIAL_KEYS` kommt stabil aus `.env`,
 sonst werden in der persistenten Dev-DB gespeicherte Tokens unbrauchbar.
 UI: Dimacon unter `/modules` (gemeinsames Quellsystem, Karte unter der
-System-Tabelle), Clockin/Lexware auf der Einstellungsseite ihrer Integration
+System-Tabelle), Clockin/Lexware/sevDesk auf der Einstellungsseite ihrer Integration
 `/sync/<id>/settings` (Token-Feld immer leer; leer lassen = behalten). „Verbindung testen" POSTet die
 Formularwerte an `/api/credentials/:system/test` (Test VOR dem Speichern;
 leeres Token = gespeichertes Secret; Wegwerf-Client in
@@ -166,6 +171,15 @@ Routen `/api/integrations/:id/{run,healthz}` + Eintrag in `/sync`.
 Mandant (kein Crash — Run liefert 503 mit `missing`). Der
 Dimacon→Clockin-Sync ist bewusst NICHT von Lexware abhängig.
 `/api/sync/{run,healthz}` ist Legacy-Alias für `dimacon-clockin`.
+`dimacon-sevdesk` spiegelt den Vorwärts-Teil von `dimacon-lexoffice`
+(Auflösung Nummer→Name, `ambiguous`/`conflict` statt Schreibvorgang,
+Voll-Index mit Serversuche-Fallback) für sevDesk: Kontakt-Anlage verteilt
+sich auf `/Contact` + `/ContactAddress` + `/CommunicationWay` (Adresse/
+Kommunikationswege best-effort), die Dimacon-Kundennummer wird beim Anlegen
+geseedet, wenn sie in sevDesk nachweislich frei ist. Beim Nummern-Alignment
+gilt weiter: **Dimacon-PUT ist ein Voll-Replace — ALLE geladenen Felder
+inkl. `customAttributeValues` zurückspiegeln** (Test pinnt den kompletten
+Body).
 
 **UI pro Integration** (`src/client/components/integrations/`) — alles
 optional, ohne Registrierung greifen Defaults:

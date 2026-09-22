@@ -17,7 +17,7 @@ function positiveNumber(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
-export type RateLimitedSystem = "dimacon" | "clockin" | "lexoffice"
+export type RateLimitedSystem = "dimacon" | "clockin" | "lexoffice" | "sevdesk"
 
 export interface SystemTuning {
   /** Token-Bucket: nachfließende Requests pro Sekunde. */
@@ -42,6 +42,8 @@ const TUNING_DEFAULTS: Record<RateLimitedSystem, SystemTuning> = {
   dimacon: { ratePerSec: 10, burst: 20, concurrency: 8 },
   clockin: { ratePerSec: 5, burst: 10, concurrency: 5 },
   lexoffice: { ratePerSec: 2, burst: 2, concurrency: 2 },
+  // sevDesk dokumentiert kein Rate-Limit — konservativ wie Lexware starten.
+  sevdesk: { ratePerSec: 2, burst: 4, concurrency: 2 },
 }
 
 /**

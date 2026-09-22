@@ -167,6 +167,53 @@ export const FIELD_CATALOG: Record<MappingEntity, EntityCatalog> = {
       { source: std("phoneNumber"), target: std("phoneNumbers.business") },
     ],
   },
+  sevdeskContact: {
+    // Quellen wie beim Lexware-Kontakt; Ziele sind gepunktete Pfade, die
+    // contact-body.ts (dimacon-sevdesk) in die drei sevDesk-Bodies faltet
+    // (Contact + ContactAddress + CommunicationWays). sevDesk-Custom-Felder
+    // werden nicht befüllt — Ziele sind rein Standard.
+    standardSources: [
+      { field: "name", label: "Name" },
+      { field: "street", label: "Straße" },
+      { field: "zipCity", label: "PLZ + Ort (kombiniert)" },
+      { field: "zipCity.zip", label: "PLZ (aus PLZ+Ort)" },
+      { field: "zipCity.city", label: "Ort (aus PLZ+Ort)" },
+      { field: "phoneNumber", label: "Telefon" },
+      { field: "email", label: "E-Mail" },
+      { field: "description", label: "Beschreibung" },
+    ],
+    standardTargets: [
+      { field: "address.street", label: "Straße", dataType: "text" },
+      { field: "address.zip", label: "PLZ", dataType: "text" },
+      { field: "address.city", label: "Ort", dataType: "text" },
+      { field: "communication.email", label: "E-Mail", dataType: "text" },
+      { field: "communication.phone", label: "Telefon", dataType: "text" },
+      { field: "description", label: "Beschreibung", dataType: "text" },
+    ],
+    lockedPairs: [
+      // name ist die zweite Stufe der Kunden-Auflösung (hinter der
+      // Kundennummer) und damit Match-Key des Find-or-Create — remappbar
+      // würde jeder Lauf unauffindbare Duplikate erzeugen.
+      { sourceLabel: "Name", targetField: "name", note: "match-key" },
+      { sourceLabel: "immer Kunden-Kategorie", targetField: "category", note: "system" },
+      { sourceLabel: 'immer "DE"', targetField: "address.country", note: "system" },
+      {
+        sourceLabel: "sevDesk-Nummer (Abgleich)",
+        targetField: "customerNumber",
+        note: "match-key",
+      },
+    ],
+    lockedTargetFields: ["name", "category", "customerNumber", "address.country"],
+    requiredTargets: [],
+    writeSemantics: "overwrite",
+    defaultRules: [
+      { source: std("street"), target: std("address.street") },
+      { source: std("zipCity.zip"), target: std("address.zip") },
+      { source: std("zipCity.city"), target: std("address.city") },
+      { source: std("email"), target: std("communication.email") },
+      { source: std("phoneNumber"), target: std("communication.phone") },
+    ],
+  },
   dimaconCustomer: {
     // Gegenrichtung (Übernahme Lexware → Dimacon): Quellen sind Felder des
     // Lexware-Kontakts (Werte: dimacon-lexoffice/customer-body.ts), Ziele der
@@ -259,6 +306,7 @@ export const FIELD_CATALOG: Record<MappingEntity, EntityCatalog> = {
 export const MAPPABLE_ENTITIES: Record<string, MappingEntity[]> = {
   "dimacon-clockin": ["project", "customer", "employee"],
   "dimacon-lexoffice": ["lexofficeContact", "dimaconCustomer"],
+  "dimacon-sevdesk": ["sevdeskContact"],
 }
 
 interface AttributeValueRow {

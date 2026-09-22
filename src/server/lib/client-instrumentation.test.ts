@@ -188,7 +188,7 @@ describe("instrumentHeyApiClient", () => {
     )
 
     expect(acquire).toHaveBeenCalledTimes(1)
-    expect(snapshot?.requests).toEqual({ dimacon: 0, clockin: 1, lexoffice: 0 })
+    expect(snapshot?.requests).toEqual({ dimacon: 0, clockin: 1, lexoffice: 0, sevdesk: 0 })
   })
 
   it("reicht Response UND Bucket in den Error-Interceptor durch", async () => {

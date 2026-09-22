@@ -1,10 +1,12 @@
 import { createClockInClient, sdk as clockinSdk } from "@miragon/client-clockin"
 import { createDimaconClient, sdk as dimaconSdk } from "@miragon/client-dimacon"
 import { createLexofficeClient } from "@miragon/client-lexoffice"
+import { createSevdeskClient } from "@miragon/client-sevdesk"
 import {
   ClockinCredentialsSchema,
   DimaconCredentialsSchema,
   LexofficeCredentialsSchema,
+  SevdeskCredentialsSchema,
 } from "../db/repos/credentials.js"
 import type { CredentialSystem } from "../db/repos/credentials.js"
 import { formatError } from "./errors.js"
@@ -43,6 +45,12 @@ export async function testConnection(
       case "lexoffice": {
         const creds = LexofficeCredentialsSchema.parse(payload)
         await raceTimeout(createLexofficeClient(creds).get("/v1/profile"))
+        return
+      }
+      case "sevdesk": {
+        const creds = SevdeskCredentialsSchema.parse(payload)
+        // Billigster authentifizierter Call; wie Lexware ohne AbortSignal.
+        await raceTimeout(createSevdeskClient(creds).get("/Contact", { limit: "1" }))
         return
       }
     }

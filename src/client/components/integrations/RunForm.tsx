@@ -29,6 +29,7 @@ const FORMS: Record<string, ComponentType<RunFormProps>> = {
   "dimacon-clockin": DimaconClockinRunForm,
   // Kompletter Kundenbestand mit zuschaltbaren Schritten — kein Datums-Input
   "dimacon-lexoffice": DimaconLexofficeRunForm,
+  "dimacon-sevdesk": DimaconSevdeskRunForm,
 }
 
 export function RunForm({ integrationId, ...props }: RunFormProps & { integrationId: string }) {
@@ -82,6 +83,10 @@ function DimaconClockinRunForm(props: RunFormProps) {
 
 function DimaconLexofficeRunForm(props: RunFormProps) {
   return <ScopeRunForm {...props} integrationId="dimacon-lexoffice" />
+}
+
+function DimaconSevdeskRunForm(props: RunFormProps) {
+  return <ScopeRunForm {...props} integrationId="dimacon-sevdesk" />
 }
 
 /**

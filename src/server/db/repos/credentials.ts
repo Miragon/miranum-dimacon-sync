@@ -5,7 +5,7 @@ import { isHttpUrl } from "../../lib/url.js"
 import { getDb } from "../client.js"
 import { tenantCredentials } from "../schema.js"
 
-export type CredentialSystem = "dimacon" | "clockin" | "lexoffice"
+export type CredentialSystem = "dimacon" | "clockin" | "lexoffice" | "sevdesk"
 
 const httpUrl = z
   .string()
@@ -31,24 +31,35 @@ export const LexofficeCredentialsSchema = z.object({
   apiKey: z.string().trim().min(1),
   baseUrl: httpUrl.optional(),
 })
+export const SevdeskCredentialsSchema = z.object({
+  apiToken: z.string().trim().min(1),
+  baseUrl: httpUrl.optional(),
+})
 
 export type DimaconCredentials = z.infer<typeof DimaconCredentialsSchema>
 export type ClockinCredentials = z.infer<typeof ClockinCredentialsSchema>
 export type LexofficeCredentials = z.infer<typeof LexofficeCredentialsSchema>
+export type SevdeskCredentials = z.infer<typeof SevdeskCredentialsSchema>
 
-export type SystemCredentials = DimaconCredentials | ClockinCredentials | LexofficeCredentials
+export type SystemCredentials =
+  | DimaconCredentials
+  | ClockinCredentials
+  | LexofficeCredentials
+  | SevdeskCredentials
 
 /** Welches Feld des Systems das Secret trägt (Rest ist Klartext-Config). */
 export const SECRET_FIELD: Record<CredentialSystem, "apiToken" | "apiKey"> = {
   dimacon: "apiToken",
   clockin: "apiToken",
   lexoffice: "apiKey",
+  sevdesk: "apiToken",
 }
 
 const FULL_SCHEMAS: Record<CredentialSystem, z.ZodTypeAny> = {
   dimacon: DimaconCredentialsSchema,
   clockin: ClockinCredentialsSchema,
   lexoffice: LexofficeCredentialsSchema,
+  sevdesk: SevdeskCredentialsSchema,
 }
 
 export class CredentialsNotFoundError extends Error {
@@ -79,7 +90,7 @@ export interface CredentialStatus {
   config: Record<string, string>
 }
 
-const ALL_SYSTEMS: readonly CredentialSystem[] = ["dimacon", "clockin", "lexoffice"]
+const ALL_SYSTEMS: readonly CredentialSystem[] = ["dimacon", "clockin", "lexoffice", "sevdesk"]
 
 export async function listCredentialStatus(tenantId: string): Promise<CredentialStatus[]> {
   const rows = await getDb()

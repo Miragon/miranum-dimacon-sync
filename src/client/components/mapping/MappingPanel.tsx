@@ -13,6 +13,7 @@ const ENTITY_LABELS: Record<MappingEntityBlock["entity"], string> = {
   employee: "Mitarbeiter",
   lexofficeContact: "Lexware-Kontakt",
   dimaconCustomer: "Dimacon-Kunde (aus Lexware)",
+  sevdeskContact: "sevDesk-Kontakt",
 }
 
 interface MappingsResponse {
@@ -125,6 +126,13 @@ export function MappingPanel({ integrationId }: { integrationId: string }) {
             <p className="text-ink-3 mt-6 max-w-[540px] font-mono text-[0.65rem] leading-relaxed">
               Die Zuordnung wirkt beim Anlegen neuer Lexware-Kontakte — bestehende Kontakte werden
               vom Sync nicht aktualisiert.
+            </p>
+          ) : null}
+          {active?.entity === "sevdeskContact" ? (
+            <p className="text-ink-3 mt-6 max-w-[540px] font-mono text-[0.65rem] leading-relaxed">
+              Die Zuordnung wirkt beim Anlegen neuer sevDesk-Kontakte — bestehende Kontakte werden
+              vom Sync nicht aktualisiert. Adresse und E-Mail/Telefon werden als eigene
+              sevDesk-Ressourcen zum Kontakt angelegt.
             </p>
           ) : null}
         </>

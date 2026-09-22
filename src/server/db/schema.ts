@@ -12,7 +12,12 @@ import {
   uuid,
 } from "drizzle-orm/pg-core"
 
-export const credentialSystem = pgEnum("credential_system", ["dimacon", "clockin", "lexoffice"])
+export const credentialSystem = pgEnum("credential_system", [
+  "dimacon",
+  "clockin",
+  "lexoffice",
+  "sevdesk",
+])
 export const runTrigger = pgEnum("run_trigger", ["manual", "cron", "webhook", "mcp"])
 // "skipped" = der Lauf wurde NIE gestartet (fail-closed übersprungener Cron).
 // Neue Werte IMMER ans Ende: drizzle-kit erzeugt daraus ein additives

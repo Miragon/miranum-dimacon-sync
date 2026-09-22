@@ -72,6 +72,7 @@ function testCtx(): IntegrationRunContext {
       clockin: async () => ({ kind: "clockin" }) as never,
       dimacon: async () => ({ kind: "dimacon" }) as never,
       lexoffice: async () => ({ get: lexGet, post: lexPost }) as never,
+      sevdesk: async () => ({ kind: "sevdesk" }) as never,
     },
     getFieldMapping: async () => undefined,
     log: silentLog,

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."credential_system" ADD VALUE 'sevdesk';
